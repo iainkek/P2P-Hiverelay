@@ -264,6 +264,8 @@ export class RelayNode extends EventEmitter {
     this._replicationCheckInterval = null
     this._replicationHealth = new Map() // appKey -> { state, current, target, missing }
     this._lastReplicationCheckAt = null
+    this._anchorCheckInterval = null
+    this._lastAnchorCheckAt = null
     this.running = false
   }
 
@@ -862,6 +864,7 @@ export class RelayNode extends EventEmitter {
           }, 5000)
 
           this._startReplicationMonitor()
+          this._startAnchorMonitor()
         } catch (err) {
           this.emit('registry-error', { error: err })
           this.seedingRegistry = null
@@ -946,6 +949,7 @@ export class RelayNode extends EventEmitter {
       if (this._reputationDecayInterval) { clearInterval(this._reputationDecayInterval); this._reputationDecayInterval = null }
       if (this._registryScanInterval) { clearInterval(this._registryScanInterval); this._registryScanInterval = null }
       if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }
+      if (this._anchorCheckInterval) { clearInterval(this._anchorCheckInterval); this._anchorCheckInterval = null }
       if (this.seedingRegistry) { try { await this.seedingRegistry.stop() } catch (_) {} this.seedingRegistry = null }
       if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
       if (this.holesailTransport) { try { await this.holesailTransport.stop() } catch (_) {} this.holesailTransport = null }
@@ -1816,6 +1820,27 @@ export class RelayNode extends EventEmitter {
     this._checkReplicationHealth().catch(() => {})
   }
 
+  _startAnchorMonitor () {
+    if (this._anchorCheckInterval) {
+      clearInterval(this._anchorCheckInterval)
+      this._anchorCheckInterval = null
+    }
+    // Default 5 min — anchor state changes slowly. Run once on startup
+    // (5s after start to give the seeder time to attach) so the registry
+    // gets its first honest verification right away.
+    const intervalMs = Math.max(30_000, Number(this.config.anchorCheckInterval) || 300_000)
+    this._anchorCheckInterval = setInterval(() => {
+      this._runAnchorCheck().catch((err) => {
+        this.emit('anchor-check-error', { error: err.message || String(err) })
+      })
+    }, intervalMs)
+    if (this._anchorCheckInterval.unref) this._anchorCheckInterval.unref()
+
+    setTimeout(() => {
+      this._runAnchorCheck().catch(() => {})
+    }, 5000)
+  }
+
   async _checkReplicationHealth () {
     if (!this.seedingRegistry) return
 
@@ -1851,6 +1876,54 @@ export class RelayNode extends EventEmitter {
       trackedApps: nextHealth.size,
       underReplicated,
       checkedAt: this._lastReplicationCheckAt
+    })
+  }
+
+  // ─── Anchor verification ───────────────────────────────────────
+  //
+  // For every app in the registry, check if the underlying Hyperdrive
+  // actually has blocks (drive.version > 0). Mark anchored vs not. This
+  // catches the failure mode where a relay accepts a seed request but
+  // never gets the data — historically these stayed in the registry as
+  // ghosts that the catalog claimed to serve. Now they get flagged.
+  async _runAnchorCheck () {
+    if (!this.appRegistry) return
+    const driveMap = (this.appRegistry.apps && typeof this.appRegistry.apps.values === 'function')
+      ? this.appRegistry.apps
+      : null
+    if (!driveMap) return
+
+    let anchored = 0
+    let unanchored = 0
+    let checked = 0
+    for (const [appKey, entry] of driveMap) {
+      const drive = entry.drive
+      if (!drive) continue
+      checked++
+      try {
+        const length = drive.version || 0
+        if (length > 0) {
+          this.appRegistry.setAnchored(appKey, length)
+          anchored++
+        } else {
+          // No blocks — clear anchored if it was set, record the check
+          if (entry.anchored === true) {
+            this.appRegistry.clearAnchored(appKey, 'length=0 on periodic check')
+          } else {
+            this.appRegistry.recordAnchorCheck(appKey)
+          }
+          unanchored++
+        }
+      } catch (err) {
+        this.emit('anchor-check-error', { appKey, error: err.message })
+      }
+    }
+    this._lastAnchorCheckAt = Date.now()
+    this.emit('anchor-health', {
+      checked,
+      anchored,
+      unanchored,
+      checkedAt: this._lastAnchorCheckAt
     })
   }
 

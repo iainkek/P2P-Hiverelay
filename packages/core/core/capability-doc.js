@@ -121,8 +121,12 @@ export function buildCapabilityDoc (opts = {}) {
   if (relay && relay.appRegistry && typeof relay.appRegistry.catalog === 'function') {
     try {
       const entries = relay.appRegistry.catalog() || []
+      const anchored = entries.filter(e => e.anchored === true).length
       catalog = {
         total: entries.length,
+        anchored,
+        // legacy field kept for backward-compat consumers; equals 'total'
+        accepted: entries.length,
         apps: entries.filter(e => e.type === 'app').length,
         drives: entries.filter(e => e.type === 'drive' && !e.parentKey).length,
         resources: entries.filter(e => e.type === 'drive' && !!e.parentKey).length,

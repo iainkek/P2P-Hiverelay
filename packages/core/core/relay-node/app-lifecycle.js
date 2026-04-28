@@ -226,6 +226,15 @@ export class AppLifecycle extends EventEmitter {
               // After content is downloaded, read manifest and deduplicate
               await this._indexAppManifest(appKeyHex, drive)
 
+              // Mark anchored — we have actual replicated blocks. This is the
+              // signal that distinguishes "we accepted the seed" from "we
+              // can actually serve the content." Catalog/capability docs
+              // surface this so clients can prefer relays that have the data.
+              if (node.appRegistry && typeof node.appRegistry.setAnchored === 'function') {
+                node.appRegistry.setAnchored(appKeyHex, drive.version)
+                this.emit('anchored', { appKey: appKeyHex, version: drive.version })
+              }
+
               this.emit('reseeded', { appKey: appKeyHex, version: drive.version })
               return
             }
@@ -237,6 +246,10 @@ export class AppLifecycle extends EventEmitter {
           if (attempt < MAX_RETRIES - 1) {
             await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt]))
           }
+        }
+        // Exhausted retries — record that we tried, mark not anchored.
+        if (node.appRegistry && typeof node.appRegistry.recordAnchorCheck === 'function') {
+          node.appRegistry.recordAnchorCheck(appKeyHex)
         }
         this.emit('reseed-error', { appKey: appKeyHex, error: 'max retries exceeded' })
       }

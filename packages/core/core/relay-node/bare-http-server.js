@@ -79,6 +79,16 @@ export class BareHttpServer {
       return this._json(res, this._peers())
     }
 
+    if (path === '/api/anchors') {
+      if (!this.relay.appRegistry || typeof this.relay.appRegistry.anchorStats !== 'function') {
+        return this._json(res, { error: 'anchor stats unavailable' }, 503)
+      }
+      return this._json(res, {
+        ...this.relay.appRegistry.anchorStats(),
+        lastCheckedAt: this.relay._lastAnchorCheckAt || null
+      })
+    }
+
     // Capability advertisement. Same shape as the Node version so clients
     // can treat both runtimes identically.
     if (path === '/.well-known/hiverelay.json' || path === '/api/capabilities') {

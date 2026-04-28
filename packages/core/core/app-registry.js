@@ -79,12 +79,25 @@ export class AppRegistry extends EventEmitter {
       ? [...new Set(entry.categories.map(c => String(c).trim()).filter(Boolean))]
       : null
 
+    // Anchor fields — distinguishes "we accepted to seed" from "we actually
+    // have replicated blocks." A drive can be in the registry without being
+    // anchored (publisher went offline before we pulled), and we want
+    // visibility on that.
+    const anchored = entry.anchored === true
+    const anchoredAt = anchored && typeof entry.anchoredAt === 'number' ? entry.anchoredAt : null
+    const anchoredLength = typeof entry.anchoredLength === 'number' ? entry.anchoredLength : 0
+    const lastAnchorCheck = typeof entry.lastAnchorCheck === 'number' ? entry.lastAnchorCheck : null
+
     return {
       ...entry,
       type,
       parentKey,
       mountPath,
-      categories
+      categories,
+      anchored,
+      anchoredAt,
+      anchoredLength,
+      lastAnchorCheck
     }
   }
 
@@ -146,6 +159,92 @@ export class AppRegistry extends EventEmitter {
     return true
   }
 
+  // ─── Anchor management ────────────────────────────────────────
+  //
+  // An "anchored" entry is one where the relay has actually replicated
+  // blocks (length > 0), as opposed to merely registered as accepted.
+  // Distinguishing the two prevents the relay from claiming to serve
+  // content it has no copy of — which is what created the "drive
+  // disappeared" failure mode users hit. Catalog/capability-doc consumers
+  // can check `anchored: true` to know they're talking to a relay that
+  // can actually serve the content, not just one that remembers the key.
+
+  /**
+   * Mark an app as anchored (we have replicated blocks). Idempotent —
+   * subsequent calls only update `anchoredLength` and `lastAnchorCheck`.
+   * @param {string} appKey
+   * @param {number} length - latest hypercore length we observed
+   */
+  setAnchored (appKey, length = 0) {
+    const entry = this.apps.get(appKey)
+    if (!entry) return false
+
+    const wasAnchored = entry.anchored === true
+    const now = Date.now()
+    entry.anchored = true
+    entry.anchoredLength = Math.max(entry.anchoredLength || 0, length || 0)
+    entry.lastAnchorCheck = now
+    if (!wasAnchored) entry.anchoredAt = now
+
+    this._scheduleSave()
+    if (!wasAnchored) {
+      this.emit('change', { type: 'anchored', appKey, entry })
+    } else {
+      this.emit('change', { type: 'anchor-update', appKey, entry })
+    }
+    return true
+  }
+
+  /**
+   * Mark an entry as no longer anchored (drive lost, content gone).
+   * Used when on-startup verification finds a registry entry whose
+   * underlying hypercore has length 0.
+   * @param {string} appKey
+   * @param {string} reason - human-readable reason for observability
+   */
+  clearAnchored (appKey, reason = null) {
+    const entry = this.apps.get(appKey)
+    if (!entry) return false
+    if (entry.anchored !== true) return false
+    entry.anchored = false
+    entry.anchoredLength = 0
+    entry.lastAnchorCheck = Date.now()
+    this._scheduleSave()
+    this.emit('change', { type: 'unanchored', appKey, entry, reason })
+    return true
+  }
+
+  /**
+   * Update lastAnchorCheck without changing anchored state — useful when
+   * we did a check, found no blocks, and want to record that we tried.
+   */
+  recordAnchorCheck (appKey) {
+    const entry = this.apps.get(appKey)
+    if (!entry) return false
+    entry.lastAnchorCheck = Date.now()
+    this._scheduleSave()
+    return true
+  }
+
+  /**
+   * Aggregate anchor stats across the registry. Useful for capability
+   * docs, dashboards, and operator visibility into the gap between
+   * "accepted" and "actually serving."
+   */
+  anchorStats () {
+    let total = 0
+    let anchored = 0
+    let unanchored = 0
+    let neverChecked = 0
+    for (const entry of this.apps.values()) {
+      total++
+      if (entry.anchored === true) anchored++
+      else unanchored++
+      if (!entry.lastAnchorCheck) neverChecked++
+    }
+    return { total, anchored, unanchored, neverChecked }
+  }
+
   // ─── Catalog Output ────────────────────────────────────────
 
   /**
@@ -177,7 +276,13 @@ export class AppRegistry extends EventEmitter {
         blind: entry.blind || false,
         categories: entry.categories || ['uncategorized'],
         privacyTier: entry.privacyTier || 'public',
-        seededAt: entry.startedAt || entry.seededAt || Date.now()
+        seededAt: entry.startedAt || entry.seededAt || Date.now(),
+        // Anchor signal — clients can prefer relays whose entries are
+        // anchored=true (they actually have blocks) over ones that
+        // merely remember accepting the seed.
+        anchored: entry.anchored === true,
+        anchoredAt: entry.anchoredAt || null,
+        anchoredLength: entry.anchoredLength || 0
       }
 
       // Dedup app entries by appId — keep latest version
@@ -289,6 +394,13 @@ export class AppRegistry extends EventEmitter {
           privacyTier: entry.privacyTier || 'public',
           categories: entry.categories || null,
           bytesServed: 0,
+          // Anchor state restored from disk so we don't forget what we
+          // know between restarts. The periodic anchor check will refresh
+          // these soon after startup.
+          anchored: entry.anchored === true,
+          anchoredAt: entry.anchoredAt || null,
+          anchoredLength: typeof entry.anchoredLength === 'number' ? entry.anchoredLength : 0,
+          lastAnchorCheck: entry.lastAnchorCheck || null,
           // drive and discoveryKey are set during reseeding
           drive: null,
           discoveryKey: null
@@ -345,7 +457,14 @@ export class AppRegistry extends EventEmitter {
           startedAt: entry.startedAt || Date.now(),
           discoveryKey: entry.discoveryKey
             ? (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : entry.discoveryKey.toString('hex'))
-            : null
+            : null,
+          // Anchor state — persisted so we don't lose the "we have blocks"
+          // signal across restarts. Fresh check still runs on startup, but
+          // until it does, the registry remembers the last known state.
+          anchored: entry.anchored === true,
+          anchoredAt: entry.anchoredAt || null,
+          anchoredLength: entry.anchoredLength || 0,
+          lastAnchorCheck: entry.lastAnchorCheck || null
         })
       }
 

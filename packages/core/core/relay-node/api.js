@@ -688,6 +688,28 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, drives)
         }
 
+        // Anchor status — distinguishes "we accepted seeding" from "we
+        // actually have replicated blocks." Operators + clients can use
+        // this to detect ghost entries that need re-replication.
+        if (path === '/api/anchors') {
+          if (!this.node.appRegistry || typeof this.node.appRegistry.anchorStats !== 'function') {
+            return this._json(res, { error: 'anchor stats unavailable' }, 503)
+          }
+          const stats = this.node.appRegistry.anchorStats()
+          const detailedQuery = url.searchParams.get('detailed')
+          let entries = null
+          if (detailedQuery === '1' || detailedQuery === 'true') {
+            entries = this.node.appRegistry.catalog().map(e => ({
+              appKey: e.appKey,
+              type: e.type,
+              anchored: e.anchored,
+              anchoredAt: e.anchoredAt,
+              anchoredLength: e.anchoredLength
+            }))
+          }
+          return this._json(res, { ...stats, lastCheckedAt: this.node._lastAnchorCheckAt || null, entries })
+        }
+
         if (path === '/api/peers') {
           const peers = []
           const now = Date.now()
