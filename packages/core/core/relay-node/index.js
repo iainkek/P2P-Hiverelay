@@ -912,20 +912,6 @@ export class RelayNode extends EventEmitter {
           this._startAnchorMonitor()
           this._startRepairMonitor()
 
-          // HiveWorm game service — opt-in. Holds per-biome autobase logs +
-          // serves /api/hiveworm/* endpoints. Not coupled to seeding; biomes
-          // are stored separately in the relay's hiveworm-data subdir.
-          if (this.config.enableHiveworm === true) {
-            try {
-              const hwStorage = this.config.hivewormStorage || join(this.config.storage, 'hiveworm-data')
-              this.hiveworm = new HiveWormService({ storage: hwStorage })
-              await this.hiveworm.start()
-            } catch (err) {
-              this.emit('hiveworm-error', { error: err.message || String(err) })
-              this.hiveworm = null
-            }
-          }
-
           // Cold-start primer — runs once after a brief delay so the
           // swarm has a chance to come up before we start fetching peer
           // catalogs over HTTPS. Fire-and-forget; failures don't block
@@ -940,6 +926,21 @@ export class RelayNode extends EventEmitter {
         } catch (err) {
           this.emit('registry-error', { error: err })
           this.seedingRegistry = null
+        }
+      }
+
+      // HiveWorm game service — opt-in via config.enableHiveworm. Holds
+      // per-biome autobase logs + serves /api/hiveworm/* endpoints. Not
+      // coupled to seeding; biomes are stored separately under
+      // <config.storage>/hiveworm-data/.
+      if (this.config.enableHiveworm === true) {
+        try {
+          const hwStorage = this.config.hivewormStorage || join(this.config.storage, 'hiveworm-data')
+          this.hiveworm = new HiveWormService({ storage: hwStorage })
+          await this.hiveworm.start()
+        } catch (err) {
+          this.emit('hiveworm-error', { error: err.message || String(err) })
+          this.hiveworm = null
         }
       }
 

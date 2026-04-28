@@ -1,0 +1,650 @@
+/*
+ * HiveWorm — goofy + nostalgic + slick.
+ *
+ * Reference points: Worms 2 (Team17), Pokémon Gold/Silver route maps, Katamari
+ * Damacy, Bubble Bobble, Sayonara Wild Hearts, Earthbound. We want chunky,
+ * saturated, characterful — Saturday-morning cartoon meets late-arcade —
+ * but rendered with grown-up motion design. Goofy is the personality, slick
+ * is the quality.
+ *
+ * Palette
+ *   sky-top       #7ec8e3   warm sky-blue
+ *   sky-mid       #a8e6cf   horizon mint
+ *   grass         #7cba5f   rich saturated grass
+ *   grass-deep    #4a8a3c   tuft / shadow grass
+ *   dirt          #8b5a2b   warm brown
+ *   sun           #ffd54f
+ *   flower-red    #e74c3c
+ *   flower-yel    #f1c40f
+ *
+ * UI palette (chunky arcade)
+ *   ink           #1f1d2b   near-black with violet tilt — used for outlines
+ *   bone          #fff8e7   off-white for text fills
+ *   accent-pink   #ff5e9c   bubblegum
+ *   accent-cyan   #4fc3f7
+ *   accent-yel    #ffd54f
+ *   accent-purp   #b266ff
+ *
+ * Type
+ *   "Press Start 2P" — chunky pixel display for headings / score / KO
+ *   "VT323"          — terminal pixel for body / hints / status
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+
+:root {
+  --sky-top:    #7ec8e3;
+  --sky-mid:    #a8e6cf;
+  --grass:      #7cba5f;
+  --grass-deep: #4a8a3c;
+  --dirt:       #8b5a2b;
+  --sun:        #ffd54f;
+
+  --ink:         #1f1d2b;
+  --bone:        #fff8e7;
+  --bone-soft:   #ffe8a8;
+  --paper:       #fff5d4;
+  --shadow:      rgba(31, 29, 43, 0.28);
+
+  --pink:   #ff5e9c;
+  --lime:   #aedb45;
+  --cyan:   #4fc3f7;
+  --yel:    #ffd54f;
+  --tomato: #ff5e3a;
+  --purp:   #b266ff;
+
+  --font-display: "Press Start 2P", "Pixelify Sans", ui-monospace, monospace;
+  --font-body:    "VT323", "Press Start 2P", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #6dbbe0;            /* fallback before canvas paints */
+  color: var(--bone);
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 400;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  text-rendering: optimizeLegibility;
+  image-rendering: -webkit-optimize-contrast;
+}
+
+#world {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  background: linear-gradient(to bottom, var(--sky-top) 0%, var(--sky-mid) 55%, var(--grass) 100%);
+  cursor: crosshair;
+}
+
+.hidden { display: none !important; }
+
+/* Chunky arcade text — used everywhere a label needs presence */
+.chunk {
+  font-family: var(--font-display);
+  color: var(--bone);
+  text-shadow:
+    2px 0 0 var(--ink),
+    -2px 0 0 var(--ink),
+    0 2px 0 var(--ink),
+    0 -2px 0 var(--ink),
+    2px 2px 0 var(--ink),
+    -2px -2px 0 var(--ink),
+    2px -2px 0 var(--ink),
+    -2px 2px 0 var(--ink),
+    3px 3px 0 var(--shadow);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ─── Boot splash ────────────────────────────────────────── */
+
+#splash {
+  position: fixed; inset: 0;
+  background: linear-gradient(to bottom, var(--sky-top) 0%, var(--sky-mid) 50%, var(--grass) 100%);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+  transition: opacity 0.6s ease;
+  overflow: hidden;
+}
+#splash.hidden { opacity: 0; pointer-events: none; display: flex !important; }
+
+/* a couple of slow clouds + a sun */
+.splash-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.splash-card {
+  text-align: center;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.splash-art {
+  width: 220px;
+  height: 220px;
+  filter: drop-shadow(6px 6px 0 var(--shadow));
+  image-rendering: pixelated;
+}
+
+.splash-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 40px;
+  letter-spacing: 0.06em;
+  color: var(--bone);
+  -webkit-text-stroke: 0;
+  text-shadow:
+    3px 0 0 var(--ink),
+    -3px 0 0 var(--ink),
+    0 3px 0 var(--ink),
+    0 -3px 0 var(--ink),
+    3px 3px 0 var(--ink),
+    -3px -3px 0 var(--ink),
+    3px -3px 0 var(--ink),
+    -3px 3px 0 var(--ink),
+    6px 6px 0 var(--shadow);
+}
+
+.splash-msg {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 11px;
+  color: var(--bone);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 var(--ink);
+}
+.splash-msg::after {
+  content: '_';
+  display: inline-block;
+  margin-left: 4px;
+  animation: caret-blink 0.9s steps(2, end) infinite;
+}
+
+@keyframes caret-blink {
+  0%, 50%   { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes wave-bob {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50%      { transform: translateY(-6px) rotate(2deg); }
+}
+
+.splash-art {
+  animation: wave-bob 1.6s ease-in-out infinite;
+}
+
+/* ─── HUD scaffolding ────────────────────────────────────── */
+
+#hud {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  font-family: var(--font-body);
+}
+#hud > * { pointer-events: auto; }
+
+.hud-corner {
+  position: absolute;
+  padding: 14px;
+}
+.hud-tl { top: 0; left: 0; }
+.hud-tr { top: 0; right: 0; }
+.hud-bl { bottom: 0; left: 0; }
+.hud-br { bottom: 0; right: 0; }
+
+.hud-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Generic chunky panel: thick black outline, paper fill, hard offset shadow */
+.panel {
+  background: var(--paper);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  border-radius: 8px;
+  box-shadow: 4px 4px 0 var(--ink), 4px 4px 0 4px var(--shadow);
+  padding: 8px 12px;
+  position: relative;
+}
+
+/* ─── Score card ─────────────────────────────────────────── */
+
+.score-card {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 14px 10px 14px;
+}
+.score-label {
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--ink);
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.score-num {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--bone);
+  text-shadow:
+    2px 0 0 var(--ink), -2px 0 0 var(--ink),
+    0 2px 0 var(--ink), 0 -2px 0 var(--ink),
+    2px 2px 0 var(--ink), -2px -2px 0 var(--ink),
+    2px -2px 0 var(--ink), -2px 2px 0 var(--ink),
+    3px 4px 0 var(--shadow);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  transition: transform 0.18s cubic-bezier(.32,1.7,.6,.95);
+  display: inline-block;
+}
+.score-num.bump {
+  transform: scale(1.18);
+}
+
+/* ─── Mini-map ───────────────────────────────────────────── */
+
+.mini-card {
+  padding: 8px 8px 6px 8px;
+}
+#mini-map {
+  display: block;
+  background: var(--grass);
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  image-rendering: pixelated;
+}
+.mini-stats {
+  font-family: var(--font-display);
+  font-size: 8px;
+  letter-spacing: 0.15em;
+  text-align: center;
+  margin-top: 6px;
+  color: var(--ink);
+  text-transform: uppercase;
+}
+.mini-stats #worm-count {
+  color: var(--ink);
+  background: var(--yel);
+  border: 2px solid var(--ink);
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-right: 2px;
+}
+
+/* ─── Identity / status panel ────────────────────────────── */
+
+.ident-card {
+  font-family: var(--font-body);
+  font-size: 18px;
+  line-height: 1;
+  min-width: 220px;
+  padding: 8px 12px 10px 12px;
+}
+.ident-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-variant-numeric: tabular-nums;
+}
+.ident-label {
+  font-family: var(--font-display);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: var(--ink);
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+.ident-pubkey {
+  font-family: var(--font-body);
+  font-size: 18px;
+  color: var(--ink);
+  background: var(--bone-soft);
+  border: 2px solid var(--ink);
+  padding: 0 6px;
+  border-radius: 4px;
+}
+.ident-status[data-kind="ok"]    { color: #2c7d2c; }
+.ident-status[data-kind="warn"]  { color: #b97000; }
+.ident-status[data-kind="error"] { color: #c0392b; }
+
+#cooldown {
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink);
+  background: var(--bone-soft);
+  border: 2px solid var(--ink);
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.buttons-row { gap: 6px; margin-top: 6px; }
+
+.mini-btn {
+  font: inherit;
+  font-family: var(--font-display);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: var(--cyan);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  padding: 5px 9px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--ink);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.12s ease;
+}
+.mini-btn:hover {
+  background: var(--lime);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.mini-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+/* ─── Mute / audio button ────────────────────────────────── */
+
+.mute-btn {
+  font: inherit;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--purp);
+  color: var(--bone);
+  border: 3px solid var(--ink);
+  border-radius: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 var(--ink), 3px 3px 0 3px var(--shadow);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.12s ease;
+  text-shadow: 2px 2px 0 var(--ink);
+}
+.mute-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--ink), 4px 4px 0 3px var(--shadow);
+}
+.mute-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--ink), 0 0 0 0 var(--shadow);
+}
+.mute-btn[data-muted="1"] {
+  background: #777;
+  color: var(--bone);
+}
+
+/* ─── Big bottom button (SPAWN / RESPAWN) ────────────────── */
+
+.big-btn {
+  font: inherit;
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  background: var(--lime);
+  color: var(--bone);
+  border: 4px solid var(--ink);
+  border-radius: 14px;
+  padding: 16px 36px;
+  cursor: pointer;
+  position: relative;
+  box-shadow: 5px 5px 0 var(--ink), 5px 5px 0 5px var(--shadow);
+  text-shadow:
+    2px 0 0 var(--ink), -2px 0 0 var(--ink),
+    0 2px 0 var(--ink), 0 -2px 0 var(--ink),
+    2px 2px 0 var(--ink), -2px -2px 0 var(--ink),
+    2px -2px 0 var(--ink), -2px 2px 0 var(--ink),
+    3px 4px 0 rgba(0,0,0,0.25);
+  transition: transform 0.1s cubic-bezier(.32,1.6,.6,.95), box-shadow 0.1s ease, background 0.15s ease;
+}
+.big-btn:hover {
+  transform: translate(-2px, -2px) rotate(-1deg);
+  box-shadow: 7px 7px 0 var(--ink), 7px 7px 0 5px var(--shadow);
+  background: var(--yel);
+}
+.big-btn:active {
+  transform: translate(3px, 3px) rotate(0);
+  box-shadow: 1px 1px 0 var(--ink), 1px 1px 0 5px var(--shadow);
+}
+
+#respawn-btn {
+  background: var(--pink);
+}
+#respawn-btn:hover {
+  background: var(--tomato);
+}
+
+.bounce-in {
+  animation: chunky-bounce-in 0.55s cubic-bezier(.32,1.7,.6,.95);
+}
+@keyframes chunky-bounce-in {
+  0%   { opacity: 0; transform: translateY(28px) scale(0.7) rotate(-6deg); }
+  60%  { opacity: 1; transform: translateY(-6px) scale(1.08) rotate(2deg); }
+  80%  { transform: translateY(2px) scale(0.97) rotate(-1deg); }
+  100% { transform: translateY(0) scale(1) rotate(0); }
+}
+
+.move-hint {
+  font-family: var(--font-body);
+  font-size: 18px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  padding: 6px 14px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+/* ─── Tooltips / toasts ──────────────────────────────────── */
+
+#first-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: 130px;
+  transform: translateX(-50%);
+  background: var(--bone);
+  color: var(--ink);
+  padding: 8px 18px;
+  font-family: var(--font-body);
+  font-size: 18px;
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: 4px 4px 0 var(--ink);
+  animation: nudge 1.6s ease-in-out infinite;
+}
+.tooltip-arrow {
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 14px; height: 14px;
+  background: var(--bone);
+  border-right: 3px solid var(--ink);
+  border-bottom: 3px solid var(--ink);
+}
+@keyframes nudge {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50%      { transform: translateX(-50%) translateY(-4px); }
+}
+
+.hint {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--paper);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  padding: 8px 18px;
+  font-family: var(--font-body);
+  font-size: 18px;
+  letter-spacing: 0.02em;
+  max-width: 80%;
+  text-align: center;
+  z-index: 30;
+  border-radius: 10px;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.reason-toast {
+  position: absolute;
+  bottom: 130px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--tomato);
+  color: var(--bone);
+  border: 3px solid var(--ink);
+  padding: 6px 16px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 var(--ink);
+  border-radius: 10px;
+  box-shadow: 4px 4px 0 var(--ink);
+  z-index: 25;
+  animation: shimmy 0.4s cubic-bezier(.32,1.7,.6,.95);
+}
+@keyframes shimmy {
+  0%   { transform: translateX(-50%) translateY(8px) rotate(-2deg); opacity: 0; }
+  60%  { transform: translateX(-50%) translateY(-2px) rotate(1.5deg); opacity: 1; }
+  100% { transform: translateX(-50%) translateY(0) rotate(0); opacity: 1; }
+}
+
+/* ─── KO / death banner ──────────────────────────────────── */
+
+#ko-banner {
+  position: fixed;
+  left: 50%;
+  top: 38%;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-display);
+  font-size: 96px;
+  color: var(--bone);
+  text-shadow:
+    5px 0 0 var(--ink), -5px 0 0 var(--ink),
+    0 5px 0 var(--ink), 0 -5px 0 var(--ink),
+    5px 5px 0 var(--ink), -5px -5px 0 var(--ink),
+    5px -5px 0 var(--ink), -5px 5px 0 var(--ink),
+    8px 10px 0 rgba(0,0,0,0.35);
+  pointer-events: none;
+  z-index: 40;
+  letter-spacing: 0.08em;
+  transform-origin: 50% 50%;
+}
+#ko-banner.show {
+  animation: ko-impact 1.6s cubic-bezier(.18,1.9,.4,1.05) forwards;
+}
+@keyframes ko-impact {
+  0%   { transform: translate(-50%,-50%) scale(0.2) rotate(-12deg); opacity: 0; }
+  20%  { transform: translate(-50%,-50%) scale(1.4) rotate(6deg); opacity: 1; }
+  35%  { transform: translate(-50%,-50%) scale(0.95) rotate(-3deg); }
+  50%  { transform: translate(-50%,-50%) scale(1.05) rotate(1deg); }
+  65%  { transform: translate(-50%,-50%) scale(1) rotate(0); }
+  100% { transform: translate(-50%,-50%) scale(1) rotate(0); opacity: 1; }
+}
+
+/* ─── Touch directional pad ──────────────────────────────── */
+
+#touch-pad-host {
+  position: absolute;
+  bottom: 110px;
+  right: 18px;
+  pointer-events: auto;
+}
+.touch-pad {
+  position: relative;
+  width: 156px;
+  height: 156px;
+}
+.touch-btn {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  border-radius: 8px;
+  font-size: 22px;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.touch-btn:active {
+  background: var(--yel);
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--ink);
+}
+.touch-up    { top: 0;    left: 52px; }
+.touch-down  { bottom: 0; left: 52px; transform: rotate(180deg); }
+.touch-left  { top: 52px; left: 0;    transform: rotate(-90deg); }
+.touch-right { top: 52px; right: 0;   transform: rotate(90deg); }
+
+/* ─── Death white-flash overlay ──────────────────────────── */
+
+.flash::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  background: rgba(255, 255, 255, 0.85);
+  animation: flash-fade 0.22s ease-out forwards;
+}
+@keyframes flash-fade {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ─── Mobile adjustments ─────────────────────────────────── */
+
+@media (max-width: 720px) {
+  .score-num { font-size: 24px; }
+  .ident-card { font-size: 15px; min-width: 170px; }
+  .big-btn { font-size: 14px; padding: 13px 26px; letter-spacing: 0.12em; border-width: 3px; }
+  .hud-bottom { bottom: 18px; }
+  .hud-corner { padding: 8px; }
+  #mini-map { width: 96px; height: 96px; }
+  .splash-title { font-size: 28px; }
+  .splash-art { width: 160px; height: 160px; }
+  #ko-banner { font-size: 64px; }
+}
+
+/* ─── Reduced motion ─────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

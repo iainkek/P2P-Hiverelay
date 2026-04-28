@@ -31,12 +31,12 @@ export class DashboardFeed {
     this.wss = new WebSocketServer({ noServer: true })
 
     // Handle upgrade requests on path /ws
-    this.server.on('upgrade', (req, socket, head) => {
+    // We only handle our own path and return silently otherwise so other
+    // upgrade listeners (e.g. the HiveWorm event feed) can route their
+    // own paths from the same HTTP server.
+    this._upgradeHandler = (req, socket, head) => {
       const url = new URL(req.url, 'http://localhost')
-      if (url.pathname !== '/ws') {
-        socket.destroy()
-        return
-      }
+      if (url.pathname !== '/ws') return
 
       // Validate Origin header when CORS is restricted
       if (this.corsOrigins !== '*') {
@@ -64,7 +64,8 @@ export class DashboardFeed {
       this.wss.handleUpgrade(req, socket, head, (ws) => {
         this.wss.emit('connection', ws, req)
       })
-    })
+    }
+    this.server.on('upgrade', this._upgradeHandler)
 
     this.wss.on('connection', (ws) => {
       this.clientCount++
@@ -125,6 +126,12 @@ export class DashboardFeed {
       target.removeListener(event, handler)
     }
     this._eventListeners = []
+
+    // Detach the upgrade handler so the HTTP server can be reused
+    if (this._upgradeHandler && this.server) {
+      this.server.removeListener('upgrade', this._upgradeHandler)
+      this._upgradeHandler = null
+    }
 
     // Close all connected clients
     if (this.wss) {

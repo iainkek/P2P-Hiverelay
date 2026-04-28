@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hiveworm-app",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8089"],
+      "port": 8089,
+      "url": "http://localhost:8089/?relay=http://127.0.0.1:9189"
+    }
+  ]
+}

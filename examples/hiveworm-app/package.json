@@ -1,0 +1,17 @@
+{
+  "name": "hiveworm-app",
+  "version": "0.1.0",
+  "description": "HiveWorm — perpetual P2P life-sim browser frontend for HiveRelay",
+  "type": "module",
+  "private": true,
+  "main": "index.html",
+  "scripts": {
+    "start": "node serve.js",
+    "serve": "python3 -m http.server 8080"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^2.1.0"
+  },
+  "browser": true,
+  "keywords": ["hiverelay", "hiveworm", "p2p", "game", "static"]
+}
