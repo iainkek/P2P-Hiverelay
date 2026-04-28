@@ -51,9 +51,50 @@ export class World {
 
   cellKey (x, y) { return x + ',' + y }
 
+  // Deterministic FNV-1a — same biome key produces same food layout on every
+  // peer. Mirrors server/state.js _prng so a relay-anchored biome and a
+  // pure-P2P biome agree on food placement.
+  _prng (seedHex, label, n) {
+    let h = 0x811c9dc5
+    const data = seedHex + ':' + label + ':' + n
+    for (let i = 0; i < data.length; i++) {
+      h ^= data.charCodeAt(i)
+      h = Math.imul(h, 0x01000193) >>> 0
+    }
+    return h
+  }
+
   /**
-   * Replace world from the relay's /state JSON. Snaps any newly seen
-   * worms; leaves existing render state in place where possible.
+   * Seed the meadow with deterministic food given a biome key. Used when
+   * we boot in pure-P2P mode (no relay state to load from). All peers on
+   * the same biome derive the same initial layout.
+   */
+  seedFood (biomeKey, now) {
+    this.food.clear()
+    const target = this.config.targetFoodCount
+    let n = 0
+    let i = 0
+    while (n < target && i < target * 4) {
+      const x = this._prng(biomeKey, 'fx', i) % this.config.width
+      const y = this._prng(biomeKey, 'fy', i) % this.config.height
+      const k = this.cellKey(x, y)
+      if (!this.food.has(k)) {
+        this.food.set(k, {
+          x, y, value: 1,
+          born: now || performance.now(),
+          pulse: Math.random() * Math.PI * 2,
+          rare: ((x * 31 + y * 17) % 23) === 0
+        })
+        n++
+      }
+      i++
+    }
+  }
+
+  /**
+   * Replace world from a relay's /state JSON or a peer-shared snapshot.
+   * Snaps newly seen worms; leaves existing render state in place where
+   * possible.
    */
   loadState (stateJson, now) {
     if (!stateJson) return

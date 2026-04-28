@@ -62,9 +62,15 @@ async function main () {
   world.on('spawned', (e) => onSpawn(e))
 
   network = new Network({
-    relayBase: config.relayBase,
     biome: config.defaultBiome,
-    onState: (st) => world.loadState(st, performance.now()),
+    onState: (st) => {
+      world.loadState(st, performance.now())
+      // Bootstrap snapshots have an empty food list — seed deterministic
+      // food locally so every peer on this biome agrees on the layout.
+      if (st && st._bootstrap) {
+        world.seedFood(config.defaultBiome, performance.now())
+      }
+    },
     onEntry: (entry) => {
       world.applyEntry(entry, performance.now())
       const me = world.worms.get(identity.publicKeyHex)
@@ -72,7 +78,35 @@ async function main () {
       updateUiForWormState()
     },
     onError: (err) => {
-      setStatus('relay error: ' + err.message, 'warn')
+      setStatus('network error: ' + err.message, 'warn')
+    },
+    onPeerCount: (n) => {
+      if (wormCountEl) {
+        wormCountEl.textContent = (n + 1) + (n === 0 ? ' (alone)' : ' worms')
+      }
+    }
+  })
+
+  // Late-joining peers ask for a snapshot — share what we know.
+  network.setSnapshotProvider(() => {
+    const worms = []
+    for (const w of world.worms.values()) {
+      worms.push({
+        pubkey: w.pubkey,
+        segments: w.targetSegments || [],
+        length: w.length,
+        alive: w.alive,
+        lastMoveTs: w.lastMoveTs,
+        bornAt: w.bornAt
+      })
+    }
+    return {
+      tick: world.tick,
+      worms,
+      food: [...world.food.values()].map(f => ({ x: f.x, y: f.y, value: f.value })),
+      deaths: world.deaths.slice(-50),
+      memorials: world.memorials.slice(-50),
+      config: world.config
     }
   })
 
@@ -94,19 +128,13 @@ async function main () {
     input.mountTouchPad(touchPadHost)
   }
 
-  // ─── Initial state pull ─────────────────────────────────
-  try {
-    const initialState = await network.getState()
-    world.loadState(initialState, performance.now())
-    setStatus('connected')
-  } catch (err) {
-    setStatus('cant reach relay (' + config.relayBase + ')', 'warn')
-    showHint(
-      'no relay at ' + config.relayBase + '. start one with enableHiveworm:true, or pass ?relay=… in the URL.',
-      8000
-    )
+  // ─── Network start (P2P swarm if PearBrowser, local otherwise) ────
+  await network.start()
+  if (network.mode === 'pearbrowser') {
+    setStatus('p2p — swarm.v1')
+  } else {
+    setStatus('local play (open in PearBrowser for multiplayer)')
   }
-  network.start()
 
   // Splash off, HUD on — slight delay so the splash bounces in
   setTimeout(() => {

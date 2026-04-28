@@ -1,33 +1,25 @@
 // HiveWorm browser config
 //
-// All configuration the frontend needs lives here. Edit `relayBase` to point
-// at your local relay (default: http://localhost:9100). Edit `defaultBiome`
-// to start in a specific biome — for now this is a placeholder all-zero key.
+// HiveWorm runs entirely in the browser. In PearBrowser desktop v0.3+ it
+// uses window.pear.swarm.v1 to talk peer-to-peer with other players.
+// In any other browser it falls back to single-player local mode.
 //
-// When you publish this bundle as a Hyperdrive, ship a built version with
-// the real foundation biome key baked in (or read from a query string).
+// There is no "relay" config anymore — HiveWorm is just a static bundle
+// that gets seeded onto the network like any other Hyperdrive.
 
 export const config = {
-  // HTTP base of the relay this client talks to. The relay must be started
-  // with `enableHiveworm: true` for the /api/hiveworm/* endpoints to work.
-  relayBase: 'http://localhost:9100',
-
-  // 32-byte (64 hex char) biome key. The "foundation biome" is an all-zero
-  // placeholder so the bundle works out of the box against a fresh relay.
-  // Replace with your operator's foundation key when shipping.
+  // 32-byte (64 hex char) biome key. Each biome is its own meadow with
+  // its own food layout (deterministic from this key) and its own
+  // multiplayer swarm topic. Change this to spin up a fresh world.
   defaultBiome: '0000000000000000000000000000000000000000000000000000000000000001',
 
   // Render constants
   cellSize: 24,
   viewportPadding: 60,
 
-  // Network
-  pollFallbackMs: 2000, // poll /state if WS unreachable
-  reconnectDelayMs: 1500,
-
-  // Move cooldown — must match relay's biome config (default 5s).
-  // The relay is the source of truth; this is just so the UI can hint
-  // at the cooldown without round-tripping a state fetch.
+  // Move cooldown — must match the cooldown used by every peer on this
+  // biome, otherwise validation will reject moves that arrive "too soon"
+  // by one peer's clock.
   moveCooldownMs: 5000,
 
   // Viewport behavior
@@ -37,22 +29,18 @@ export const config = {
   // Audio
   defaultMuted: false,
 
-  // World defaults — only used until /state arrives. After that the
-  // server-derived config overrides these.
+  // World defaults — until a snapshot from a peer overrides them.
   worldWidth: 200,
   worldHeight: 200
 }
 
-// Allow overriding via URL query string for quick experiments without
-// rebuilding. Examples:
-//   ?relay=http://10.0.0.5:9100
-//   ?biome=abc123...
-//   ?backup=1   (forces a backup prompt on load)
+// Allow overriding via URL query string for quick experiments.
+//   ?biome=abc123…    — use a different biome
+//   ?backup=1         — force a backup prompt on load
 function parseQuery () {
   if (typeof window === 'undefined') return {}
   const out = {}
   const sp = new URLSearchParams(window.location.search)
-  if (sp.get('relay')) out.relayBase = sp.get('relay')
   if (sp.get('biome')) out.defaultBiome = sp.get('biome')
   if (sp.get('backup') === '1') out.promptBackup = true
   return out

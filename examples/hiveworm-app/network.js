@@ -1,175 +1,232 @@
-// HiveWorm — relay HTTP/WS client
+// HiveWorm — peer-to-peer network layer
 //
-// Wraps the four endpoints documented in packages/core/core/relay-node/api.js:
-//   GET  /api/hiveworm/biomes
-//   GET  /api/hiveworm/<biome>/state
-//   GET  /api/hiveworm/<biome>/log?from=<idx>
-//   POST /api/hiveworm/<biome>/move
-//   WS   /api/hiveworm/<biome>/events    (designed for; falls back to polling)
+// HiveWorm is a standalone app: there is no game-server. Players exchange
+// signed entries directly via Hyperswarm, and each client maintains its own
+// view of the world by replaying entries.
 //
-// The WS endpoint is being built by another agent — this client tries it
-// first and gracefully degrades to polling /state every config.pollFallbackMs
-// if WS isn't available or fails.
+// Three runtime modes, picked at start():
+//
+//   1. PearBrowser desktop v0.3+ (window.pear.swarm.v1)
+//      → join a drive-derived topic (Tier A, no consent prompt)
+//      → broadcast moves to peers, receive theirs
+//
+//   2. Any other browser
+//      → single-player local mode. The world is generated deterministically
+//        from the biome key; you can play but no one else sees you.
+//
+// The interface (start, stop, submitMove, callbacks) is the same in both
+// modes so game.js doesn't care which one is running.
+//
+// Wire format on the swarm:
+//   { kind: 'entry',     entry: <signed entry> }   announce a single move
+//   { kind: 'snapshot',  state: <world JSON>   }   share full state w/ a peer
+//   { kind: 'sync-req'                          }   ask for a snapshot
+//
+// Snapshot/sync-req exist so a late-joiner doesn't see an empty meadow when
+// other players are already running around.
 
 import { config } from './config.js'
 
+const SUBTOPIC_PREFIX = 'hiveworm/biome/'
+const PROTOCOL_NAME = 'hiveworm'
+const PROTOCOL_VERSION = 1
+
 export class Network {
-  constructor ({ relayBase, biome, onEntry, onState, onError } = {}) {
-    this.relayBase = (relayBase || config.relayBase).replace(/\/+$/, '')
+  constructor ({ biome, onEntry, onState, onError, onPeerCount } = {}) {
     this.biome = biome || config.defaultBiome
     this.onEntry = onEntry || (() => {})
     this.onState = onState || (() => {})
     this.onError = onError || (() => {})
+    this.onPeerCount = onPeerCount || (() => {})
 
-    this._ws = null
-    this._wsState = 'idle' // 'idle' | 'connecting' | 'open' | 'closed'
-    this._pollTimer = null
-    this._lastLogIndex = 0
+    this.mode = 'unknown' // 'pearbrowser' | 'local'
+    this.channel = null
     this._stopped = false
+
+    // Track recent broadcasts so we don't echo our own messages back to
+    // ourselves if a peer rebroadcasts us
+    this._sentNonces = new Set()
+    this._sentNonceQueue = []
+    this._maxRememberedNonces = 1024
   }
 
-  // ─── HTTP ─────────────────────────────────────────────────
+  // ─── Lifecycle ────────────────────────────────────────────
 
-  async listBiomes () {
-    const r = await fetch(this.relayBase + '/api/hiveworm/biomes')
-    if (!r.ok) throw new Error('listBiomes: ' + r.status)
-    return r.json()
-  }
-
-  async getState () {
-    const r = await fetch(this.relayBase + '/api/hiveworm/' + this.biome + '/state')
-    if (!r.ok) throw new Error('getState: HTTP ' + r.status)
-    return r.json()
-  }
-
-  async getLog (fromIdx = 0) {
-    const r = await fetch(this.relayBase + '/api/hiveworm/' + this.biome + '/log?from=' + fromIdx)
-    if (!r.ok) throw new Error('getLog: HTTP ' + r.status)
-    return r.json()
-  }
-
-  /**
-   * POST a signed entry to /move. Returns:
-   *   { ok: true, index, tick }
-   *   { ok: false, reason, layer }   on 422
-   * Throws on transport / 500-class errors.
-   */
-  async submitMove (signedEntry) {
-    const url = this.relayBase + '/api/hiveworm/' + this.biome + '/move'
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(signedEntry)
-    })
-    let body
-    try { body = await r.json() } catch (_) { body = null }
-    if (r.status === 422) {
-      return { ok: false, reason: body?.error || 'rejected', layer: body?.layer || 'unknown' }
+  async start () {
+    if (this._stopped) return
+    if (typeof window !== 'undefined' && window.pear?.swarm?.v1) {
+      try {
+        await this._startSwarm()
+        return
+      } catch (err) {
+        console.warn('[hiveworm] swarm.v1 join failed; dropping to local mode', err)
+        this.onError(err)
+      }
     }
-    if (!r.ok) {
-      throw new Error('submitMove: HTTP ' + r.status + ' ' + (body?.error || ''))
-    }
-    return { ok: true, index: body.index, tick: body.tick }
-  }
-
-  // ─── Live updates: WS first, polling fallback ────────────
-
-  start () {
-    this._stopped = false
-    this._connectWs()
+    this._startLocal()
   }
 
   stop () {
     this._stopped = true
-    if (this._ws) {
-      try { this._ws.close() } catch (_) {}
-      this._ws = null
-    }
-    if (this._pollTimer) {
-      clearTimeout(this._pollTimer)
-      this._pollTimer = null
+    if (this.channel) {
+      try { this.channel.destroy() } catch (_) {}
+      this.channel = null
     }
   }
 
-  _connectWs () {
-    if (this._stopped) return
-    const wsUrl = this.relayBase.replace(/^http/, 'ws') +
-      '/api/hiveworm/' + this.biome + '/events'
-    this._wsState = 'connecting'
-    let ws
-    try {
-      ws = new WebSocket(wsUrl)
-    } catch (err) {
-      this._fallbackToPolling('ws-construct-failed: ' + err.message)
-      return
-    }
-    this._ws = ws
+  // ─── PearBrowser swarm.v1 mode ────────────────────────────
 
-    let opened = false
-    ws.addEventListener('open', () => {
-      opened = true
-      this._wsState = 'open'
+  async _startSwarm () {
+    const subtopic = SUBTOPIC_PREFIX + this.biome.slice(0, 32)
+    this.channel = await window.pear.swarm.v1.join(null, {
+      subtopic,
+      protocol: PROTOCOL_NAME,
+      version: PROTOCOL_VERSION,
+      appName: 'HiveWorm'
     })
-    ws.addEventListener('message', (ev) => {
+    this.mode = 'pearbrowser'
+
+    this.channel.on('peer', (peer) => {
+      this._reportPeerCount()
+      // Ask a freshly-discovered peer for a snapshot so we don't see an
+      // empty meadow if others are already playing.
+      this._sendTo(peer, { kind: 'sync-req' })
+    })
+
+    this.channel.on('peer-leave', () => this._reportPeerCount())
+
+    this.channel.on('message', (peer, data) => {
       let msg
-      try { msg = JSON.parse(ev.data) } catch (_) { return }
-      // Expected envelopes (designed for the other agent's WS):
-      //   { type: 'entry', entry: {...} }
-      //   { type: 'state', state: {...} }
-      // Be generous: accept bare entries / states too.
-      if (msg && msg.type === 'entry' && msg.entry) {
+      try { msg = JSON.parse(new TextDecoder().decode(data)) } catch (_) { return }
+      if (!msg || typeof msg.kind !== 'string') return
+
+      if (msg.kind === 'entry' && msg.entry && typeof msg.entry.schema === 'string') {
+        if (msg.entry.nonce && this._sentNonces.has(msg.entry.nonce)) return // ours
         this.onEntry(msg.entry)
-      } else if (msg && msg.type === 'state' && msg.state) {
+      } else if (msg.kind === 'snapshot' && msg.state) {
         this.onState(msg.state)
-      } else if (msg && msg.schema && typeof msg.schema === 'string') {
-        this.onEntry(msg)
-      } else if (msg && msg.worms && msg.food) {
-        this.onState(msg)
+      } else if (msg.kind === 'sync-req') {
+        // Caller will plug in a snapshot provider via setSnapshotProvider();
+        // until they do, ignore the request.
+        if (this._snapshotProvider) {
+          const state = this._snapshotProvider()
+          if (state) this._sendTo(peer, { kind: 'snapshot', state })
+        }
       }
     })
-    ws.addEventListener('close', () => {
-      this._wsState = 'closed'
-      if (this._stopped) return
-      if (!opened) {
-        // Never connected — fall back to polling
-        this._fallbackToPolling('ws-never-opened')
-      } else {
-        // Was connected; try to reconnect after a short delay
-        setTimeout(() => this._connectWs(), config.reconnectDelayMs)
-      }
-    })
-    ws.addEventListener('error', () => {
-      // 'error' fires before 'close' — let 'close' handle reconnection.
+
+    this.channel.on('error', (err) => this.onError(err))
+    this.channel.on('closed', () => { this.channel = null })
+
+    // Bootstrap world locally from biome key — peers will overlay their
+    // own state via subsequent snapshot/entry messages.
+    this._emitBootstrapState()
+  }
+
+  // ─── Single-player local mode ─────────────────────────────
+
+  _startLocal () {
+    this.mode = 'local'
+    this._emitBootstrapState()
+  }
+
+  // ─── Submit / broadcast ───────────────────────────────────
+
+  /**
+   * Apply a signed entry to the world (handled by caller via onEntry) and
+   * broadcast it to all peers.
+   *
+   * Returns { ok: true, local: true } — the relay-server's reject reasons
+   * (race-lost, biome-mismatch, etc.) don't apply in pure-P2P; validation
+   * is the caller's job before submit.
+   */
+  async submitMove (signedEntry) {
+    if (this._stopped) return { ok: false, reason: 'stopped' }
+    if (signedEntry?.nonce) this._rememberNonce(signedEntry.nonce)
+    this._broadcast({ kind: 'entry', entry: signedEntry })
+    // Caller still applies via onEntry — pure-P2P trust model.
+    this.onEntry(signedEntry)
+    return { ok: true, local: true }
+  }
+
+  /**
+   * Caller (game.js) plugs in a function that returns the current
+   * WorldState JSON. We invoke it when a peer asks for a snapshot.
+   */
+  setSnapshotProvider (fn) {
+    this._snapshotProvider = fn
+  }
+
+  // ─── Helpers ──────────────────────────────────────────────
+
+  _emitBootstrapState () {
+    // Empty world, deterministic config. world.seedFood(biome) draws the
+    // food deterministically so all peers agree on the layout.
+    this.onState({
+      tick: 0,
+      worms: [],
+      food: [], // intentionally empty — caller calls world.seedFood
+      deaths: [],
+      memorials: [],
+      config: {
+        width: config.worldWidth,
+        height: config.worldHeight,
+        moveCooldownMs: config.moveCooldownMs,
+        spawnLength: 3,
+        targetFoodCount: 50
+      },
+      _bootstrap: true
     })
   }
 
-  _fallbackToPolling (why) {
-    if (this._stopped) return
-    if (this._pollTimer) return
-    // We don't surface this loudly — UI will pick up state via onState.
-    console.info('[hiveworm] WS unavailable (' + why + '); polling /state every ' + config.pollFallbackMs + 'ms')
-    this._poll()
+  _broadcast (msg) {
+    if (!this.channel || !this.channel.peers) return
+    const buf = new TextEncoder().encode(JSON.stringify(msg))
+    for (const peer of this.channel.peers) {
+      try { peer.send(buf) } catch (_) {}
+    }
   }
 
-  async _poll () {
-    if (this._stopped) return
+  _sendTo (peer, msg) {
     try {
-      const log = await this.getLog(this._lastLogIndex)
-      if (Array.isArray(log.entries) && log.entries.length > 0) {
-        for (const e of log.entries) this.onEntry(e)
-        this._lastLogIndex = log.from + log.entries.length
-      } else if (this._lastLogIndex === 0) {
-        // First poll — no entries yet; pull state instead
-        const st = await this.getState()
-        this.onState(st)
-        // The state alone tells us where we are; tick != log index, but
-        // the log getLog will resync naturally next tick.
+      const buf = new TextEncoder().encode(JSON.stringify(msg))
+      peer.send(buf)
+    } catch (_) {}
+  }
+
+  _reportPeerCount () {
+    const n = this.channel?.peers?.length || 0
+    this.onPeerCount(n)
+  }
+
+  _rememberNonce (nonce) {
+    if (this._sentNonces.has(nonce)) return
+    this._sentNonces.add(nonce)
+    this._sentNonceQueue.push(nonce)
+    if (this._sentNonceQueue.length > this._maxRememberedNonces) {
+      const evicted = this._sentNonceQueue.shift()
+      this._sentNonces.delete(evicted)
+    }
+  }
+
+  // ─── Compatibility shims for callers that expected the relay API ──
+
+  // The old code calls network.getState() at startup. In pure-P2P there is
+  // no /state endpoint — return the bootstrap snapshot synchronously.
+  async getState () {
+    return {
+      tick: 0,
+      worms: [],
+      food: [],
+      deaths: [],
+      memorials: [],
+      config: {
+        width: config.worldWidth,
+        height: config.worldHeight,
+        moveCooldownMs: config.moveCooldownMs,
+        spawnLength: 3,
+        targetFoodCount: 50
       }
-    } catch (err) {
-      this.onError(err)
-    } finally {
-      if (this._stopped) return
-      this._pollTimer = setTimeout(() => this._poll(), config.pollFallbackMs)
     }
   }
 }
