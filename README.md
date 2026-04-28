@@ -1,6 +1,8 @@
 # HiveRelay
 
-**Always-on relay infrastructure for the Pear & Hyperswarm ecosystem.**
+**General-purpose blind P2P relays — for any P2P app to stay online forever.**
+
+Drop-in, always-on relay infrastructure for **any** Hyperswarm-based app. Your data stays end-to-end encrypted; the relay literally can't read a byte. Works with anything built on Hyperswarm, Hyperdrive, Hyperbee, Pear/Bare, or raw DHT — not Pear-specific, not browser-specific, not opinionated about your stack. Plug it in and your users stop seeing "offline".
 
 **Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.5.x stable, v0.6.0 in pipeline**
 
