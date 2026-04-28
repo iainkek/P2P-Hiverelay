@@ -266,6 +266,8 @@ export class RelayNode extends EventEmitter {
     this._lastReplicationCheckAt = null
     this._anchorCheckInterval = null
     this._lastAnchorCheckAt = null
+    this._repairInterval = null
+    this._lastRepairAt = null
     this.running = false
   }
 
@@ -747,7 +749,20 @@ export class RelayNode extends EventEmitter {
             const now = Date.now()
             for (const app of apps) {
               const appKey = app.appKey || app.driveKey
-              if (!appKey || this.appRegistry.has(appKey)) continue
+              if (!appKey) continue
+
+              // Cross-relay self-heal: if the peer says they have this drive
+              // anchored AND we have it (but unanchored), kick a targeted
+              // repair pass. The peer is right there on the swarm — the pull
+              // should succeed quickly.
+              if (app.anchored === true && this.appRegistry.has(appKey)) {
+                const existing = this.appRegistry.get(appKey)
+                if (existing && existing.anchored !== true) {
+                  this._scheduleTargetedRepair(appKey)
+                }
+              }
+
+              if (this.appRegistry.has(appKey)) continue
               if (app.seededAt && this.config.catalogMaxAppAgeMs > 0) {
                 if ((now - app.seededAt) > this.config.catalogMaxAppAgeMs) continue
               }
@@ -865,6 +880,7 @@ export class RelayNode extends EventEmitter {
 
           this._startReplicationMonitor()
           this._startAnchorMonitor()
+          this._startRepairMonitor()
         } catch (err) {
           this.emit('registry-error', { error: err })
           this.seedingRegistry = null
@@ -950,6 +966,7 @@ export class RelayNode extends EventEmitter {
       if (this._registryScanInterval) { clearInterval(this._registryScanInterval); this._registryScanInterval = null }
       if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }
       if (this._anchorCheckInterval) { clearInterval(this._anchorCheckInterval); this._anchorCheckInterval = null }
+      if (this._repairInterval) { clearInterval(this._repairInterval); this._repairInterval = null }
       if (this.seedingRegistry) { try { await this.seedingRegistry.stop() } catch (_) {} this.seedingRegistry = null }
       if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
       if (this.holesailTransport) { try { await this.holesailTransport.stop() } catch (_) {} this.holesailTransport = null }
@@ -1839,6 +1856,59 @@ export class RelayNode extends EventEmitter {
     setTimeout(() => {
       this._runAnchorCheck().catch(() => {})
     }, 5000)
+  }
+
+  // ─── Self-heal repair loop ────────────────────────────────────
+  //
+  // Periodically attempt to pull blocks for unanchored drives. This is
+  // the cross-relay replication primitive: even if the original
+  // publisher went offline, ANY relay (or returning publisher) that has
+  // the data will fulfill our pull. Eventually consistent — drives
+  // converge to "anchored on every relay that accepted them" as long
+  // as at least one node has a copy.
+  _startRepairMonitor () {
+    if (this._repairInterval) {
+      clearInterval(this._repairInterval)
+      this._repairInterval = null
+    }
+    // Default 10 min. Lower bound 60s to avoid hammering the swarm.
+    const intervalMs = Math.max(60_000, Number(this.config.repairInterval) || 600_000)
+    this._repairInterval = setInterval(() => {
+      this._runRepairPass().catch((err) => {
+        this.emit('repair-error', { error: err.message || String(err) })
+      })
+    }, intervalMs)
+    if (this._repairInterval.unref) this._repairInterval.unref()
+
+    // First pass shortly after startup so we attempt to recover ghost
+    // entries from the previous run.
+    setTimeout(() => {
+      this._runRepairPass().catch(() => {})
+    }, 30_000)
+  }
+
+  async _runRepairPass () {
+    if (!this.appLifecycle || typeof this.appLifecycle.runRepairPass !== 'function') return
+    if (!this.config.enableRepair && this.config.enableRepair !== undefined) return
+    const result = await this.appLifecycle.runRepairPass({
+      maxConcurrent: Number(this.config.repairMaxConcurrent) || 3
+    })
+    this._lastRepairAt = Date.now()
+    this.emit('repair-pass', { ...result, at: this._lastRepairAt })
+  }
+
+  /**
+   * Triggered when a peer relay's catalog tells us they have anchored a
+   * drive that we have unanchored. Kick a repair attempt for that
+   * specific drive immediately rather than waiting for the next pass.
+   */
+  _scheduleTargetedRepair (appKeyHex) {
+    if (!this.appLifecycle || typeof this.appLifecycle.repairUnanchored !== 'function') return
+    if (!this.appRegistry) return
+    const entry = this.appRegistry.get(appKeyHex)
+    if (!entry || entry.anchored === true) return
+    // Fire-and-forget; runRepairPass will retry if this one fails
+    this.appLifecycle.repairUnanchored(appKeyHex).catch(() => {})
   }
 
   async _checkReplicationHealth () {

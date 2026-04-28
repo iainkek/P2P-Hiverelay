@@ -364,6 +364,134 @@ export class AppLifecycle extends EventEmitter {
     }
   }
 
+  /**
+   * One-shot repair attempt for a single unanchored drive.
+   * Triggered by:
+   *   - the periodic repair loop (every config.repairInterval ms)
+   *   - immediate trigger when a peer relay's catalog reports anchored:true
+   *     for a drive we have but haven't anchored
+   *
+   * Uses the existing drive instance + swarm membership — no need to
+   * rejoin discovery topics. Just tries `drive.update + drive.download`
+   * with a short timeout. If any peer (original publisher OR another
+   * relay) has blocks for this drive, we pull them.
+   *
+   * Returns true if the drive was successfully anchored on this attempt.
+   */
+  async repairUnanchored (appKeyHex, opts = {}) {
+    const node = this.node
+    if (!node.appRegistry) return false
+    const entry = node.appRegistry.get(appKeyHex)
+    if (!entry || !entry.drive) return false
+    if (entry.anchored === true) return true // already anchored, nothing to do
+
+    const drive = entry.drive
+    if (drive.closed || drive.closing) return false
+
+    const updateTimeout = opts.updateTimeout || 15_000
+    const downloadTimeout = opts.downloadTimeout || 60_000
+
+    // Re-announce on the discovery topic in case the swarm dropped us
+    try {
+      node.swarm.join(drive.discoveryKey, { server: true, client: true })
+      await Promise.race([
+        node.swarm.flush().catch(() => {}),
+        new Promise(resolve => {
+          const t = setTimeout(resolve, 2000)
+          if (t.unref) t.unref()
+        })
+      ])
+    } catch (_) { /* swarm-leave-during-repair race */ }
+
+    if (drive.closed || drive.closing) return false
+
+    try {
+      await Promise.race([
+        drive.update({ wait: true }),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('REPAIR_UPDATE_TIMEOUT')), updateTimeout))
+      ])
+    } catch (err) {
+      this.emit('repair-update-failed', { appKey: appKeyHex, error: err.message })
+      return false
+    }
+
+    if (drive.closed || drive.closing || drive.version === 0) {
+      // Still no version — no peer has data for this drive yet
+      if (typeof node.appRegistry.recordAnchorCheck === 'function') {
+        node.appRegistry.recordAnchorCheck(appKeyHex)
+      }
+      return false
+    }
+
+    // We have metadata; pull blob content
+    try {
+      const dl = drive.download('/')
+      await Promise.race([
+        dl.done(),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('REPAIR_DOWNLOAD_TIMEOUT')), downloadTimeout))
+      ]).catch(() => {}) // partial download still counts — version is what matters
+
+      if (drive.closed || drive.closing) return false
+
+      if (drive.version > 0) {
+        node.appRegistry.setAnchored(appKeyHex, drive.version)
+        this.emit('anchored', { appKey: appKeyHex, version: drive.version, source: 'repair' })
+        return true
+      }
+    } catch (err) {
+      this.emit('repair-download-failed', { appKey: appKeyHex, error: err.message })
+    }
+    return false
+  }
+
+  /**
+   * Repair loop — scan all unanchored entries and try to pull blocks
+   * for each. Run by RelayNode's periodic repair interval. Returns
+   * { checked, repaired, stillUnanchored } so callers can emit
+   * observability events.
+   *
+   * @param {object} opts
+   * @param {number} [opts.maxConcurrent=3] - parallel repair attempts
+   * @param {number} [opts.budget=null] - cap on entries to try this pass
+   */
+  async runRepairPass (opts = {}) {
+    const node = this.node
+    if (!node.appRegistry) return { checked: 0, repaired: 0, stillUnanchored: 0 }
+
+    const maxConcurrent = Math.max(1, opts.maxConcurrent || 3)
+    const budget = opts.budget || Infinity
+    const queue = []
+
+    for (const [appKey, entry] of node.appRegistry.apps) {
+      if (queue.length >= budget) break
+      if (entry.anchored === true) continue
+      if (!entry.drive || entry.drive.closed || entry.drive.closing) continue
+      queue.push(appKey)
+    }
+
+    let repaired = 0
+    let checked = 0
+
+    // Worker pool — process queue with bounded concurrency
+    const workers = Array.from({ length: maxConcurrent }, () => (async () => {
+      while (queue.length > 0) {
+        const appKey = queue.shift()
+        if (!appKey) return
+        checked++
+        try {
+          const ok = await this.repairUnanchored(appKey)
+          if (ok) repaired++
+        } catch (err) {
+          this.emit('repair-error', { appKey, error: err.message })
+        }
+      }
+    })())
+    await Promise.all(workers)
+
+    const stillUnanchored = checked - repaired
+    return { checked, repaired, stillUnanchored }
+  }
+
   async unseedApp (appKeyHex) {
     const node = this.node
     const entry = node.appRegistry.get(appKeyHex)

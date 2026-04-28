@@ -334,7 +334,11 @@ export class AppRegistry extends EventEmitter {
           : null,
         blind: entry.blind || false,
         privacyTier: entry.privacyTier || 'public',
-        seededAt: entry.startedAt || entry.seededAt || Date.now()
+        seededAt: entry.startedAt || entry.seededAt || Date.now(),
+        // Anchor signal — tells peer relays whether we actually have
+        // blocks. Receiving relay uses this to trigger targeted repair
+        // when they have the drive unanchored and we have it anchored.
+        anchored: entry.anchored === true
       })
     }
     return apps
