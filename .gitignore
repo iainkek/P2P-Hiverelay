@@ -15,3 +15,4 @@ ghost-seed-demo.mjs
 *.jpg
 *.jpeg
 *.png
+packages/core/node_modules
