@@ -743,6 +743,23 @@ export class RelayNode extends EventEmitter {
             const isMirrored = !!this.federation && this.federation.isMirroredPubkey(relayPubkey || peerKey)
             const acceptMode = this._resolveAcceptMode()
 
+            // Follow-anchored mode: when enabled, the relay treats anchored=true
+            // entries from peers as if they came from a mirrored peer (auto-seed).
+            // This makes the network behave as a converged cache — every drive
+            // anchored anywhere gets pulled everywhere. Off by default because
+            // it consumes storage from arbitrary peer claims; opt-in via config.
+            const followAnchored = this.config.followAnchoredFromPeers === true
+            const peerScore = (this.reputation && peerKey)
+              ? (this.reputation.getRecord(peerKey)?.score ?? 0)
+              : null
+            const peerScoreOk = peerScore === null
+              ? true
+              : peerScore >= (this.config.followAnchoredMinReputation ?? 0)
+            const storagePctUsed = (this.seeder && this.config.maxStorageBytes > 0)
+              ? (this.seeder.totalBytesStored / this.config.maxStorageBytes)
+              : 0
+            const hasHeadroom = storagePctUsed < (this.config.followAnchoredStorageCeiling ?? 0.8)
+
             // Cap at max 10 new apps acted on per catalog event
             const MAX_NEW_APPS = 10
             let acted = 0
@@ -771,8 +788,15 @@ export class RelayNode extends EventEmitter {
                 break
               }
 
-              if (isMirrored) {
-                // Trusted partner — auto-seed (the explicit mirror agreement).
+              // Follow-anchored: peer claims to have blocks, we have storage,
+              // peer's reputation is acceptable. Treat as mirror-grade trust
+              // for this drive only. The repair loop will validate replication
+              // worked; if it doesn't, the drive stays unanchored (and shows
+              // up that way in our catalog and capability doc).
+              const followThisAnchored = followAnchored && app.anchored === true && peerScoreOk && hasHeadroom
+
+              if (isMirrored || followThisAnchored) {
+                // Trusted partner OR auto-followed anchored content.
                 acted++
                 this.seedApp(appKey, {
                   appId: app.id || app.appId || null,
@@ -786,7 +810,11 @@ export class RelayNode extends EventEmitter {
                   author: app.author || null,
                   description: app.description || ''
                 }).then(() => {
-                  this.emit('catalog-sync', { appKey, source: 'mirror', sourceRelay: relayPubkey })
+                  this.emit('catalog-sync', {
+                    appKey,
+                    source: isMirrored ? 'mirror' : 'follow-anchored',
+                    sourceRelay: relayPubkey
+                  })
                 }).catch((err) => {
                   this.emit('catalog-sync-error', { appKey, error: err.message })
                 })
@@ -881,6 +909,18 @@ export class RelayNode extends EventEmitter {
           this._startReplicationMonitor()
           this._startAnchorMonitor()
           this._startRepairMonitor()
+
+          // Cold-start primer — runs once after a brief delay so the
+          // swarm has a chance to come up before we start fetching peer
+          // catalogs over HTTPS. Fire-and-forget; failures don't block
+          // start.
+          if (Array.isArray(this.config.coldStartRelays) && this.config.coldStartRelays.length > 0) {
+            setTimeout(() => {
+              this._runColdStartPrimer().catch((err) => {
+                this.emit('cold-start-error', { error: err.message || String(err) })
+              })
+            }, 15_000)
+          }
         } catch (err) {
           this.emit('registry-error', { error: err })
           this.seedingRegistry = null
@@ -1895,6 +1935,72 @@ export class RelayNode extends EventEmitter {
     })
     this._lastRepairAt = Date.now()
     this.emit('repair-pass', { ...result, at: this._lastRepairAt })
+  }
+
+  // ─── Cold-start primer ────────────────────────────────────────
+  //
+  // When a fresh relay (or one with empty/lost registry) boots, it has
+  // no idea what content other relays are serving. Without this, it
+  // would only learn via P2P catalog broadcasts after peers connect —
+  // which can take minutes or longer in the worst case. The primer
+  // fetches capability docs + catalogs from a configured list of
+  // existing relays over HTTPS and optionally auto-seeds anchored
+  // entries (gated by config.followAnchoredFromPeers).
+  async _runColdStartPrimer () {
+    const urls = Array.isArray(this.config.coldStartRelays) ? this.config.coldStartRelays : []
+    if (urls.length === 0) return
+    if (!this.config.enableSeeding || !this.appRegistry) return
+    if (this.config.followAnchoredFromPeers !== true) {
+      // Without follow-anchored we don't auto-accept anything; primer is a no-op
+      return
+    }
+
+    let primed = 0
+    let skipped = 0
+    let failed = 0
+    const MAX_PER_PEER = Number(this.config.coldStartMaxPerPeer) || 50
+
+    for (const url of urls) {
+      try {
+        const ctrl = new AbortController()
+        const t = setTimeout(() => ctrl.abort(), 10_000)
+        const res = await fetch(url.replace(/\/+$/, '') + '/catalog.json?pageSize=' + MAX_PER_PEER, {
+          signal: ctrl.signal
+        }).finally(() => clearTimeout(t))
+        if (!res.ok) { failed++; continue }
+        const data = await res.json()
+        const entries = (data && Array.isArray(data.apps))
+          ? data.apps
+          : (Array.isArray(data) ? data : [])
+
+        for (const e of entries) {
+          if (e.anchored !== true) { skipped++; continue }
+          const appKey = e.appKey || e.driveKey
+          if (!appKey || this.appRegistry.has(appKey)) { skipped++; continue }
+          try {
+            await this.seedApp(appKey, {
+              appId: e.id || e.appId || null,
+              name: e.name || null,
+              version: e.version || null,
+              type: e.type || 'app',
+              parentKey: e.parentKey || null,
+              mountPath: e.mountPath || null,
+              privacyTier: e.privacyTier || null,
+              blind: e.blind || false,
+              author: e.author || null,
+              description: e.description || ''
+            })
+            primed++
+          } catch (_) { failed++ }
+          // Soft cap so we don't block startup forever
+          if (primed >= MAX_PER_PEER) break
+        }
+      } catch (err) {
+        this.emit('cold-start-error', { url, error: err.message })
+        failed++
+      }
+    }
+    this.emit('cold-start-complete', { urls: urls.length, primed, skipped, failed })
   }
 
   /**

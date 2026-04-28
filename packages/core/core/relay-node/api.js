@@ -688,6 +688,63 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, drives)
         }
 
+        // Anchor proof — signed attestation for a single drive. Returns
+        // the relay's claim that it has blocks for the requested drive,
+        // along with a current-version snapshot signed with the relay's
+        // identity key. Verifiers fetch this from N relays and compare
+        // — divergent signed attestations are detectable.
+        //
+        //   GET /api/anchors/<appKey>/proof
+        //
+        // Response: { appKey, anchored, version, anchoredAt, attestedAt,
+        //             relayPubkey, signature } where signature signs:
+        //             utf8('hiverelay-anchor-proof-v1') || appKey ||
+        //             uint64(version) || uint64(attestedAt) ||
+        //             uint8(anchored ? 1 : 0)
+        if (path.startsWith('/api/anchors/') && path.endsWith('/proof')) {
+          const appKey = path.slice('/api/anchors/'.length, -'/proof'.length)
+          if (!isValidHexKey(appKey)) {
+            return this._json(res, { error: 'invalid appKey' }, 400)
+          }
+          if (!this.node.appRegistry || typeof this.node.appRegistry.get !== 'function') {
+            return this._json(res, { error: 'registry unavailable' }, 503)
+          }
+          const entry = this.node.appRegistry.get(appKey)
+          const swarm = this.node.swarm
+          if (!swarm || !swarm.keyPair) {
+            return this._json(res, { error: 'no relay identity' }, 503)
+          }
+          const anchored = !!(entry && entry.anchored === true)
+          const version = entry?.anchoredLength || 0
+          const anchoredAt = entry?.anchoredAt || null
+          const attestedAt = Date.now()
+
+          // Build the canonical signed payload
+          const sodium = await import('sodium-universal').then(m => m.default)
+          const b4a = await import('b4a').then(m => m.default)
+          const tag = b4a.from('hiverelay-anchor-proof-v1')
+          const keyBuf = b4a.from(appKey, 'hex')
+          const versionBuf = b4a.alloc(8)
+          new DataView(versionBuf.buffer, versionBuf.byteOffset).setBigUint64(0, BigInt(version), false)
+          const tsBuf = b4a.alloc(8)
+          new DataView(tsBuf.buffer, tsBuf.byteOffset).setBigUint64(0, BigInt(attestedAt), false)
+          const flagBuf = b4a.from([anchored ? 1 : 0])
+          const payload = b4a.concat([tag, keyBuf, versionBuf, tsBuf, flagBuf])
+          const sig = b4a.alloc(sodium.crypto_sign_BYTES)
+          sodium.crypto_sign_detached(sig, payload, swarm.keyPair.secretKey)
+
+          return this._json(res, {
+            schemaVersion: 1,
+            appKey,
+            anchored,
+            version,
+            anchoredAt,
+            attestedAt,
+            relayPubkey: b4a.toString(swarm.keyPair.publicKey, 'hex'),
+            signature: b4a.toString(sig, 'hex')
+          })
+        }
+
         // Anchor status — distinguishes "we accepted seeding" from "we
         // actually have replicated blocks." Operators + clients can use
         // this to detect ghost entries that need re-replication.

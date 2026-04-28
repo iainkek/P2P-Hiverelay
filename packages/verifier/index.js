@@ -154,6 +154,126 @@ export async function compareDrive (driveKeyHex, relayUrls, opts = {}) {
   }
 }
 
+/**
+ * Fetch the signed anchor proof from a single relay for a specific
+ * drive. Returns the parsed proof + a verifyOk boolean derived from
+ * cross-checking the signature against the relay's pubkey.
+ *
+ * Uses Node's crypto.verify for Ed25519 — keeps the verifier free of
+ * sodium-universal and other native crypto deps that would tie it to
+ * the main package.
+ *
+ * @param {string} relayUrl       base URL
+ * @param {string} driveKeyHex    drive key (64 hex chars)
+ * @param {object} [opts]
+ * @returns {Promise<AnchorProofView>}
+ */
+export async function fetchAnchorProof (relayUrl, driveKeyHex, opts = {}) {
+  const _fetch = opts.fetch || globalThis.fetch
+  const timeoutMs = opts.timeoutMs || FETCH_TIMEOUT_MS
+  const url = relayUrl.replace(/\/+$/, '') + '/api/anchors/' + driveKeyHex + '/proof'
+  const r = await fetchWithTimeout(_fetch, url, timeoutMs)
+  if (!r.ok) return { relay: relayUrl, ok: false, error: r.error }
+
+  const proof = r.body
+  if (!proof || !proof.signature || !proof.relayPubkey) {
+    return { relay: relayUrl, ok: false, error: 'malformed proof' }
+  }
+
+  // Reconstruct the signed payload and verify against the relay's pubkey
+  let verified = false
+  try {
+    const tag = Buffer.from('hiverelay-anchor-proof-v1', 'utf-8')
+    const keyBuf = Buffer.from(proof.appKey, 'hex')
+    const versionBuf = Buffer.alloc(8)
+    versionBuf.writeBigUInt64BE(BigInt(proof.version || 0), 0)
+    const tsBuf = Buffer.alloc(8)
+    tsBuf.writeBigUInt64BE(BigInt(proof.attestedAt || 0), 0)
+    const flagBuf = Buffer.from([proof.anchored ? 1 : 0])
+    const payload = Buffer.concat([tag, keyBuf, versionBuf, tsBuf, flagBuf])
+    const sig = Buffer.from(proof.signature, 'hex')
+    const pk = Buffer.from(proof.relayPubkey, 'hex')
+
+    // Node's built-in Ed25519 verify (libsodium under the hood, but no JS dep)
+    const { createPublicKey, verify } = await import('crypto')
+    // Build a SubjectPublicKeyInfo wrapper for Ed25519 (DER prefix:
+    //   SEQUENCE { SEQUENCE { OID 1.3.101.112 } BIT STRING { pk } })
+    const der = Buffer.concat([
+      Buffer.from([0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00]),
+      pk
+    ])
+    const publicKey = createPublicKey({ key: der, format: 'der', type: 'spki' })
+    verified = verify(null, payload, publicKey, sig)
+  } catch (err) {
+    return { relay: relayUrl, ok: false, error: 'signature verify error: ' + err.message, proof }
+  }
+
+  return { relay: relayUrl, ok: true, verified, proof }
+}
+
+/**
+ * Audit the anchor claims of N relays for a single drive. Each relay
+ * is asked for its signed proof; signatures are verified against the
+ * claimed pubkey; the consensus across relays is reported.
+ *
+ * Output:
+ *   {
+ *     drive,
+ *     relayCount: N,
+ *     anchored: { count, relays },
+ *     unanchored: { count, relays },
+ *     unverifiedSignatures: [...],
+ *     unreachable: [...]
+ *   }
+ *
+ * Use case: clients about to download from the network want to know
+ * which relays they can actually pull from. A relay that lies in its
+ * catalog ("anchored=true") fails the signature audit if it can't
+ * actually sign for the data state.
+ */
+export async function auditAnchors (driveKeyHex, relayUrls, opts = {}) {
+  if (typeof driveKeyHex !== 'string' || !/^[0-9a-f]{64}$/i.test(driveKeyHex)) {
+    throw new Error('auditAnchors: driveKeyHex must be 64 hex chars')
+  }
+  if (!Array.isArray(relayUrls) || relayUrls.length === 0) {
+    throw new Error('auditAnchors needs at least one relay URL')
+  }
+
+  const views = await Promise.all(
+    relayUrls.map(url => fetchAnchorProof(url, driveKeyHex, opts))
+  )
+
+  const anchored = []
+  const unanchored = []
+  const unverifiedSignatures = []
+  const unreachable = []
+
+  for (const v of views) {
+    if (!v.ok) {
+      unreachable.push({ relay: v.relay, error: v.error })
+      continue
+    }
+    if (v.verified !== true) {
+      unverifiedSignatures.push({
+        relay: v.relay,
+        proof: v.proof
+      })
+      continue
+    }
+    if (v.proof.anchored === true) anchored.push({ relay: v.relay, version: v.proof.version, attestedAt: v.proof.attestedAt })
+    else unanchored.push({ relay: v.relay, attestedAt: v.proof.attestedAt })
+  }
+
+  return {
+    drive: driveKeyHex,
+    relayCount: relayUrls.length,
+    anchored: { count: anchored.length, relays: anchored },
+    unanchored: { count: unanchored.length, relays: unanchored },
+    unverifiedSignatures,
+    unreachable
+  }
+}
+
 // ─── Internal ─────────────────────────────────────────────────────
 
 /**
