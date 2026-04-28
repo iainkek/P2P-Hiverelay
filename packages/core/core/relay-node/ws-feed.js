@@ -32,8 +32,7 @@ export class DashboardFeed {
 
     // Handle upgrade requests on path /ws
     // We only handle our own path and return silently otherwise so other
-    // upgrade listeners (e.g. the HiveWorm event feed) can route their
-    // own paths from the same HTTP server.
+    // upgrade listeners can route their own paths from the same HTTP server.
     this._upgradeHandler = (req, socket, head) => {
       const url = new URL(req.url, 'http://localhost')
       if (url.pathname !== '/ws') return

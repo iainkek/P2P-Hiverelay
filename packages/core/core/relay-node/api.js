@@ -19,7 +19,6 @@ import { fileURLToPath } from 'url'
 import { createRequire } from 'module'
 import { EventEmitter } from 'events'
 import { DashboardFeed } from './ws-feed.js'
-import { HiveWormFeed } from './hiveworm-ws.js'
 import { HyperGateway } from '../../gateway/hyper-gateway.js'
 import { CONTENT_TYPES, isValidHexKey, normalizeContentType, normalizePrivacyTier } from '../constants.js'
 import { buildCapabilityDoc } from '../capability-doc.js'
@@ -103,7 +102,6 @@ export class RelayAPI extends EventEmitter {
     this._docsHtml = null
     this._wizardHtml = null
     this._dashboardFeed = null
-    this._hiveWormFeed = null
     this._wizard = null // lazily constructed by _getWizard() on first /api/wizard hit
     this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
   }
@@ -152,17 +150,6 @@ export class RelayAPI extends EventEmitter {
           apiKey: this._apiKey
         })
         this._dashboardFeed.start()
-
-        // Start HiveWorm event feed (broadcasts each appended entry to
-        // subscribers of /api/hiveworm/<biome>/events). Always started —
-        // the handler returns 503 when node.hiveworm isn't enabled.
-        this._hiveWormFeed = new HiveWormFeed({
-          server: this.server,
-          node: this.node,
-          corsOrigins: this.corsOrigins,
-          apiKey: this._apiKey
-        })
-        this._hiveWormFeed.start()
 
         this.emit('started', { port: this.port })
         resolve()
@@ -871,65 +858,6 @@ export class RelayAPI extends EventEmitter {
           if (!this.node.reputation) return this._json(res, null)
           const record = this.node.reputation.getRecord(pubkey)
           return this._json(res, record)
-        }
-      }
-
-      // ───────────────────────────────────────────────────
-      // HiveWorm game endpoints — opt-in via config.enableHiveworm
-      // ───────────────────────────────────────────────────
-      // Routed outside the method-specific blocks because /move is POST
-      // and the others are GET. Internal method checks dispatch.
-      //
-      //   GET  /api/hiveworm/biomes               list active biomes
-      //   GET  /api/hiveworm/<biome>/state        current world state JSON
-      //   GET  /api/hiveworm/<biome>/log[?from=N] entries since N
-      //   POST /api/hiveworm/<biome>/move         submit signed entry
-      if (req.method === 'GET' && path === '/api/hiveworm/biomes') {
-        if (!this.node.hiveworm) return this._json(res, { error: 'hiveworm not enabled' }, 503)
-        return this._json(res, { biomes: this.node.hiveworm.stats() })
-      }
-      if (path.startsWith('/api/hiveworm/')) {
-        const rest = path.slice('/api/hiveworm/'.length)
-        const slash = rest.indexOf('/')
-        if (slash > 0) {
-          const biomeKey = rest.slice(0, slash)
-          const action = rest.slice(slash + 1)
-          if (!isValidHexKey(biomeKey, 64)) {
-            return this._json(res, { error: 'invalid biome key' }, 400)
-          }
-          if (!this.node.hiveworm) {
-            return this._json(res, { error: 'hiveworm not enabled' }, 503)
-          }
-
-          if (req.method === 'GET' && action === 'state') {
-            const state = await this.node.hiveworm.getState(biomeKey)
-            return this._json(res, state)
-          }
-          if (req.method === 'GET' && action === 'log') {
-            const fromIdx = parseInt(url.searchParams.get('from')) || 0
-            const log = await this.node.hiveworm.getLog(biomeKey, fromIdx)
-            return this._json(res, log)
-          }
-          if (req.method === 'POST' && action === 'move') {
-            let body
-            try {
-              body = await this._readBody(req, 32 * 1024)
-            } catch (err) {
-              return this._json(res, { error: 'bad-json: ' + err.message }, 400)
-            }
-            if (!body || typeof body !== 'object') {
-              return this._json(res, { error: 'body must be a signed entry object' }, 400)
-            }
-            try {
-              const result = await this.node.hiveworm.appendMove(biomeKey, body)
-              if (!result.ok) {
-                return this._json(res, { error: result.reason, layer: result.layer }, 422)
-              }
-              return this._json(res, { ok: true, index: result.index, tick: result.state.tick })
-            } catch (err) {
-              return this._json(res, { error: err.message }, 500)
-            }
-          }
         }
       }
 
@@ -2168,11 +2096,6 @@ export class RelayAPI extends EventEmitter {
     if (this._dashboardFeed) {
       this._dashboardFeed.stop()
       this._dashboardFeed = null
-    }
-
-    if (this._hiveWormFeed) {
-      this._hiveWormFeed.stop()
-      this._hiveWormFeed = null
     }
 
     if (this._gateway) {

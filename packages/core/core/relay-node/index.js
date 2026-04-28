@@ -28,7 +28,6 @@ import { ReputationSystem } from '../../incentive/reputation/index.js'
 import { NetworkDiscovery } from '../network-discovery.js'
 import { HealthMonitor } from './health-monitor.js'
 import { AlertManager } from './alert-manager.js'
-import { HiveWormService } from '../hiveworm/relay-service.js'
 import { SelfHeal } from './self-heal.js'
 import { AccessControl } from './access-control.js'
 import { SeedingRegistry } from '../registry/index.js'
@@ -244,7 +243,6 @@ export class RelayNode extends EventEmitter {
     this._registryScanInterval = null
     this.serviceRegistry = null
     this.serviceProtocol = null
-    this.hiveworm = null // HiveWormService — lazily constructed in start() if config.enableHiveworm
     this.router = null
     this.policyGuard = new PolicyGuard()
     this.policyGuard.on('violation', (details) => this.emit('privacy-violation', details))
@@ -929,21 +927,6 @@ export class RelayNode extends EventEmitter {
         }
       }
 
-      // HiveWorm game service — opt-in via config.enableHiveworm. Holds
-      // per-biome autobase logs + serves /api/hiveworm/* endpoints. Not
-      // coupled to seeding; biomes are stored separately under
-      // <config.storage>/hiveworm-data/.
-      if (this.config.enableHiveworm === true) {
-        try {
-          const hwStorage = this.config.hivewormStorage || join(this.config.storage, 'hiveworm-data')
-          this.hiveworm = new HiveWormService({ storage: hwStorage })
-          await this.hiveworm.start()
-        } catch (err) {
-          this.emit('hiveworm-error', { error: err.message || String(err) })
-          this.hiveworm = null
-        }
-      }
-
       // Load app registry from disk and reseed all persisted apps
       this._reseedFromRegistry().catch((err) => {
         this.emit('reseed-error', { error: err })
@@ -1024,7 +1007,6 @@ export class RelayNode extends EventEmitter {
       if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }
       if (this._anchorCheckInterval) { clearInterval(this._anchorCheckInterval); this._anchorCheckInterval = null }
       if (this._repairInterval) { clearInterval(this._repairInterval); this._repairInterval = null }
-      if (this.hiveworm) { try { await this.hiveworm.stop() } catch (_) {} this.hiveworm = null }
       if (this.seedingRegistry) { try { await this.seedingRegistry.stop() } catch (_) {} this.seedingRegistry = null }
       if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
       if (this.holesailTransport) { try { await this.holesailTransport.stop() } catch (_) {} this.holesailTransport = null }
