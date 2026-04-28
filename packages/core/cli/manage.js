@@ -111,6 +111,7 @@ export async function runManage (host = '127.0.0.1', port = 9100) {
         { name: '\u{1f4e6} Resources        — Storage, connections, bandwidth limits', value: 'resources' },
         { name: '\u{1f310} Transports       — Holesail, Tor, WebSocket', value: 'transports' },
         { name: '\u{1f331} Seeding & Apps   — Manage seeded apps & catalog', value: 'seeding' },
+        { name: '⚓ Anchors          — Drives we actually have blocks for', value: 'anchors' },
         { name: '\u{1f3af} Operating Mode   — Standard, HomeHive, Stealth, etc.', value: 'mode' },
         { name: '\u{1f30d} Network          — Regions, peers, bootstrap', value: 'network' },
         { name: '\u{1f6e1}\ufe0f  Security        — Access control, rate limits', value: 'security' },
@@ -130,6 +131,7 @@ export async function runManage (host = '127.0.0.1', port = 9100) {
         case 'resources': await manageResources(api); break
         case 'transports': await manageTransports(api); break
         case 'seeding': await manageSeeding(api); break
+        case 'anchors': await manageAnchors(api); break
         case 'mode': await manageMode(api); break
         case 'network': await manageNetwork(api); break
         case 'security': await manageSecurity(api); break
@@ -159,10 +161,18 @@ async function showDashboard (api) {
     api.get('/api/overview').catch(() => null)
   ])
 
+  // /api/overview returns uptime as { ms, hours, human } \u2014 earlier code
+  // multiplied the object by 1000, producing NaN. Use the structured field.
+  const uptimeStr = overview?.uptime?.human
+    ? overview.uptime.human
+    : (typeof overview?.uptime?.ms === 'number'
+        ? formatUptime(overview.uptime.ms)
+        : 'n/a')
+
   header('Node Dashboard')
   console.log(`  Status:       ${health.ok ? '\u2705 Running' : '\u274c Down'}`)
   console.log(`  Public Key:   ${status.publicKey ? status.publicKey.slice(0, 16) + '...' : 'n/a'}`)
-  console.log(`  Uptime:       ${overview ? formatUptime(overview.uptime * 1000) : 'n/a'}`)
+  console.log(`  Uptime:       ${uptimeStr}`)
   console.log(`  Connections:  ${status.connections || 0}`)
   console.log(`  Seeded Apps:  ${status.seededApps || 0}`)
 
@@ -192,6 +202,15 @@ async function showDashboard (api) {
     const running = svc.services.filter(s => s.running).length
     console.log(`  Services:     ${running}/${svc.count} running`)
   } catch (_) {}
+
+  // Anchor stats \u2014 distinguishes "we accepted seeding" from "we have blocks"
+  // (v0.6.1+). Honest signal for operators about what they actually serve.
+  try {
+    const anchors = await api.get('/api/anchors')
+    if (typeof anchors.total === 'number') {
+      console.log(`  Anchored:     ${anchors.anchored}/${anchors.total} drives`)
+    }
+  } catch (_) { /* anchor endpoint not present pre-v0.6.1 */ }
 }
 
 // ─── Services ───────────────────────────────────────────────────────
@@ -385,7 +404,7 @@ async function manageSeeding (api) {
       { name: 'Seed a new app', value: 'seed' },
       { name: 'Unseed an app', value: 'unseed' },
       { name: 'View catalog', value: 'catalog' },
-      { name: 'Toggle auto-accept', value: 'auto-accept' },
+      { name: 'Set accept-mode', value: 'accept-mode' },
       { name: 'Back', value: 'back' }
     ]
   })
@@ -444,11 +463,112 @@ async function manageSeeding (api) {
     }
   }
 
-  if (action === 'auto-accept') {
+  if (action === 'accept-mode') {
     const { config } = await api.get('/api/manage/config')
-    const newVal = !config.registryAutoAccept
-    await api.post('/registry/auto-accept', { enabled: newVal })
-    console.log(`  \u2705 Auto-accept: ${newVal ? 'enabled' : 'disabled'}`)
+    const current = config.acceptMode || (config.registryAutoAccept ? 'open' : 'review')
+    console.log(`  Current accept-mode: ${current}`)
+    console.log()
+    const mode = await select({
+      message: 'New accept-mode:',
+      choices: [
+        { name: 'open       \u2014 auto-accept every signed seed request', value: 'open' },
+        { name: 'review     \u2014 queue requests for operator approval', value: 'review' },
+        { name: 'allowlist  \u2014 auto-accept only from listed publisher pubkeys', value: 'allowlist' },
+        { name: 'closed     \u2014 reject all inbound requests; operator-initiated only', value: 'closed' },
+        { name: 'Cancel', value: 'cancel' }
+      ]
+    })
+    if (mode === 'cancel') return
+    await api.post('/api/manage/config', { acceptMode: mode })
+    console.log(`  \u2705 Accept-mode: ${mode}`)
+    if (mode === 'allowlist') {
+      console.log('  Note: edit config.acceptAllowlist to set the publisher pubkeys.')
+    }
+  }
+}
+
+// ─── Anchors ────────────────────────────────────────────────────────
+//
+// Surfaces v0.6.1+ anchor stats: which drives the relay has actually
+// replicated blocks for vs which it merely accepted. Useful for spotting
+// ghost entries (registry says we serve it; reality says we don't).
+async function manageAnchors (api) {
+  header('Anchored Drives')
+
+  let stats = null
+  try {
+    stats = await api.get('/api/anchors')
+  } catch (err) {
+    console.log('  ⚠️  /api/anchors not available on this relay (pre-v0.6.1?).')
+    console.log(`  Error: ${err.message}`)
+    return
+  }
+
+  console.log(`  Total registered:  ${stats.total || 0}`)
+  console.log(`  Anchored:          ${stats.anchored || 0}  (we have blocks)`)
+  console.log(`  Unanchored:        ${stats.unanchored || 0}  (registered but no blocks yet)`)
+  console.log(`  Never checked:     ${stats.neverChecked || 0}`)
+  if (stats.lastCheckedAt) {
+    const ageMin = Math.round((Date.now() - stats.lastCheckedAt) / 60000)
+    console.log(`  Last check:        ${ageMin}m ago`)
+  }
+  console.log()
+
+  const action = await select({
+    message: 'Action:',
+    choices: [
+      { name: 'List unanchored drives (likely lost or repair-pending)', value: 'list-unanchored' },
+      { name: 'Fetch a drive\'s signed proof', value: 'proof' },
+      { name: 'Back', value: 'back' }
+    ]
+  })
+
+  if (action === 'back') return
+
+  if (action === 'list-unanchored') {
+    const detailed = await api.get('/api/anchors?detailed=1').catch(() => null)
+    if (!detailed?.entries || detailed.entries.length === 0) {
+      console.log('  No detailed entries returned.')
+      return
+    }
+    const unanchored = detailed.entries.filter(e => e.anchored !== true).slice(0, 30)
+    if (unanchored.length === 0) {
+      console.log('  ✅ All registered drives are anchored.')
+      return
+    }
+    console.log()
+    for (const e of unanchored) {
+      console.log(`  ❌ ${e.appKey.slice(0, 16)}...  type=${e.type}`)
+    }
+    if (detailed.entries.length > 30) {
+      console.log(`  ... and ${detailed.entries.length - 30} more`)
+    }
+    console.log()
+    console.log('  These drives are in the registry but have no blocks. The repair')
+    console.log('  loop will retry pulling them periodically. They may recover when')
+    console.log('  the original publisher (or another anchored relay) comes online.')
+  }
+
+  if (action === 'proof') {
+    const appKey = await input({
+      message: 'Drive key (64 hex):',
+      validate: v => /^[0-9a-f]{64}$/i.test(v.trim()) ? true : 'Must be 64 hex chars'
+    })
+    try {
+      const proof = await api.get(`/api/anchors/${appKey.trim()}/proof`)
+      console.log()
+      console.log(`  appKey:        ${proof.appKey.slice(0, 16)}...`)
+      console.log(`  anchored:      ${proof.anchored}`)
+      console.log(`  version:       ${proof.version}`)
+      console.log(`  attestedAt:    ${new Date(proof.attestedAt).toISOString()}`)
+      console.log(`  relay pubkey:  ${proof.relayPubkey.slice(0, 16)}...`)
+      console.log(`  signature:     ${proof.signature.slice(0, 32)}...`)
+      console.log()
+      console.log('  This proof is verifiable cross-relay via @hive/verifier:')
+      console.log(`    npx p2p-hiverelay-verifier --drive ${appKey.trim()}`)
+    } catch (err) {
+      console.log(`  ⚠️  ${err.message}`)
+    }
   }
 }
 
@@ -559,15 +679,21 @@ async function manageNetwork (api) {
 async function manageSecurity (api) {
   header('Security')
 
-  const status = await api.get('/status')
+  const [status, cfgRes] = await Promise.all([
+    api.get('/status'),
+    api.get('/api/manage/config').catch(() => ({ config: {} }))
+  ])
+  const acceptMode = cfgRes.config?.acceptMode ||
+    (cfgRes.config?.registryAutoAccept ? 'open' : 'review')
+
   console.log(`  Public Key:       ${status.publicKey || 'n/a'}`)
-  console.log(`  Auto-Accept:      ${status.registry?.autoAccept !== false ? 'yes' : 'no (approval mode)'}`)
+  console.log(`  Accept-Mode:      ${acceptMode}`)
   console.log()
 
   const action = await select({
     message: 'Action:',
     choices: [
-      { name: 'Toggle approval mode (require manual seed approval)', value: 'approval' },
+      { name: 'Change accept-mode', value: 'accept-mode' },
       { name: 'View pending approvals', value: 'pending' },
       { name: 'Approve a pending request', value: 'approve' },
       { name: 'Reject a pending request', value: 'reject' },
@@ -577,11 +703,20 @@ async function manageSecurity (api) {
 
   if (action === 'back') return
 
-  if (action === 'approval') {
-    const { config } = await api.get('/api/manage/config')
-    const newVal = !config.registryAutoAccept
-    await api.post('/registry/auto-accept', { enabled: newVal })
-    console.log(`  \u2705 Auto-accept: ${newVal ? 'enabled (auto-seed)' : 'disabled (manual approval)'}`)
+  if (action === 'accept-mode') {
+    const mode = await select({
+      message: 'New accept-mode:',
+      choices: [
+        { name: 'open       \u2014 auto-accept every signed seed request', value: 'open' },
+        { name: 'review     \u2014 queue requests for operator approval', value: 'review' },
+        { name: 'allowlist  \u2014 auto-accept only from listed publisher pubkeys', value: 'allowlist' },
+        { name: 'closed     \u2014 reject all inbound; operator-initiated only', value: 'closed' },
+        { name: 'Cancel', value: 'cancel' }
+      ]
+    })
+    if (mode === 'cancel') return
+    await api.post('/api/manage/config', { acceptMode: mode })
+    console.log(`  \u2705 Accept-mode: ${mode}`)
   }
 
   if (action === 'pending' || action === 'approve' || action === 'reject') {
@@ -613,21 +748,19 @@ async function manageSecurity (api) {
 // ─── Payments ───────────────────────────────────────────────────────
 
 async function managePayments (api) {
-  header('Payments')
+  header('Payments & bandwidth')
 
   const overview = await api.get('/api/overview').catch(() => null)
-  if (overview && overview.bandwidth) {
+  if (overview?.bandwidth) {
     console.log(`  Total Proven Bytes:  ${formatBytes(overview.bandwidth.totalProvenBytes || 0)}`)
     console.log(`  Receipts Issued:     ${overview.bandwidth.receiptsIssued || 0}`)
+  } else {
+    console.log('  No bandwidth-receipt data yet.')
   }
   console.log()
-
-  const { config } = await api.get('/api/manage/config')
-  const lightningEnabled = config.lightning?.enabled || false
-  console.log(`  Lightning: ${lightningEnabled ? '\u2705 Enabled' : '\u274c Disabled'}`)
-  console.log()
-  console.log('  Payment settings require a node restart to change.')
-  console.log('  Edit ~/.hiverelay/config.json to configure Lightning.')
+  console.log('  Lightning settlement is opt-in and not enabled by default in this release.')
+  console.log('  To configure, edit ~/.hiverelay/config.json (lightning.enabled, LNbits keys)')
+  console.log('  and restart the node.')
 }
 
 // ─── Relay Settings ─────────────────────────────────────────────────
