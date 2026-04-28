@@ -688,6 +688,64 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, drives)
         }
 
+        // ───────────────────────────────────────────────────
+        // HiveWorm game endpoints — opt-in via config.enableHiveworm
+        // ───────────────────────────────────────────────────
+        // GET  /api/hiveworm/biomes           — list active biomes on this relay
+        // GET  /api/hiveworm/<biome>/state    — current world state JSON
+        // GET  /api/hiveworm/<biome>/log[?from=N] — log entries from index N
+        // POST /api/hiveworm/<biome>/move     — submit a signed entry
+        if (path === '/api/hiveworm/biomes') {
+          if (!this.node.hiveworm) return this._json(res, { error: 'hiveworm not enabled' }, 503)
+          return this._json(res, { biomes: this.node.hiveworm.stats() })
+        }
+        if (path.startsWith('/api/hiveworm/')) {
+          const rest = path.slice('/api/hiveworm/'.length)
+          // path forms: <biome>/state | <biome>/log | <biome>/move
+          const slash = rest.indexOf('/')
+          if (slash > 0) {
+            const biomeKey = rest.slice(0, slash)
+            const action = rest.slice(slash + 1)
+            if (!isValidHexKey(biomeKey, 64)) {
+              return this._json(res, { error: 'invalid biome key' }, 400)
+            }
+            if (!this.node.hiveworm) {
+              return this._json(res, { error: 'hiveworm not enabled' }, 503)
+            }
+
+            if (req.method === 'GET' && action === 'state') {
+              const state = await this.node.hiveworm.getState(biomeKey)
+              return this._json(res, state)
+            }
+            if (req.method === 'GET' && action === 'log') {
+              const fromIdx = parseInt(url.searchParams.get('from')) || 0
+              const log = await this.node.hiveworm.getLog(biomeKey, fromIdx)
+              return this._json(res, log)
+            }
+            if (req.method === 'POST' && action === 'move') {
+              let body
+              try {
+                body = await this._readBody(req, 32 * 1024)
+                body = JSON.parse(body)
+              } catch (err) {
+                return this._json(res, { error: 'bad-json: ' + err.message }, 400)
+              }
+              if (!body || typeof body !== 'object') {
+                return this._json(res, { error: 'body must be a signed entry object' }, 400)
+              }
+              try {
+                const result = await this.node.hiveworm.appendMove(biomeKey, body)
+                if (!result.ok) {
+                  return this._json(res, { error: result.reason, layer: result.layer }, 422)
+                }
+                return this._json(res, { ok: true, index: result.index, tick: result.state.tick })
+              } catch (err) {
+                return this._json(res, { error: err.message }, 500)
+              }
+            }
+          }
+        }
+
         // Anchor proof — signed attestation for a single drive. Returns
         // the relay's claim that it has blocks for the requested drive,
         // along with a current-version snapshot signed with the relay's
