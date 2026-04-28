@@ -1789,9 +1789,17 @@ export class RelayNode extends EventEmitter {
       availableBytes
     )
 
-    // Seed the app via AppRegistry (creates Hyperdrive + registers properly)
+    // Seed the app via AppRegistry (creates Hyperdrive + registers properly).
+    // Propagate the publisher's revocability commitments — both fields are
+    // signed into the seed request payload, so the publisher cannot lie about
+    // them at unseed time. AppLifecycle records them on the registry entry
+    // and verifyUnseedRequest enforces them.
     const publisherHex = msg.publisherPubkey ? b4a.toString(msg.publisherPubkey, 'hex') : null
-    this.seedApp(appKeyHex, { publisherPubkey: publisherHex }).catch((err) => {
+    this.seedApp(appKeyHex, {
+      publisherPubkey: publisherHex,
+      revocable: msg.revocable !== false,
+      unseedFreezeMs: msg.unseedFreezeMs || 0
+    }).catch((err) => {
       this.emit('seed-error', { appKey: appKeyHex, error: err })
     })
 

@@ -72,6 +72,16 @@ export const REGIONS = {
 
 // --- Encoding schemas ---
 
+// Wire format for the seed-request includes two newer fields, `revocable`
+// and `unseedFreezeMs`, that govern whether the publisher retains takedown
+// authority and any cool-off window before takedown is accepted. Both
+// fields are encoded after the existing payload so peers running the older
+// wire format still encode/decode the prefix correctly; new peers
+// `try { c.uint.decode(state) } catch { default }` for graceful fallback.
+//
+// Both values are committed to the publisher signature (see
+// SeedProtocol._serializeForSigning) so a publisher cannot lie at unseed
+// time about what they originally promised at seed time.
 export const seedRequestEncoding = {
   preencode (state, msg) {
     c.fixed32.preencode(state, msg.appKey)
@@ -86,6 +96,9 @@ export const seedRequestEncoding = {
     c.uint.preencode(state, msg.ttlSeconds)
     c.fixed32.preencode(state, msg.publisherPubkey)
     c.fixed64.preencode(state, msg.publisherSignature)
+    // Revocability fields — appended for forward compatibility
+    c.uint.preencode(state, msg.revocable === false ? 0 : 1)
+    c.uint.preencode(state, msg.unseedFreezeMs || 0)
   },
   encode (state, msg) {
     c.fixed32.encode(state, msg.appKey)
@@ -100,6 +113,8 @@ export const seedRequestEncoding = {
     c.uint.encode(state, msg.ttlSeconds)
     c.fixed32.encode(state, msg.publisherPubkey)
     c.fixed64.encode(state, msg.publisherSignature)
+    c.uint.encode(state, msg.revocable === false ? 0 : 1)
+    c.uint.encode(state, msg.unseedFreezeMs || 0)
   },
   decode (state) {
     const appKey = c.fixed32.decode(state)
@@ -108,7 +123,7 @@ export const seedRequestEncoding = {
     for (let i = 0; i < dkLen; i++) {
       discoveryKeys.push(c.fixed32.decode(state))
     }
-    return {
+    const out = {
       appKey,
       discoveryKeys,
       replicationFactor: c.uint.decode(state),
@@ -119,6 +134,12 @@ export const seedRequestEncoding = {
       publisherPubkey: c.fixed32.decode(state),
       publisherSignature: c.fixed64.decode(state)
     }
+    // Backward-compatible decode of the revocability tail. Older clients
+    // produce wire data without these fields; treat the absence as the
+    // permissive default (revocable, no freeze).
+    try { out.revocable = c.uint.decode(state) !== 0 } catch { out.revocable = true }
+    try { out.unseedFreezeMs = c.uint.decode(state) } catch { out.unseedFreezeMs = 0 }
+    return out
   }
 }
 

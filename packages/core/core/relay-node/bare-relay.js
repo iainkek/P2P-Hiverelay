@@ -567,7 +567,12 @@ export class BareRelay extends EventEmitter {
       availableBytes
     )
 
-    this.appLifecycle.seedApp(appKeyHex, { publisherPubkey: effectivePublisher }).then(() => {
+    // Propagate revocability commitments from the signed seed request.
+    this.appLifecycle.seedApp(appKeyHex, {
+      publisherPubkey: effectivePublisher,
+      revocable: msg.revocable !== false,
+      unseedFreezeMs: msg.unseedFreezeMs || 0
+    }).then(() => {
       log.info('  ✓ seeded:', appKeyHex.slice(0, 16))
     }).catch((err) => {
       log.warn('  seed error:', err.message)

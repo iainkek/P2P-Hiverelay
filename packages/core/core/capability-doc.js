@@ -108,6 +108,11 @@ export function buildCapabilityDoc (opts = {}) {
   if (relay && relay._bandwidthReceipt) features.push('bandwidth-receipts')
   if (relay && relay.reputation) features.push('reputation')
   features.push('capability-doc') // we're advertising this doc, so always set
+  // Revocability — this build understands and enforces the v0.8 seed-request
+  // revocability fields (revocable + unseedFreezeMs). Clients querying the
+  // capability doc can rely on this signal to decide whether their
+  // non-revocable seed will actually be honored by this relay.
+  features.push('seed-revocability')
 
   // Fees block — only populated if a paymentManager is configured AND the
   // operator has set a fee schedule.

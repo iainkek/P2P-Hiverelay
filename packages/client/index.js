@@ -621,6 +621,25 @@ export class HiveRelayClient extends EventEmitter {
     this.swarm.join(discoveryKey, { server: true, client: true })
     this.swarm.flush().catch(() => {})
 
+    // Revocability commitments — both committed by the publisher signature
+    // so a relay-side check can enforce them at unseed time.
+    //
+    //   opts.revocable        — default true. Pass false to publish an
+    //                           irrevocable commitment: only the operator
+    //                           can later remove this content from their
+    //                           relay; the publisher cannot.
+    //   opts.unseedFreezeMs   — default 0. Cooldown after seed before
+    //                           publisher unseed is honored. Useful when
+    //                           you want the option to retract but with a
+    //                           "commit then think" buffer (e.g. 24h).
+    //
+    // Both fields are only respected by relays running v0.8+; older relays
+    // ignore them and behave as if revocable=true, unseedFreezeMs=0.
+    const revocable = opts.revocable !== false
+    const unseedFreezeMs = Number.isFinite(opts.unseedFreezeMs) && opts.unseedFreezeMs > 0
+      ? Math.floor(opts.unseedFreezeMs)
+      : 0
+
     const request = {
       appKey: keyBuf,
       discoveryKeys: [discoveryKey],
@@ -630,7 +649,9 @@ export class HiveRelayClient extends EventEmitter {
       bountyRate: 0,
       ttlSeconds: (opts.ttlDays || 30) * 24 * 3600,
       publisherPubkey: b4a.alloc(32),
-      publisherSignature: b4a.alloc(64)
+      publisherSignature: b4a.alloc(64),
+      revocable,
+      unseedFreezeMs
     }
 
     if (this.keyPair && this.keyPair.secretKey) {
@@ -2602,12 +2623,17 @@ export class HiveRelayClient extends EventEmitter {
     }
     parts.push(discoveryKeysHash)
 
-    const meta = b4a.alloc(28)
+    // v2 signing layout — matches server SeedProtocol._serializeForSigning.
+    // Bytes 0..27 are stable with v1; bytes 28..35 carry unseedFreezeMs.
+    // Byte 1 is the revocable flag (was reserved/zero in v1).
+    const meta = b4a.alloc(36)
     const view = new DataView(meta.buffer, meta.byteOffset)
     view.setUint8(0, msg.replicationFactor)
+    view.setUint8(1, msg.revocable === false ? 0 : 1)
     view.setBigUint64(8, BigInt(msg.maxStorageBytes))
     view.setBigUint64(16, BigInt(msg.ttlSeconds))
     view.setUint32(24, msg.bountyRate || 0)
+    view.setBigUint64(28, BigInt(msg.unseedFreezeMs || 0))
     parts.push(meta)
     return b4a.concat(parts)
   }

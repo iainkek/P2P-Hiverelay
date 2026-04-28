@@ -255,6 +255,19 @@ export class AppLifecycle extends EventEmitter {
       }
       eagerReplicate().catch(() => {})
 
+      // Revocability commitments — recorded at seed time, derived from the
+      // signed seed-request payload (committed by publisher signature, so
+      // the publisher cannot later claim a different value).
+      // - revocable: false  → publisher relinquishes unseed authority. Only
+      //   the operator can take this content down; no signed unseed from
+      //   the publisher will be honored against this entry.
+      // - unseedFreezeMs: N → cooldown after seed before publisher unseed
+      //   is honored. Acts as a safety valve / commit-then-think window.
+      const revocable = opts.revocable !== false
+      const unseedFreezeMs = Number.isFinite(opts.unseedFreezeMs) && opts.unseedFreezeMs > 0
+        ? Math.floor(opts.unseedFreezeMs)
+        : 0
+
       node.appRegistry.set(appKeyHex, {
         drive,
         discoveryKey,
@@ -271,7 +284,9 @@ export class AppLifecycle extends EventEmitter {
         author: opts.author || null,
         categories: Array.isArray(opts.categories) ? opts.categories : null,
         blind: opts.blind || false,
-        publisherPubkey
+        publisherPubkey,
+        revocable,
+        unseedFreezeMs
       })
 
       if (node.distributedDriveBridge) {
@@ -527,6 +542,38 @@ export class AppLifecycle extends EventEmitter {
     // operator must use /unseed with API key instead
     if (!entry.publisherPubkey) {
       return { ok: false, error: 'NO_PUBLISHER_KEY: app has no recorded publisher — operator must unseed via /unseed with API key' }
+    }
+
+    // Revocability commitment check.
+    //
+    // If the publisher signed a non-revocable seed request (revocable=false),
+    // they relinquished publisher-side unseed authority at seed time. Honor
+    // that commitment — reject the unseed even with a valid signature.
+    //
+    // The operator retains takedown authority via the management API. They
+    // own the storage; the publisher agreed to not be able to retract once
+    // committed. This is the asymmetry that makes the flag meaningful.
+    if (entry.revocable === false) {
+      return {
+        ok: false,
+        error: 'NON_REVOCABLE: publisher relinquished unseed authority at seed time — only operator-side unseed via management API will remove this content'
+      }
+    }
+
+    // Unseed-freeze period check. If the publisher committed to a cooldown
+    // window (e.g. 24 hours after seed before unseed is honored), enforce
+    // it. Acts as a "commit then think" safety valve for cases where the
+    // publisher wants strong commitments but not absolute permanence.
+    if (entry.unseedFreezeMs && entry.unseedFreezeMs > 0) {
+      const seededAt = entry.startedAt || 0
+      const earliestUnseed = seededAt + entry.unseedFreezeMs
+      if (Date.now() < earliestUnseed) {
+        const remaining = earliestUnseed - Date.now()
+        return {
+          ok: false,
+          error: `UNSEED_FROZEN: publisher committed to ${entry.unseedFreezeMs}ms freeze; ${remaining}ms remaining before unseed is honored`
+        }
+      }
     }
 
     // Check timestamp freshness (reject if older than 5 minutes)

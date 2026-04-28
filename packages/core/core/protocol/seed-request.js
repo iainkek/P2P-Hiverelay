@@ -304,8 +304,25 @@ export class SeedProtocol extends EventEmitter {
 
   _verifyRequestSignature (msg) {
     if (!msg.publisherPubkey || !msg.publisherSignature) return false
-    const payload = this._serializeForSigning(msg)
-    return sodium.crypto_sign_verify_detached(msg.publisherSignature, payload, msg.publisherPubkey)
+
+    // Try v2 layout first (includes revocable + unseedFreezeMs in the
+    // signed bytes). If that fails, fall back to v1 — necessary because
+    // older clients sign without those fields and we want them to keep
+    // working until they upgrade.
+    const v2 = this._serializeForSigning(msg)
+    if (sodium.crypto_sign_verify_detached(msg.publisherSignature, v2, msg.publisherPubkey)) {
+      return true
+    }
+
+    // Only allow v1 fallback for the permissive default (revocable=true,
+    // freeze=0). A v1 signature cannot promise non-revocability — if a
+    // client claims revocable=false but signed a v1 payload, that's a
+    // protocol violation and the relay rejects.
+    if (msg.revocable === false || (msg.unseedFreezeMs && msg.unseedFreezeMs > 0)) {
+      return false
+    }
+    const v1 = this._serializeForSigningLegacy(msg)
+    return sodium.crypto_sign_verify_detached(msg.publisherSignature, v1, msg.publisherPubkey)
   }
 
   _verifyAcceptSignature (msg) {
@@ -326,6 +343,48 @@ export class SeedProtocol extends EventEmitter {
     }
     parts.push(discoveryKeysHash)
 
+    // Layout:
+    //   [0]      replicationFactor (uint8)
+    //   [1]      revocable flag    (uint8: 1=revocable, 0=non-revocable)
+    //   [2..7]   reserved          (zeros for forward-compat)
+    //   [8..15]  maxStorageBytes   (uint64 BE)
+    //   [16..23] ttlSeconds        (uint64 BE)
+    //   [24..27] bountyRate        (uint32 BE)
+    //   [28..35] unseedFreezeMs    (uint64 BE)
+    //
+    // Bytes 0..27 match the original v1 layout — older verifiers that only
+    // read 28 bytes still see the same prefix. Bytes 28..35 carry the freeze
+    // period; older publishers omit them entirely (28-byte signature),
+    // newer publishers commit to them (36 bytes).
+    //
+    // The revocable flag sits in a previously-reserved byte (byte 1), so a
+    // legacy 28-byte signature treats it as zero/reserved. To prevent
+    // version confusion, _verifyRequestSignature falls back to verifying
+    // against a 28-byte payload if the 36-byte form fails — preserving
+    // backward compatibility for unsigned-by-old-clients.
+    const meta = b4a.alloc(36)
+    const view = new DataView(meta.buffer, meta.byteOffset)
+    view.setUint8(0, msg.replicationFactor)
+    view.setUint8(1, msg.revocable === false ? 0 : 1)
+    view.setBigUint64(8, BigInt(msg.maxStorageBytes))
+    view.setBigUint64(16, BigInt(msg.ttlSeconds))
+    view.setUint32(24, msg.bountyRate || 0)
+    view.setBigUint64(28, BigInt(msg.unseedFreezeMs || 0))
+    parts.push(meta)
+    return b4a.concat(parts)
+  }
+
+  // Legacy v1 signing layout — 28 bytes, no revocability fields.
+  // Used as a fallback during signature verification so seed requests
+  // signed by older clients (running pre-revocability code) still verify.
+  _serializeForSigningLegacy (msg) {
+    const parts = [msg.appKey]
+    const discoveryKeysHash = b4a.alloc(32)
+    if (msg.discoveryKeys && msg.discoveryKeys.length > 0) {
+      const dkConcat = b4a.concat(msg.discoveryKeys)
+      sodium.crypto_generichash(discoveryKeysHash, dkConcat)
+    }
+    parts.push(discoveryKeysHash)
     const meta = b4a.alloc(28)
     const view = new DataView(meta.buffer, meta.byteOffset)
     view.setUint8(0, msg.replicationFactor)
