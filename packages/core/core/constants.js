@@ -14,9 +14,58 @@ import sodium from 'sodium-universal'
  * Well-known 32-byte DHT topic that all HiveRelay nodes join for
  * peer discovery.  Derived deterministically from the string
  * 'hiverelay-discovery-v1' via BLAKE2b (crypto_generichash).
+ *
+ * This is the GLOBAL topic — every relay joins it. As the network
+ * grows, region-sharded topics (regionTopic) carry most of the load
+ * and the global topic becomes a fallback / fresh-relay onboarding.
  */
 const RELAY_DISCOVERY_TOPIC = b4a.alloc(32)
 sodium.crypto_generichash(RELAY_DISCOVERY_TOPIC, b4a.from('hiverelay-discovery-v1'))
+
+/**
+ * Hash a discovery namespace string into a 32-byte DHT topic.
+ * @param {string} ns
+ * @returns {Buffer}
+ */
+function _topicOf (ns) {
+  const t = b4a.alloc(32)
+  sodium.crypto_generichash(t, b4a.from(ns))
+  return t
+}
+
+/**
+ * Region-sharded discovery topic.
+ *
+ * Splits the global topic into per-region buckets so the DHT peer-list
+ * stays a manageable size and clients can preferentially discover
+ * peers in their own region (lower latency).
+ *
+ *   regionTopic('NA') → blake2b('hiverelay-discovery-v1-region-NA')
+ *
+ * Conventions:
+ *   - Region codes are uppercased (NA, EU, AS, SA, AF, OC)
+ *   - Unknown region falls back to 'global'
+ *   - Relays SHOULD join their primary region topic + the global
+ *     RELAY_DISCOVERY_TOPIC for cross-region discovery
+ *   - Clients SHOULD join their region first, fall back to global
+ *
+ * @param {string} region
+ * @returns {Buffer} 32-byte topic
+ */
+function regionTopic (region) {
+  const code = region ? String(region).toUpperCase() : 'GLOBAL'
+  return _topicOf('hiverelay-discovery-v1-region-' + code)
+}
+
+/**
+ * Foundation network discovery topic — operator-of-last-resort layer
+ * (per docs/OPERATOR-INCENTIVES-Y1.md). Foundation relays announce
+ * here so clients running in 'foundation' quorum mode can pin a
+ * trusted floor without scanning the full DHT.
+ *
+ * @returns {Buffer} 32-byte topic
+ */
+const FOUNDATION_TOPIC = _topicOf('hiverelay-foundation-v1')
 
 // ─── Privacy tiers ───────────────────────────────────────────
 
@@ -102,6 +151,8 @@ function uint64ToBuffer (n) {
 
 export {
   RELAY_DISCOVERY_TOPIC,
+  FOUNDATION_TOPIC,
+  regionTopic,
   PRIVACY_TIERS,
   CONTENT_TYPES,
   normalizePrivacyTier,

@@ -56,7 +56,8 @@ import { SeedProtocol } from '../protocol/seed-request.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
 import { AppRegistry } from '../app-registry.js'
-import { RELAY_DISCOVERY_TOPIC } from '../constants.js'
+import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC, regionTopic } from '../constants.js'
+import { SwarmFirewall } from './swarm-firewall.js'
 
 // Services framework lives in Core (p2p-hiverelay). Builtin service
 // implementations live in p2p-hiveservices and are loaded dynamically below
@@ -161,10 +162,24 @@ export class BareRelay extends EventEmitter {
     this.appRegistry = new AppRegistry(this.config.storage)
     await this.appRegistry.load()
 
-    // 3. Hyperswarm — DHT + peer connections
+    // 3. Connection-layer firewall — runs before Noise handshake. Cheapest
+    //    DoS defense available. See packages/core/core/relay-node/swarm-firewall.js
+    this.swarmFirewall = new SwarmFirewall({
+      allowlist: this.config.swarmAllowlist || [],
+      blocklist: this.config.swarmBlocklist || [],
+      ipMaxConnects: this.config.swarmIpMaxConnects ?? 100,
+      ipWindowMs: this.config.swarmIpWindowMs ?? 60_000,
+      minReputation: this.config.swarmMinReputation ?? -1000,
+      onReject: ({ reason, pubkey, ip }) => {
+        log.debug('  ⊘ firewall:', reason, pubkey ? pubkey.slice(0, 16) : '?')
+      }
+    })
+
+    // 4. Hyperswarm — DHT + peer connections
     this.swarm = new Hyperswarm({
       maxPeers: this.config.maxConnections,
-      keyPair: await this._deriveKeypair()
+      keyPair: await this._deriveKeypair(),
+      firewall: (remotePubKey, payload) => this.swarmFirewall.check(remotePubKey, payload)
     })
 
     this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
@@ -263,8 +278,18 @@ export class BareRelay extends EventEmitter {
       }
     }
 
-    // 10. Announce on the well-known discovery topic
+    // 10. Announce on discovery topics:
+    //   - global: cross-region discovery + onboarding
+    //   - region: most peer-discovery happens here at scale
+    //   - foundation: only for foundation-network relays (operator-of-last-resort)
     this._discovery = this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: true })
+    const myRegion = (this.config.regions && this.config.regions[0]) || null
+    if (myRegion) {
+      this._regionDiscovery = this.swarm.join(regionTopic(myRegion), { server: true, client: true })
+    }
+    if (this.config.foundation === true) {
+      this._foundationDiscovery = this.swarm.join(FOUNDATION_TOPIC, { server: true, client: false })
+    }
 
     // 11. Federation — opt-in cross-relay catalog sharing. Always-on as a
     // manager so a Pear app could expose follow/mirror controls in its UI;
@@ -314,13 +339,16 @@ export class BareRelay extends EventEmitter {
     if (!this.running) return
     log.info('BareRelay stopping…')
 
-    if (this._discovery) { try { await this._discovery.destroy() } catch (_) {} }
+    if (this._discovery) { try { await this._discovery.destroy() } catch (_) {} this._discovery = null }
+    if (this._regionDiscovery) { try { await this._regionDiscovery.destroy() } catch (_) {} this._regionDiscovery = null }
+    if (this._foundationDiscovery) { try { await this._foundationDiscovery.destroy() } catch (_) {} this._foundationDiscovery = null }
     if (this.federation) { try { await this.federation.stop() } catch (_) {} this.federation = null }
     if (this.httpServer) { try { await this.httpServer.stop() } catch (_) {} this.httpServer = null }
     if (this.serviceRegistry) { try { await this.serviceRegistry.stopAll() } catch (_) {} }
     if (this.relay) { try { await this.relay.stop() } catch (_) {} }
     if (this.seeder) { try { await this.seeder.stop() } catch (_) {} }
     if (this.swarm) { try { await this.swarm.destroy() } catch (_) {} }
+    if (this.swarmFirewall) { try { this.swarmFirewall.destroy() } catch (_) {} this.swarmFirewall = null }
     if (this.appRegistry) { try { await this.appRegistry.save() } catch (_) {} }
     if (this.store) { try { await this.store.close() } catch (_) {} }
 

@@ -185,15 +185,26 @@ export class ServiceProtocol extends EventEmitter {
 
   /**
    * Broadcast our service catalog to a peer.
+   *
+   * Uses Protomux cork/uncork so the catalog message + any concurrent
+   * sends on this channel coalesce into a single network frame. Cheap
+   * throughput win on chatty connections (catalog + app-catalog often
+   * fire back-to-back at connection setup).
    */
   sendCatalog (remotePubkey) {
     const entry = this.channels.get(remotePubkey)
     if (!entry) return
 
-    entry.msgHandler.send({
-      type: MSG_CATALOG,
-      services: this.registry.catalog()
-    })
+    const channel = entry.channel
+    if (channel && typeof channel.cork === 'function') channel.cork()
+    try {
+      entry.msgHandler.send({
+        type: MSG_CATALOG,
+        services: this.registry.catalog()
+      })
+    } finally {
+      if (channel && typeof channel.uncork === 'function') channel.uncork()
+    }
   }
 
   /**
@@ -203,18 +214,35 @@ export class ServiceProtocol extends EventEmitter {
   sendAppCatalog (remotePubkey) {
     const entry = this.channels.get(remotePubkey)
     if (!entry) return
-    entry.msgHandler.send(this._buildCatalogMessage())
+    const channel = entry.channel
+    if (channel && typeof channel.cork === 'function') channel.cork()
+    try {
+      entry.msgHandler.send(this._buildCatalogMessage())
+    } finally {
+      if (channel && typeof channel.uncork === 'function') channel.uncork()
+    }
   }
 
   /**
    * Broadcast app catalog update to all connected peers.
    * Called when apps are seeded or unseeded.
+   *
+   * Per-channel cork/uncork so each peer sees a single frame for the
+   * full app list rather than one frame per app.
    */
   broadcastAppCatalog () {
     const msg = this._buildCatalogMessage()
 
     for (const [, entry] of this.channels) {
-      try { entry.msgHandler.send(msg) } catch {}
+      const channel = entry.channel
+      if (channel && typeof channel.cork === 'function') channel.cork()
+      try {
+        entry.msgHandler.send(msg)
+      } catch {
+        // ignore — try next peer
+      } finally {
+        if (channel && typeof channel.uncork === 'function') channel.uncork()
+      }
     }
   }
 

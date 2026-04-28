@@ -38,7 +38,8 @@ import { ServiceRegistry, ServiceProtocol } from '../services/index.js'
 import { PluginLoader } from '../plugin-loader.js'
 import { Router } from '../router/index.js'
 import { AppRegistry } from '../app-registry.js'
-import { RELAY_DISCOVERY_TOPIC, isValidHexKey, normalizePrivacyTier } from '../constants.js'
+import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC, regionTopic, isValidHexKey, normalizePrivacyTier } from '../constants.js'
+import { SwarmFirewall } from './swarm-firewall.js'
 import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
 import { GatewayServer } from './gateway-server.js'
@@ -205,6 +206,7 @@ export class RelayNode extends EventEmitter {
     this._operatingMode = this.mode
     this.store = new Corestore(this.config.storage)
     this.swarm = null
+    this.swarmFirewall = null
     this.seeder = null
     this.relay = null
     this.metrics = null
@@ -363,10 +365,31 @@ export class RelayNode extends EventEmitter {
       this.keyPair = keyPair
       this.publicKey = keyPair.publicKey
 
+      // Build the connection-layer firewall. Composes allowlist, blocklist,
+      // per-IP rate-limit, and (optional) reputation threshold. Hyperswarm
+      // calls this BEFORE the noise handshake completes — rejected
+      // connections cost nothing but a few CPU cycles.
+      this.swarmFirewall = new SwarmFirewall({
+        allowlist: this.config.swarmAllowlist || [],
+        blocklist: this.config.swarmBlocklist || [],
+        ipMaxConnects: this.config.swarmIpMaxConnects ?? 100,
+        ipWindowMs: this.config.swarmIpWindowMs ?? 60_000,
+        minReputation: this.config.swarmMinReputation ?? -1000,
+        getReputationScore: (pubkeyHex) => {
+          if (!this.reputation) return null
+          const r = this.reputation.getRecord(pubkeyHex)
+          return r ? r.score : null
+        },
+        onReject: ({ reason, pubkey, ip, score }) => {
+          this.emit('swarm-firewall-reject', { reason, pubkey, ip, score })
+        }
+      })
+
       this.swarm = new Hyperswarm({
         bootstrap,
         keyPair,
-        maxConnections: this.config.maxConnections
+        maxConnections: this.config.maxConnections,
+        firewall: (remotePubKey, payload) => this.swarmFirewall.check(remotePubKey, payload)
       })
 
       await this._syncAccessControl()
@@ -374,8 +397,19 @@ export class RelayNode extends EventEmitter {
       this.bootstrapCache.start(this.swarm)
       this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
 
-      // Announce on well-known discovery topic so clients can find us
+      // Announce on the GLOBAL discovery topic + the per-region shard.
+      // - Global topic: cross-region discovery, fresh-relay onboarding
+      // - Region topic: most peer-discovery happens here at scale
+      // Foundation relays (config.foundation === true) also announce
+      // on the foundation topic so quorum-pinned clients can find them.
       this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: false })
+      const myRegion = (this.config.regions && this.config.regions[0]) || null
+      if (myRegion) {
+        this.swarm.join(regionTopic(myRegion), { server: true, client: false })
+      }
+      if (this.config.foundation === true) {
+        this.swarm.join(FOUNDATION_TOPIC, { server: true, client: false })
+      }
 
       // Initialize subsystems in parallel where possible
       const startups = []
@@ -926,6 +960,7 @@ export class RelayNode extends EventEmitter {
       if (this.relay) { try { await this.relay.stop() } catch (_) {} this.relay = null }
       if (this.seeder) { try { await this.seeder.stop() } catch (_) {} this.seeder = null }
       if (this.swarm) { try { await this.swarm.destroy() } catch (_) {} this.swarm = null }
+      if (this.swarmFirewall) { try { this.swarmFirewall.destroy() } catch (_) {} this.swarmFirewall = null }
       if (this.accessControl) { try { this.accessControl.disablePairing() } catch (_) {} this.accessControl = null }
       this.running = false
       throw err
@@ -1999,6 +2034,10 @@ export class RelayNode extends EventEmitter {
     }
     if (this.swarm) {
       try { await withTimeout(this.swarm.destroy(), timeout, 'swarm.destroy') } catch (_) {}
+    }
+    if (this.swarmFirewall) {
+      try { this.swarmFirewall.destroy() } catch (_) {}
+      this.swarmFirewall = null
     }
     if (this.store) {
       try { await withTimeout(this.store.close(), timeout, 'store.close') } catch (_) {}
