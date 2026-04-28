@@ -278,15 +278,10 @@ export class BareRelay extends EventEmitter {
       }
     }
 
-    // 10. Announce on discovery topics:
-    //   - global: cross-region discovery + onboarding
-    //   - region: most peer-discovery happens here at scale
-    //   - foundation: only for foundation-network relays (operator-of-last-resort)
+    // 10. Announce on the global discovery topic. Foundation relays opt-in
+    //    via config.foundation = true. Region-sharded topics are available
+    //    via regionTopic(code) but not auto-joined — premature at <10 relays.
     this._discovery = this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: true })
-    const myRegion = (this.config.regions && this.config.regions[0]) || null
-    if (myRegion) {
-      this._regionDiscovery = this.swarm.join(regionTopic(myRegion), { server: true, client: true })
-    }
     if (this.config.foundation === true) {
       this._foundationDiscovery = this.swarm.join(FOUNDATION_TOPIC, { server: true, client: false })
     }

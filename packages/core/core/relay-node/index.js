@@ -38,7 +38,7 @@ import { ServiceRegistry, ServiceProtocol } from '../services/index.js'
 import { PluginLoader } from '../plugin-loader.js'
 import { Router } from '../router/index.js'
 import { AppRegistry } from '../app-registry.js'
-import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC, regionTopic, isValidHexKey, normalizePrivacyTier } from '../constants.js'
+import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC, isValidHexKey, normalizePrivacyTier } from '../constants.js'
 import { SwarmFirewall } from './swarm-firewall.js'
 import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
@@ -397,16 +397,15 @@ export class RelayNode extends EventEmitter {
       this.bootstrapCache.start(this.swarm)
       this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
 
-      // Announce on the GLOBAL discovery topic + the per-region shard.
-      // - Global topic: cross-region discovery, fresh-relay onboarding
-      // - Region topic: most peer-discovery happens here at scale
-      // Foundation relays (config.foundation === true) also announce
-      // on the foundation topic so quorum-pinned clients can find them.
+      // Announce on the global discovery topic. (Region-sharded topics are
+      // available via regionTopic(code) but not auto-joined at current scale —
+      // splitting <10 relays across regions reduces discovery, not load.
+      // Will revisit when N grows.)
       this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: false })
-      const myRegion = (this.config.regions && this.config.regions[0]) || null
-      if (myRegion) {
-        this.swarm.join(regionTopic(myRegion), { server: true, client: false })
-      }
+
+      // Foundation relays (operator-of-last-resort) opt-in by setting
+      // config.foundation = true — gives quorum-pinned clients a stable
+      // floor to discover without scanning the full DHT.
       if (this.config.foundation === true) {
         this.swarm.join(FOUNDATION_TOPIC, { server: true, client: false })
       }
