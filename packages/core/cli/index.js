@@ -66,13 +66,41 @@ function isRecoverableHypercoreError (err) {
   )
 }
 
+// DHT errors — REQUEST_TIMEOUT and friends are normal noise on the public
+// DHT (a peer dropped, a query never resolved, a re-routed response made
+// the original time out). The dht-rpc library throws them as unhandled
+// rejections rather than emitting events, so they reach this handler and
+// (before this filter) caused the relay to exit.
+//
+// This catches the crash loop observed on relay-us / utah-us on 2026-04-30:
+// 13 fatal exits over 2 hours, all DHTError REQUEST_TIMEOUT, each making
+// systemd restart the process. Logged at warn level for observability,
+// then ignored — exactly like the hypercore lifecycle filter above.
+function isRecoverableDHTError (err) {
+  if (!err) return false
+  const code = err.code || ''
+  const type = err.type || (err.constructor && err.constructor.name) || ''
+  if (type !== 'DHTError') return false
+  return (
+    code === 'REQUEST_TIMEOUT' ||
+    code === 'REQUEST_CANCELLED' ||
+    code === 'NO_NODES_AVAILABLE' ||
+    code === 'TOO_MANY_PROBES' ||
+    code === 'CONNECTION_RESET'
+  )
+}
+
+function isRecoverable (err) {
+  return isRecoverableHypercoreError(err) || isRecoverableDHTError(err)
+}
+
 process.on('uncaughtException', (err) => {
   if (isBenignExit(err)) {
     console.log()
     process.exit(0)
   }
-  if (isRecoverableHypercoreError(err)) {
-    log.warn({ err: { code: err.code, message: err.message } }, 'recoverable hypercore error — continuing')
+  if (isRecoverable(err)) {
+    log.warn({ err: { type: err.type, code: err.code, message: err.message } }, 'recoverable error — continuing')
     return // do NOT exit
   }
   log.fatal({ err }, 'uncaught exception — shutting down')
@@ -84,8 +112,8 @@ process.on('unhandledRejection', (reason) => {
     console.log()
     process.exit(0)
   }
-  if (isRecoverableHypercoreError(reason)) {
-    log.warn({ err: { code: reason.code, message: reason.message } }, 'recoverable hypercore rejection — continuing')
+  if (isRecoverable(reason)) {
+    log.warn({ err: { type: reason.type, code: reason.code, message: reason.message } }, 'recoverable rejection — continuing')
     return // do NOT exit
   }
   log.fatal({ err: reason }, 'unhandled rejection — shutting down')
