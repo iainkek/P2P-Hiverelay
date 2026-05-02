@@ -314,11 +314,14 @@ export class SeedProtocol extends EventEmitter {
       return true
     }
 
-    // Only allow v1 fallback for the permissive default (revocable=true,
-    // freeze=0). A v1 signature cannot promise non-revocability — if a
-    // client claims revocable=false but signed a v1 payload, that's a
-    // protocol violation and the relay rejects.
-    if (msg.revocable === false || (msg.unseedFreezeMs && msg.unseedFreezeMs > 0)) {
+    // Only allow v1 fallback for the fully-permissive default — revocable,
+    // no freeze, standard durability. A v1 signature cannot legitimately
+    // commit to ANY of the newer fields, so if a client claims a non-default
+    // value while presenting a v1-shaped signature, that's a protocol
+    // violation and the relay rejects.
+    if (msg.revocable === false ||
+        (msg.unseedFreezeMs && msg.unseedFreezeMs > 0) ||
+        (msg.durability && msg.durability > 0)) {
       return false
     }
     const v1 = this._serializeForSigningLegacy(msg)
@@ -343,29 +346,31 @@ export class SeedProtocol extends EventEmitter {
     }
     parts.push(discoveryKeysHash)
 
-    // Layout:
+    // Layout (40 bytes):
     //   [0]      replicationFactor (uint8)
     //   [1]      revocable flag    (uint8: 1=revocable, 0=non-revocable)
-    //   [2..7]   reserved          (zeros for forward-compat)
+    //   [2]      durability tier   (uint8: 0=standard, 1=archive, ...)
+    //   [3..7]   reserved          (zeros for forward-compat)
     //   [8..15]  maxStorageBytes   (uint64 BE)
     //   [16..23] ttlSeconds        (uint64 BE)
     //   [24..27] bountyRate        (uint32 BE)
     //   [28..35] unseedFreezeMs    (uint64 BE)
+    //   [36..39] reserved          (zeros)
     //
     // Bytes 0..27 match the original v1 layout — older verifiers that only
     // read 28 bytes still see the same prefix. Bytes 28..35 carry the freeze
-    // period; older publishers omit them entirely (28-byte signature),
-    // newer publishers commit to them (36 bytes).
+    // period; bytes 36..39 are reserved (zero-padded — durability lives in
+    // byte 2 of the prefix, picked up by parsers that read the full 40
+    // bytes). Older publishers omit the trailing bytes entirely.
     //
-    // The revocable flag sits in a previously-reserved byte (byte 1), so a
-    // legacy 28-byte signature treats it as zero/reserved. To prevent
-    // version confusion, _verifyRequestSignature falls back to verifying
-    // against a 28-byte payload if the 36-byte form fails — preserving
-    // backward compatibility for unsigned-by-old-clients.
-    const meta = b4a.alloc(36)
+    // Backward compatibility: _verifyRequestSignature falls back to v1
+    // (28-byte) verification if v2 fails AND the request advertised the
+    // permissive defaults (revocable=true, freeze=0, durability=standard).
+    const meta = b4a.alloc(40)
     const view = new DataView(meta.buffer, meta.byteOffset)
     view.setUint8(0, msg.replicationFactor)
     view.setUint8(1, msg.revocable === false ? 0 : 1)
+    view.setUint8(2, msg.durability || 0)
     view.setBigUint64(8, BigInt(msg.maxStorageBytes))
     view.setBigUint64(16, BigInt(msg.ttlSeconds))
     view.setUint32(24, msg.bountyRate || 0)

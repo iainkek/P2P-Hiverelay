@@ -268,6 +268,15 @@ export class AppLifecycle extends EventEmitter {
         ? Math.floor(opts.unseedFreezeMs)
         : 0
 
+      // Durability tier — 0 (standard) is the default and matches all
+      // pre-v0.8 behavior. 1 (archive) opts the drive into AutoHeal: a
+      // background scheduler maintains a diversity-enforced replica
+      // fleet (≥7 replicas across ≥4 regions and ≥5 distinct operators)
+      // by recruiting fresh replicas as old ones drop out.
+      const durability = Number.isFinite(opts.durability) && opts.durability > 0
+        ? Math.floor(opts.durability)
+        : 0
+
       node.appRegistry.set(appKeyHex, {
         drive,
         discoveryKey,
@@ -286,7 +295,8 @@ export class AppLifecycle extends EventEmitter {
         blind: opts.blind || false,
         publisherPubkey,
         revocable,
-        unseedFreezeMs
+        unseedFreezeMs,
+        durability
       })
 
       if (node.distributedDriveBridge) {

@@ -621,23 +621,32 @@ export class HiveRelayClient extends EventEmitter {
     this.swarm.join(discoveryKey, { server: true, client: true })
     this.swarm.flush().catch(() => {})
 
-    // Revocability commitments — both committed by the publisher signature
-    // so a relay-side check can enforce them at unseed time.
+    // Publisher commitments — all committed by the publisher signature so
+    // a relay-side check can enforce them throughout the drive's lifetime.
     //
-    //   opts.revocable        — default true. Pass false to publish an
-    //                           irrevocable commitment: only the operator
-    //                           can later remove this content from their
-    //                           relay; the publisher cannot.
-    //   opts.unseedFreezeMs   — default 0. Cooldown after seed before
-    //                           publisher unseed is honored. Useful when
-    //                           you want the option to retract but with a
-    //                           "commit then think" buffer (e.g. 24h).
+    //   opts.revocable        default true. Pass false to publish an
+    //                         irrevocable commitment: only the operator
+    //                         can later remove this content from their
+    //                         relay; the publisher cannot.
+    //   opts.unseedFreezeMs   default 0. Cooldown after seed before
+    //                         publisher unseed is honored. "Commit then
+    //                         think" buffer (e.g. 24h).
+    //   opts.durability       default 0 (standard). Pass 1 for archive
+    //                         tier — relays running v0.8+ AutoHeal will
+    //                         maintain a diversity-enforced replica
+    //                         fleet (≥7 replicas across ≥4 regions and
+    //                         ≥5 distinct operators) by recruiting fresh
+    //                         replicas as old ones drop out. Or pass the
+    //                         string 'archive' for clarity.
     //
-    // Both fields are only respected by relays running v0.8+; older relays
-    // ignore them and behave as if revocable=true, unseedFreezeMs=0.
+    // All three fields are ignored by older relays, which behave as if
+    // they were the permissive defaults.
     const revocable = opts.revocable !== false
     const unseedFreezeMs = Number.isFinite(opts.unseedFreezeMs) && opts.unseedFreezeMs > 0
       ? Math.floor(opts.unseedFreezeMs)
+      : 0
+    const durability = (opts.durability === 'archive' || opts.durability === 1)
+      ? 1
       : 0
 
     const request = {
@@ -651,7 +660,8 @@ export class HiveRelayClient extends EventEmitter {
       publisherPubkey: b4a.alloc(32),
       publisherSignature: b4a.alloc(64),
       revocable,
-      unseedFreezeMs
+      unseedFreezeMs,
+      durability
     }
 
     if (this.keyPair && this.keyPair.secretKey) {
@@ -2624,12 +2634,14 @@ export class HiveRelayClient extends EventEmitter {
     parts.push(discoveryKeysHash)
 
     // v2 signing layout — matches server SeedProtocol._serializeForSigning.
-    // Bytes 0..27 are stable with v1; bytes 28..35 carry unseedFreezeMs.
-    // Byte 1 is the revocable flag (was reserved/zero in v1).
-    const meta = b4a.alloc(36)
+    // Bytes 0..27 are stable with v1; bytes 28..35 carry unseedFreezeMs;
+    // bytes 36..39 reserved (zeros). Byte 1 is the revocable flag (was
+    // reserved/zero in v1). Byte 2 is the durability tier.
+    const meta = b4a.alloc(40)
     const view = new DataView(meta.buffer, meta.byteOffset)
     view.setUint8(0, msg.replicationFactor)
     view.setUint8(1, msg.revocable === false ? 0 : 1)
+    view.setUint8(2, msg.durability || 0)
     view.setBigUint64(8, BigInt(msg.maxStorageBytes))
     view.setBigUint64(16, BigInt(msg.ttlSeconds))
     view.setUint32(24, msg.bountyRate || 0)

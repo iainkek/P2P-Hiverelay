@@ -17,6 +17,7 @@ import { HolesailTransport } from '../../transports/holesail/index.js'
 import http from 'http'
 import { BootstrapCache } from '../bootstrap-cache.js'
 import { Federation } from '../federation.js'
+import { AutoHeal } from '../auto-heal.js'
 import { ManifestStore } from '../manifest-store.js'
 import { resolveAcceptMode, decideAcceptance } from '../accept-mode.js'
 import { SeedProtocol } from '../protocol/seed-request.js'
@@ -963,6 +964,24 @@ export class RelayNode extends EventEmitter {
       this.federation.on('federation-error', (err) => this.emit('federation-error', err))
       this.federation.on('persistence-error', (info) => this.emit('federation-error', info))
 
+      // AutoHeal — diversity-enforced replica maintenance for archive-tier
+      // drives (durability=1). Off by default; opt in via config.autoHeal:
+      //   { enabled: true, thresholds: { minReplicas: 7, minRegions: 4 } }
+      // The scheduler reuses federation's peer-catalog data, so it adds no
+      // new wire traffic — it just decides differently over the same data.
+      if (this.config.autoHeal?.enabled === true) {
+        this.autoHeal = new AutoHeal(this, {
+          tickMs: this.config.autoHeal.tickMs,
+          staleMs: this.config.autoHeal.staleMs,
+          thresholds: this.config.autoHeal.thresholds,
+          maxRecruitsPerTick: this.config.autoHeal.maxRecruitsPerTick
+        })
+        this.autoHeal.on('recruited', (info) => this.emit('auto-heal-recruited', info))
+        this.autoHeal.on('recruit-error', (info) => this.emit('auto-heal-error', info))
+        this.autoHeal.on('tick-error', (info) => this.emit('auto-heal-error', info))
+        this.autoHeal.start()
+      }
+
       // ManifestStore — caches author-signed seeding manifests.
       // Relays serve these over HTTP so clients can discover which relays an
       // author uses for seeding. Always-on since authoring is orthogonal to
@@ -1798,7 +1817,8 @@ export class RelayNode extends EventEmitter {
     this.seedApp(appKeyHex, {
       publisherPubkey: publisherHex,
       revocable: msg.revocable !== false,
-      unseedFreezeMs: msg.unseedFreezeMs || 0
+      unseedFreezeMs: msg.unseedFreezeMs || 0,
+      durability: msg.durability || 0
     }).catch((err) => {
       this.emit('seed-error', { appKey: appKeyHex, error: err })
     })
@@ -2249,6 +2269,7 @@ export class RelayNode extends EventEmitter {
     if (this._registryScanInterval) { clearInterval(this._registryScanInterval); this._registryScanInterval = null }
     if (this.seedingRegistry) { try { await this.seedingRegistry.stop() } catch (_) {} this.seedingRegistry = null }
     if (this.networkDiscovery) { try { await this.networkDiscovery.stop() } catch (_) {} this.networkDiscovery = null }
+    if (this.autoHeal) { try { await this.autoHeal.stop() } catch (_) {} this.autoHeal = null }
     if (this.federation) { try { await this.federation.stop() } catch (_) {} this.federation = null }
     if (this.manifestStore) {
       // Persist any unsaved manifest updates before dropping the reference.

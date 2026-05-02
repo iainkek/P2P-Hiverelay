@@ -99,6 +99,14 @@ export class Federation extends EventEmitter {
     this._timer = null
     this.running = false
     this._saveInFlight = null // de-dupe concurrent saves
+
+    // Cache of the most recent successful fetch per followed peer.
+    // Consumers (AutoHeal, dashboard, /api/federation) read this to see
+    // who's seeding what without triggering fresh HTTP fetches. Keyed by
+    // URL; entries are { url, pubkey, region, fetchedAt, apps[] }.
+    // Updated on every successful _pollOne; never grows beyond the
+    // followed set's cardinality.
+    this._peerCatalogs = new Map()
   }
 
   /**
@@ -298,7 +306,10 @@ export class Federation extends EventEmitter {
       mirrored: Array.from(this.mirrored.values()),
       republished: Array.from(this.republished.values()),
       followIntervalMs: this.followInterval,
-      running: this.running
+      running: this.running,
+      // Peer catalogs as of the last poll. Consumers (AutoHeal, dashboard)
+      // shouldn't mutate these — treat as read-only.
+      peerCatalogs: Array.from(this._peerCatalogs.values())
     }
   }
 
@@ -329,6 +340,17 @@ export class Federation extends EventEmitter {
   async _pollOne (entry) {
     const data = await this._fetchCatalog(entry.url)
     if (!data || !Array.isArray(data.apps)) return 0
+
+    // Cache the peer catalog so AutoHeal and the dashboard can read who's
+    // seeding what without re-fetching. Stored as the latest snapshot;
+    // updated on every successful poll.
+    this._peerCatalogs.set(entry.url, {
+      url: entry.url,
+      pubkey: entry.pubkey || data.pubkey || null,
+      region: data.region || null,
+      fetchedAt: Date.now(),
+      apps: data.apps
+    })
 
     let queued = 0
     for (const app of data.apps) {

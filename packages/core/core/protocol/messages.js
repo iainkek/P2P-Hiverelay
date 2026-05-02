@@ -72,16 +72,29 @@ export const REGIONS = {
 
 // --- Encoding schemas ---
 
-// Wire format for the seed-request includes two newer fields, `revocable`
-// and `unseedFreezeMs`, that govern whether the publisher retains takedown
-// authority and any cool-off window before takedown is accepted. Both
-// fields are encoded after the existing payload so peers running the older
-// wire format still encode/decode the prefix correctly; new peers
-// `try { c.uint.decode(state) } catch { default }` for graceful fallback.
+// Durability tiers — controls how aggressively the network maintains
+// replicas of a drive. Encoded as uint at the end of the seed request.
 //
-// Both values are committed to the publisher signature (see
-// SeedProtocol._serializeForSigning) so a publisher cannot lie at unseed
-// time about what they originally promised at seed time.
+//   0  STANDARD  — current default. Network seeds N times where the
+//                  publisher requested. No active replication enforcement.
+//   1  ARCHIVE   — auto-heal target. Network maintains the drive at a
+//                  diversity threshold (≥7 replicas, ≥4 regions, ≥5
+//                  operators). When a replica drops, healthy relays
+//                  recruit themselves to restore the threshold.
+//
+// Higher tiers are reserved for future use (PINNED, MIRROR, etc.). Like
+// revocability, this is committed by publisher signature so the publisher
+// cannot lie about the tier they originally requested.
+export const DURABILITY_STANDARD = 0
+export const DURABILITY_ARCHIVE = 1
+
+// Wire format for the seed-request includes three newer fields:
+// `revocable`, `unseedFreezeMs`, and `durability`. All three are appended
+// after the existing payload for forward compatibility; older peers
+// decode the prefix successfully and ignore the trailing bytes.
+//
+// All three values are committed to the publisher signature (see
+// SeedProtocol._serializeForSigning).
 export const seedRequestEncoding = {
   preencode (state, msg) {
     c.fixed32.preencode(state, msg.appKey)
@@ -96,9 +109,9 @@ export const seedRequestEncoding = {
     c.uint.preencode(state, msg.ttlSeconds)
     c.fixed32.preencode(state, msg.publisherPubkey)
     c.fixed64.preencode(state, msg.publisherSignature)
-    // Revocability fields — appended for forward compatibility
     c.uint.preencode(state, msg.revocable === false ? 0 : 1)
     c.uint.preencode(state, msg.unseedFreezeMs || 0)
+    c.uint.preencode(state, msg.durability || DURABILITY_STANDARD)
   },
   encode (state, msg) {
     c.fixed32.encode(state, msg.appKey)
@@ -115,6 +128,7 @@ export const seedRequestEncoding = {
     c.fixed64.encode(state, msg.publisherSignature)
     c.uint.encode(state, msg.revocable === false ? 0 : 1)
     c.uint.encode(state, msg.unseedFreezeMs || 0)
+    c.uint.encode(state, msg.durability || DURABILITY_STANDARD)
   },
   decode (state) {
     const appKey = c.fixed32.decode(state)
@@ -134,11 +148,12 @@ export const seedRequestEncoding = {
       publisherPubkey: c.fixed32.decode(state),
       publisherSignature: c.fixed64.decode(state)
     }
-    // Backward-compatible decode of the revocability tail. Older clients
-    // produce wire data without these fields; treat the absence as the
-    // permissive default (revocable, no freeze).
+    // Backward-compatible decode of the revocability + durability tail.
+    // Older clients produce wire data without these fields; treat the
+    // absence as the permissive default.
     try { out.revocable = c.uint.decode(state) !== 0 } catch { out.revocable = true }
     try { out.unseedFreezeMs = c.uint.decode(state) } catch { out.unseedFreezeMs = 0 }
+    try { out.durability = c.uint.decode(state) } catch { out.durability = DURABILITY_STANDARD }
     return out
   }
 }

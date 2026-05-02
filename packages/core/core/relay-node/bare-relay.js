@@ -571,7 +571,8 @@ export class BareRelay extends EventEmitter {
     this.appLifecycle.seedApp(appKeyHex, {
       publisherPubkey: effectivePublisher,
       revocable: msg.revocable !== false,
-      unseedFreezeMs: msg.unseedFreezeMs || 0
+      unseedFreezeMs: msg.unseedFreezeMs || 0,
+      durability: msg.durability || 0
     }).then(() => {
       log.info('  ✓ seeded:', appKeyHex.slice(0, 16))
     }).catch((err) => {

@@ -282,7 +282,15 @@ export class AppRegistry extends EventEmitter {
         // merely remember accepting the seed.
         anchored: entry.anchored === true,
         anchoredAt: entry.anchoredAt || null,
-        anchoredLength: entry.anchoredLength || 0
+        anchoredLength: entry.anchoredLength || 0,
+        // Durability tier — surfaced so peer relays' AutoHeal scheduler
+        // can identify which drives need active replication maintenance.
+        // Defaults to 0 (standard) if absent from older entries.
+        durability: entry.durability || 0,
+        // Revocability — surfaced so quorum clients and ForkDetector can
+        // distinguish "publisher can pull this back" from "permanent
+        // commitment" content.
+        revocable: entry.revocable !== false
       }
 
       // Dedup app entries by appId — keep latest version

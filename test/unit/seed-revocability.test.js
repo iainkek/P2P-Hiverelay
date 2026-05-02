@@ -175,8 +175,8 @@ test('signing: legacy v1 layout produces 28-byte meta block (unchanged from v0.7
 
   // 32 (appKey) + 32 (dkHash) + 28 (meta) = 92
   t.is(v1.length, 92, 'v1 = 92 bytes total')
-  // 32 + 32 + 36 = 100
-  t.is(v2.length, 100, 'v2 = 100 bytes total')
+  // 32 + 32 + 40 = 104 — meta grew to 40 in v0.8 to commit durability tier
+  t.is(v2.length, 104, 'v2 = 104 bytes total (40-byte meta block w/ durability)')
 })
 
 // ─── verifyUnseedRequest enforcement ────────────────────────────────
