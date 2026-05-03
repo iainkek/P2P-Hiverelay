@@ -567,6 +567,17 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, { enabled: true, ...logOut })
         }
 
+        if (path === '/api/auto-heal') {
+          // Read-only operator telemetry. Surfaces the AutoHeal scheduler's
+          // current view of archive-tier drives + which ones are below
+          // diversity threshold + per-drive backoff state. Useful for the
+          // dashboard, ops monitoring, and debugging recruitment decisions.
+          if (!this.node.autoHeal) {
+            return this._json(res, { enabled: false, reason: 'AutoHeal not enabled in config' })
+          }
+          return this._json(res, this.node.autoHeal.snapshot())
+        }
+
         if (path === '/api/overview') {
           const stats = this.node.getStats()
           const mem = process.memoryUsage()

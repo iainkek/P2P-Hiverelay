@@ -252,7 +252,8 @@ test('AutoHeal: prunes stale peer entries past staleMs', async (t) => {
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
     staleMs: 1, // stale immediately
-    thresholds: { minReplicas: 2, minRegions: 2, minOperators: 2 }
+    thresholds: { minReplicas: 2, minRegions: 2, minOperators: 2 },
+    random: () => 0 // deterministic: jitter always accepts
   })
 
   heal._running = true
@@ -300,6 +301,156 @@ test('AutoHeal: snapshot reports correct diversity', async (t) => {
   t.is(drive.regions.length, 2, 'distinct regions counted (NA, EU)')
   t.is(drive.operators.length, 3, 'distinct operators counted')
   t.absent(drive.meetsThreshold, 'reports below threshold')
+})
+
+// ─── New gates added in pre-merge hardening ─────────────────────────
+
+test('AutoHeal: refuses to recruit when storage cap reached', async (t) => {
+  const recruited = []
+  const node = makeNode({
+    region: 'AS',
+    peerCatalogs: [{
+      pubkey: 'peerA',
+      region: 'NA',
+      apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }]
+    }],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  // Configure tight storage: 1MB cap, already at 950KB (95% used > 90% margin)
+  node.config.maxStorageBytes = 1024 * 1024
+  node.seeder = { totalBytesStored: 950 * 1024 }
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
+    random: () => 0 // jitter always accepts so the storage gate is the only thing blocking
+  })
+  heal._running = true
+  const skipped = []
+  heal.on('recruit-skipped', (info) => skipped.push(info))
+  await heal._tick()
+
+  t.is(recruited.length, 0, 'declined recruit')
+  t.ok(skipped.find(s => s.reason === 'storage-full'), 'emitted storage-full skip event')
+})
+
+test('AutoHeal: backs off retrying a drive after a recruit error', async (t) => {
+  const errors = []
+  const node = makeNode({
+    region: 'AS',
+    peerCatalogs: [{
+      pubkey: 'peerA',
+      region: 'NA',
+      apps: [{ appKey: 'broken-drive', durability: 1, anchored: true }]
+    }]
+  })
+  // Make seedApp always fail to simulate an un-replicable drive
+  node.seedApp = async () => { throw new Error('REPLICATION_FAILED') }
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
+    random: () => 0
+  })
+  heal._running = true
+  heal.on('recruit-error', (info) => errors.push(info))
+
+  // Tick 1 — fails, records backoff
+  await heal._tick()
+  t.is(errors.length, 1, 'first attempt errored')
+
+  // Tick 2 — should be in backoff, no second error
+  await heal._tick()
+  t.is(errors.length, 1, 'second tick skipped (in backoff)')
+
+  // Snapshot reports the backoff
+  const snap = heal.snapshot()
+  const drive = snap.drives.find(d => d.appKey === 'broken-drive')
+  t.ok(drive.backoff, 'backoff state surfaced')
+  t.is(drive.backoff.failures, 1)
+  t.ok(drive.backoff.retryInMs > 0, 'retry-in-ms is positive')
+})
+
+test('AutoHeal: jitter probabilistically declines recruitment', async (t) => {
+  // With many helpers and a small gap, individual relays should sometimes
+  // back off so the fleet doesn't all recruit simultaneously.
+  const node = makeNode({
+    region: 'AS',
+    peerCatalogs: [
+      // 30 peers, all in NA, drive needs 1 more replica + 1 more region
+      ...Array.from({ length: 30 }, (_, i) => ({
+        pubkey: `peer${i}`,
+        region: 'NA',
+        apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }]
+      }))
+    ]
+  })
+  // Hit the dice on the LOSING side — random returns 0.99, gap small,
+  // probability low → decline.
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    thresholds: { minReplicas: 30, minRegions: 2, minOperators: 30 },
+    random: () => 0.99
+  })
+  heal._running = true
+  const skipped = []
+  heal.on('recruit-skipped', (info) => skipped.push(info))
+  let recruited = 0
+  const origSeed = node.seedApp
+  node.seedApp = async (...args) => { recruited++; return origSeed?.(...args) }
+  await heal._tick()
+
+  // Drive needs 1 more region (we'd add AS) — region gap = 1.
+  // Helpers ~ 30. probability ≈ (1 * 2) / 30 = 0.067. random=0.99 > 0.067 → decline.
+  t.is(recruited, 0, 'jitter declined')
+  t.ok(skipped.find(s => s.reason === 'jitter-defer'), 'emitted jitter-defer skip event')
+})
+
+test('AutoHeal: jitter accepts when probability is high', async (t) => {
+  // Same setup but tiny fleet + large gap → probability ≈ 1.0 → accept.
+  const recruited = []
+  const node = makeNode({
+    region: 'AS',
+    peerCatalogs: [{
+      pubkey: 'peerA',
+      region: 'NA',
+      apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }]
+    }],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    thresholds: { minReplicas: 5, minRegions: 4, minOperators: 5 },
+    random: () => 0.5 // mid-range; should pass since prob is 1.0
+  })
+  heal._running = true
+  await heal._tick()
+
+  t.is(recruited.length, 1, 'recruited (probability was 1.0)')
+})
+
+test('AutoHeal: snapshot exposes new fields (running, backoffs, below)', async (t) => {
+  const node = makeNode({
+    region: 'AS',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', apps: [{ appKey: 'd1', durability: 1, anchored: true }] },
+      { pubkey: 'p2', region: 'EU', apps: [{ appKey: 'd2', durability: 1, anchored: true }] }
+    ]
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 },
+    random: () => 0.99 // decline jitter so we just observe state
+  })
+  heal._running = true
+  await heal._tick()
+
+  const snap = heal.snapshot()
+  t.is(snap.enabled, true)
+  t.is(snap.running, true)
+  t.is(snap.tracked, 2)
+  t.is(snap.below, 2, 'both drives below threshold')
+  t.is(snap.backoffs, 0, 'no failures yet')
+  t.ok(snap.maxRecruitsPerTick)
+  t.ok(snap.storageMargin)
 })
 
 test('AutoHeal: only counts ANCHORED replicas as live', async (t) => {

@@ -113,6 +113,11 @@ export function buildCapabilityDoc (opts = {}) {
   // capability doc can rely on this signal to decide whether their
   // non-revocable seed will actually be honored by this relay.
   features.push('seed-revocability')
+  // AutoHeal — this relay actively maintains diversity-enforced replication
+  // for archive-tier drives (durability=1). Clients publishing to archive
+  // tier can prefer relays advertising this feature, since they're the only
+  // ones whose participation actually moves the diversity-threshold needle.
+  if (relay && relay.autoHeal) features.push('auto-heal')
 
   // Fees block — only populated if a paymentManager is configured AND the
   // operator has set a fee schedule.

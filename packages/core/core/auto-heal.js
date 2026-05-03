@@ -65,8 +65,18 @@ export class AutoHeal extends EventEmitter {
     // drives in a single tick — back-pressure against a thundering herd
     // of new archive content all becoming our responsibility at once.
     this.maxRecruitsPerTick = opts.maxRecruitsPerTick || 3
+    // Soft storage cap — refuse to recruit past this fraction of
+    // maxStorageBytes. Default 90% leaves headroom for the seed-request
+    // path + manifest growth between ticks.
+    this.storageMargin = opts.storageMargin ?? 0.90
     // ReplicaSets observed across the network: appKey → { relayPubkey → meta }
     this._fleet = new Map()
+    // Per-drive recruit-failure backoff. appKey → { failures, retryAt }.
+    // Prevents tick-by-tick retry storms on permanently un-replicable drives.
+    this._backoff = new Map()
+    // Test seam — set to a deterministic [0,1) value to make jitter
+    // decisions reproducible. In production it's Math.random.
+    this._random = opts.random || (() => Math.random())
     this._timer = null
     this._running = false
   }
@@ -103,19 +113,29 @@ export class AutoHeal extends EventEmitter {
     const drives = []
     for (const [appKey, replicas] of this._fleet) {
       const live = this._liveReplicas(replicas)
+      const back = this._backoff.get(appKey) || null
       drives.push({
         appKey,
         replicas: live.replicas,
         regions: live.regions,
         operators: live.operators,
         meetsThreshold: this._meetsThreshold(live),
-        haveLocally: this.node.appRegistry?.has?.(appKey) === true
+        haveLocally: this.node.appRegistry?.has?.(appKey) === true,
+        backoff: back
+          ? { failures: back.failures, retryInMs: Math.max(0, back.retryAt - Date.now()) }
+          : null
       })
     }
     return {
+      enabled: true,
+      running: this._running,
       tickMs: this.tickMs,
       thresholds: this.thresholds,
+      maxRecruitsPerTick: this.maxRecruitsPerTick,
+      storageMargin: this.storageMargin,
       tracked: drives.length,
+      below: drives.filter(d => !d.meetsThreshold).length,
+      backoffs: this._backoff.size,
       drives
     }
   }
@@ -173,6 +193,39 @@ export class AutoHeal extends EventEmitter {
       // (operator may have explicitly closed the relay, set allowlist, etc.).
       if (!this._canAccept(appKey)) continue
 
+      // Storage gate — refuse to recruit when we're already at the operator's
+      // storage cap. seedApp() would error or evict; better to decline up
+      // front and let a relay with capacity take it. We use a soft margin
+      // (default 90%) so we don't keep recruiting until literally full.
+      if (!this._hasStorageCapacity()) {
+        this.emit('recruit-skipped', { appKey, reason: 'storage-full' })
+        continue
+      }
+
+      // Backoff gate — if recruiting this drive failed recently, wait before
+      // retrying. Prevents tick-by-tick retry storms when a drive is
+      // permanently un-replicable (e.g., publisher gone, we can't connect
+      // to any peer that has it).
+      if (this._isInBackoff(appKey)) continue
+
+      // Convergence jitter — at scale, many archive-aware relays will see
+      // the same shortfall in the same tick and all decide to recruit. The
+      // result is that a drive needing 1 new replica gets 50, blowing
+      // through the diversity target. Mitigation: each relay independently
+      // recruits with probability proportional to "how much help is needed
+      // vs. how many relays could help." Roughly: with N relays observing
+      // the same gap and a gap of K replicas, each relay recruits with
+      // probability ≈ K/N.
+      //
+      // We don't know N (the network's total auto-heal-enabled fleet), so
+      // we approximate from the visible fleet size. This isn't perfectly
+      // tight but converges fast: relays that lose the dice roll see the
+      // recruitment in the next tick's catalog and stand down.
+      if (!this._jitterAccept(live)) {
+        this.emit('recruit-skipped', { appKey, reason: 'jitter-defer' })
+        continue
+      }
+
       // Recruit.
       try {
         await this.node.seedApp(appKey, {
@@ -181,15 +234,79 @@ export class AutoHeal extends EventEmitter {
           source: 'auto-heal'
         })
         recruits++
+        this._clearBackoff(appKey) // success — clear any prior backoff
         this.emit('recruited', {
           appKey,
           before: live,
           reason: live.regions.length < this.thresholds.minRegions ? 'region-gap' : 'replica-gap'
         })
       } catch (err) {
+        this._recordFailure(appKey)
         this.emit('recruit-error', { appKey, error: err.message })
       }
     }
+  }
+
+  // ─── Internal: capacity, backoff, jitter ───────────────────────────
+
+  _hasStorageCapacity () {
+    const seeder = this.node.seeder
+    const cap = this.node.config?.maxStorageBytes
+    if (!seeder || !cap) return true // unbounded — let it through
+    const used = seeder.totalBytesStored || 0
+    const margin = this.storageMargin || 0.90
+    return used < (cap * margin)
+  }
+
+  _isInBackoff (appKey) {
+    const entry = this._backoff.get(appKey)
+    if (!entry) return false
+    if (Date.now() >= entry.retryAt) {
+      this._backoff.delete(appKey)
+      return false
+    }
+    return true
+  }
+
+  _recordFailure (appKey) {
+    const prior = this._backoff.get(appKey)
+    const failures = (prior?.failures || 0) + 1
+    // Exponential backoff with cap: 5min, 15min, 1h, 4h, 24h, 24h (max).
+    const delays = [5 * 60_000, 15 * 60_000, 60 * 60_000, 4 * 60 * 60_000, 24 * 60 * 60_000]
+    const delay = delays[Math.min(failures - 1, delays.length - 1)]
+    this._backoff.set(appKey, {
+      failures,
+      retryAt: Date.now() + delay
+    })
+  }
+
+  _clearBackoff (appKey) {
+    this._backoff.delete(appKey)
+  }
+
+  _jitterAccept (live) {
+    // Estimate how many relays could fix this gap and how big the gap is.
+    // visiblePeers ≈ relays we know about that aren't already replicas.
+    // We need (replicas + regions + operators) all to hit threshold; use the
+    // worst single-dimension shortfall as gap.
+    const replicaGap = Math.max(0, this.thresholds.minReplicas - live.replicas)
+    const regionGap = Math.max(0, this.thresholds.minRegions - live.regions.length)
+    const operatorGap = Math.max(0, this.thresholds.minOperators - live.operators.length)
+    const gap = Math.max(replicaGap, regionGap, operatorGap)
+    if (gap <= 0) return true // shouldn't happen; meetsThreshold gates above
+
+    // Estimate fleet of helpers from federation snapshot. Default to a
+    // conservative N=20 if we have less data than that.
+    const peerCount = this._fleetSize() || 20
+    const helpers = Math.max(peerCount, 3)
+    const probability = Math.min(1, (gap * 2) / helpers) // 2× for safety margin
+    return this._random() < probability
+  }
+
+  _fleetSize () {
+    if (!this.node.federation || typeof this.node.federation.snapshot !== 'function') return 0
+    const snap = this.node.federation.snapshot()
+    return Array.isArray(snap?.peerCatalogs) ? snap.peerCatalogs.length : 0
   }
 
   // ─── Internal: data refresh ────────────────────────────────────────
