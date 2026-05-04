@@ -53,6 +53,7 @@ import { AppLifecycle } from './app-lifecycle.js'
 import { GatewayServer } from './gateway-server.js'
 
 const DEFAULT_CONFIG = {
+  productProfile: 'relay-core',
   storage: './storage',
   maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
   maxConnections: 256,
@@ -97,6 +98,8 @@ const DEFAULT_CONFIG = {
   // users by default; operators can promote selected pubkeys to relay-admin.
   serviceDefaultPeerRole: 'authenticated-user',
   serviceAdminAllowlist: [],
+  enableServices: false,
+  plugins: [],
   serviceSupervision: {
     enabled: true,
     intervalMs: 30_000,
@@ -137,10 +140,42 @@ const DEFAULT_CONFIG = {
 }
 
 const MODE_PRESETS = {
-  public: {},
-  standard: {
+  'relay-core': {
+    productProfile: 'relay-core',
     enableRelay: true,
     enableSeeding: true,
+    enableServices: false,
+    plugins: [],
+    maxConnections: 256,
+    maxRelayBandwidthMbps: 100
+  },
+  'custody-relay': {
+    productProfile: 'custody-relay',
+    enableRelay: true,
+    enableSeeding: true,
+    enableServices: false,
+    plugins: [],
+    strictSeedingPrivacy: true,
+    custody: {
+      enabled: true,
+      defaultMode: 'blind',
+      allowTransparent: false,
+      requireEncryptedPayload: true,
+      metadataVisibility: 'redacted',
+      redactedCatalog: true,
+      proofTarget: 'ciphertext',
+      defaultRetainMs: 30 * 24 * 60 * 60 * 1000
+    },
+    custodyExpiryInterval: 60_000,
+    targetReplicaFloor: 3
+  },
+  public: {},
+  standard: {
+    productProfile: 'relay-core',
+    enableRelay: true,
+    enableSeeding: true,
+    enableServices: false,
+    plugins: [],
     maxConnections: 256,
     maxRelayBandwidthMbps: 100
   },
@@ -157,9 +192,12 @@ const MODE_PRESETS = {
     pairing: { enabled: true }
   },
   homehive: {
+    productProfile: 'homehive',
     discovery: { dht: true, announce: false, mdns: true },
     access: { open: false },
     pairing: { enabled: true },
+    enableServices: false,
+    plugins: [],
     maxConnections: 32,
     maxRelayBandwidthMbps: 25,
     maxStorageBytes: 10 * 1024 * 1024 * 1024,
@@ -186,6 +224,21 @@ const MODE_PRESETS = {
     enableSeeding: true,
     maxConnections: 512,
     maxRelayBandwidthMbps: 500
+  },
+  'service-operator': {
+    productProfile: 'service-operator',
+    enableRelay: true,
+    enableSeeding: true,
+    enableServices: true
+  },
+  'experimental-lab': {
+    productProfile: 'experimental-lab',
+    enableRelay: true,
+    enableSeeding: true,
+    enableServices: true,
+    maxConnections: 1024,
+    maxRelayBandwidthMbps: 500,
+    maxStorageBytes: 200 * 1024 * 1024 * 1024
   }
 }
 
@@ -235,7 +288,7 @@ function withTimeout (promise, ms, label) {
 export class RelayNode extends EventEmitter {
   constructor (opts = {}) {
     super()
-    this.mode = opts.mode || 'public'
+    this.mode = opts.mode || opts.productProfile || 'relay-core'
     this.config = buildConfig(this.mode, opts)
     this._operatingMode = this.mode
     this.store = new Corestore(this.config.storage)
@@ -362,6 +415,9 @@ export class RelayNode extends EventEmitter {
       'maxConnections',
       'maxRelayBandwidthMbps',
       'maxStorageBytes',
+      'productProfile',
+      'enableServices',
+      'plugins',
       'registryAutoAccept',
       'acceptMode',
       'acceptAllowlist',

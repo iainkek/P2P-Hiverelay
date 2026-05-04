@@ -16,6 +16,12 @@ JSON output:
 node scripts/simulate-blind-atomic-custody.js --iterations 5000 --json
 ```
 
+Optimization sweep:
+
+```bash
+node scripts/simulate-blind-atomic-custody.js --iterations 3000 --sweep --limit 8
+```
+
 The simulation is intentionally local and dependency-light. It models relay operators, regions, malicious operators, relay reliability, source handoff, post-source availability, ciphertext reconstruction risk, expiry violations, and witness detection.
 
 ## Latest Run
@@ -35,6 +41,7 @@ Result:
 | `shards-10of16-random` | 96.58% | 97.39% | 0.60% | 74.86% | 74.86% |
 | `shards-10of16-diverse` | 99.56% | 99.64% | 0.02% | 82.56% | 82.56% |
 | `shards-10of16-witness5` | 99.56% | 99.56% | 0.02% | 81.50% | 0.46% |
+| `shards-10of16-witness3x3` | 99.30% | 99.50% | 0.08% | 82.90% | 0.02% |
 | `shards-8of24-witness7` | 100.00% | 100.00% | 9.50% | 88.84% | 0.02% |
 
 The exact percentages are simulation outputs, not field guarantees. The direction is the important signal.
@@ -61,6 +68,38 @@ The simulation shows why this matters:
 - Witnesses do this without receiving content, plaintext, decrypt keys, or shards.
 
 This is a real architectural step forward because it turns expiry from relay self-attestation into observed network state.
+
+## Current Recommended Atomic Profile
+
+The optimizer now applies a production bar:
+
+| Constraint | Bar |
+|---|---:|
+| Commit rate | `>= 98.5%` |
+| Availability after source stop | `>= 99.5%` |
+| Adversary ciphertext reconstruction | `<= 0.5%` |
+| Undetected active serving after expiry | `<= 0.5%` |
+
+Latest 3,000-iteration sweep recommendation:
+
+| Parameter | Recommended Value |
+|---|---:|
+| Custody shards | `16` |
+| Reconstruction threshold | `10-of-16` |
+| Receipt quorum | `13-of-16` |
+| Expiry witnesses | `7` |
+| Witness rounds | `1` default, `3x2` or `5x2` for high-risk data |
+| Selection | operator/region diverse |
+
+Observed in the sweep:
+
+| Metric | Result |
+|---|---:|
+| Availability after source stop | `99.77%` |
+| Adversary ciphertext reconstruction | `0.03%` |
+| Undetected active serving | `0.07%` |
+
+This is the current "amazing but still practical" target: enough shards for strong availability, high enough threshold to resist malicious operator clusters, and enough witnesses to make post-expiry serving hard to hide.
 
 ## Protocol Shape
 
@@ -122,6 +161,15 @@ Suggested future registry entry:
 Client rule:
 
 > Treat temporary custody as expired only after relay non-serving proof plus an `M-of-N` witness tombstone quorum.
+
+Recommended default:
+
+```text
+custody: 10-of-16 encrypted shards
+receipt quorum: 13-of-16
+expiry: relay non-serving proof + 5-of-7 witness tombstones
+high-risk expiry: 2 rotating rounds of 5 witnesses
+```
 
 This does not prove physical deletion. It proves a stronger and more decentralized version of non-serving state.
 

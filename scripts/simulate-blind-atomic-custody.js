@@ -55,6 +55,19 @@ const SCENARIOS = [
     selection: 'diverse',
     fullMirror: false,
     witnessCount: 5,
+    witnessRounds: 1,
+    witnessSelection: 'diverse'
+  },
+  {
+    name: 'shards-10of16-witness3x3',
+    description: '16 encrypted shards plus 3 rotating witness rounds of 3 witnesses',
+    custodyCount: 16,
+    receiptQuorum: 13,
+    readThreshold: 10,
+    selection: 'diverse',
+    fullMirror: false,
+    witnessCount: 3,
+    witnessRounds: 3,
     witnessSelection: 'diverse'
   },
   {
@@ -66,6 +79,7 @@ const SCENARIOS = [
     selection: 'diverse',
     fullMirror: false,
     witnessCount: 7,
+    witnessRounds: 1,
     witnessSelection: 'diverse'
   }
 ]
@@ -81,7 +95,8 @@ function simulateScenario (scenario, config) {
     custodyOperators: 0,
     witnessRegions: 0,
     witnessOperators: 0,
-    honestWitnesses: 0
+    honestWitnesses: 0,
+    witnessProbes: 0
   }
 
   for (let i = 0; i < config.iterations; i++) {
@@ -104,17 +119,14 @@ function simulateScenario (scenario, config) {
     if (violators.length === 0) continue
     totals.activeServingViolation++
 
-    const witnesses = pickRelays(network, scenario.witnessCount, scenario.witnessSelection || 'diverse', rng, new Set(custodians.map(r => r.pubkey)))
-    const witnessSummary = describeQuorum(witnesses)
-    totals.witnessRegions += witnessSummary.regions.length
-    totals.witnessOperators += witnessSummary.operators.length
-
-    const honestWitnesses = witnesses.filter(w => !w.malicious)
-    totals.honestWitnesses += honestWitnesses.length
-    if (!violationDetected(violators, honestWitnesses, rng, config)) totals.undetectedActiveServing++
+    if (!witnessViolationDetected(network, custodians, violators, scenario, rng, config, totals)) {
+      totals.undetectedActiveServing++
+    }
   }
 
   const committed = totals.committed || 1
+  const witnessRounds = scenario.witnessRounds || (scenario.witnessCount ? 1 : 0)
+  const maxWitnessProbes = (scenario.witnessCount || 0) * witnessRounds
   return {
     name: scenario.name,
     description: scenario.description,
@@ -122,6 +134,9 @@ function simulateScenario (scenario, config) {
     receiptQuorum: scenario.receiptQuorum,
     readThreshold: scenario.readThreshold,
     witnessCount: scenario.witnessCount,
+    witnessRounds,
+    maxWitnessProbes,
+    costUnits: scenario.custodyCount + maxWitnessProbes * 0.35,
     commitRate: ratio(totals.committed, config.iterations),
     availabilityAfterSourceStop: ratio(totals.available, committed),
     adversaryReconstructsCiphertext: ratio(totals.adversaryReconstructsCiphertext, committed),
@@ -131,7 +146,9 @@ function simulateScenario (scenario, config) {
     avgCustodyOperators: round(totals.custodyOperators / config.iterations),
     avgWitnessRegions: scenario.witnessCount ? round(totals.witnessRegions / committed) : 0,
     avgWitnessOperators: scenario.witnessCount ? round(totals.witnessOperators / committed) : 0,
-    avgHonestWitnesses: scenario.witnessCount ? round(totals.honestWitnesses / committed) : 0
+    avgHonestWitnesses: scenario.witnessCount ? round(totals.honestWitnesses / committed) : 0,
+    avgWitnessProbes: scenario.witnessCount ? round(totals.witnessProbes / committed) : 0,
+    score: 0
   }
 }
 
@@ -219,6 +236,30 @@ function violationDetected (violators, honestWitnesses, rng, config) {
   return false
 }
 
+function witnessViolationDetected (network, custodians, violators, scenario, rng, config, totals) {
+  if (violators.length === 0) return true
+  if (!scenario.witnessCount) return false
+
+  const rounds = scenario.witnessRounds || 1
+  const exclude = new Set(custodians.map(r => r.pubkey))
+
+  for (let round = 0; round < rounds; round++) {
+    const witnesses = pickRelays(network, scenario.witnessCount, scenario.witnessSelection || 'diverse', rng, exclude)
+    for (const witness of witnesses) exclude.add(witness.pubkey)
+
+    const witnessSummary = describeQuorum(witnesses)
+    totals.witnessRegions += witnessSummary.regions.length
+    totals.witnessOperators += witnessSummary.operators.length
+    totals.witnessProbes += witnesses.length
+
+    const honestWitnesses = witnesses.filter(w => !w.malicious)
+    totals.honestWitnesses += honestWitnesses.length
+    if (violationDetected(violators, honestWitnesses, rng, config)) return true
+  }
+
+  return false
+}
+
 function summarizeBreakthrough (results) {
   const sharded = results.find(r => r.name === 'shards-10of16-diverse')
   const witnessed = results.find(r => r.name === 'shards-10of16-witness5')
@@ -249,6 +290,7 @@ function printReport (config, results) {
   ].join(' '))
   console.log('-'.repeat(99))
   for (const r of results) {
+    r.score = scoreDesign(r)
     console.log([
       pad(r.name, 26),
       pad(percent(r.commitRate), 9),
@@ -257,7 +299,7 @@ function printReport (config, results) {
       pad(percent(r.activeServingViolation), 12),
       pad(percent(r.undetectedActiveServing), 12),
       pad(String(r.avgCustodyOperators), 6),
-      pad(r.witnessCount ? `${r.avgHonestWitnesses}/${r.witnessCount}` : '0', 8)
+      pad(r.maxWitnessProbes ? `${r.avgHonestWitnesses}/${r.maxWitnessProbes}` : '0', 8)
     ].join(' '))
   }
   console.log('')
@@ -267,6 +309,126 @@ function printReport (config, results) {
   console.log(`- Availability delta versus diverse shards: ${percent(breakthrough.availabilityDelta)}`)
   console.log(`- Ciphertext reconstruction delta versus diverse shards: ${percent(breakthrough.ciphertextReconstructionDelta)}`)
   console.log('- Interpretation: add independent expiry witnesses before adding more custody replicas.')
+}
+
+function generateSweepScenarios () {
+  const scenarios = []
+  for (const custodyCount of [12, 16, 20, 24, 28, 32]) {
+    const thresholdCandidates = new Set([
+      Math.ceil(custodyCount * 0.45),
+      Math.ceil(custodyCount * 0.55),
+      Math.ceil(custodyCount * 0.625),
+      Math.ceil(custodyCount * 0.7)
+    ])
+
+    for (const readThreshold of thresholdCandidates) {
+      if (readThreshold >= custodyCount) continue
+      for (const witnessCount of [0, 3, 5, 7]) {
+        for (const witnessRounds of witnessCount ? [1, 2, 3] : [0]) {
+          const receiptQuorum = Math.max(readThreshold, Math.ceil(custodyCount * 0.78))
+          scenarios.push({
+            name: `shards-${readThreshold}of${custodyCount}-w${witnessCount}x${witnessRounds}`,
+            description: `${custodyCount} shards, ${readThreshold} needed, ${witnessCount} witnesses x ${witnessRounds} rounds`,
+            custodyCount,
+            receiptQuorum,
+            readThreshold,
+            selection: 'diverse',
+            fullMirror: false,
+            witnessCount,
+            witnessRounds,
+            witnessSelection: 'diverse'
+          })
+        }
+      }
+    }
+  }
+  return scenarios
+}
+
+function runSweep (config, opts = {}) {
+  const limit = toPositiveInt(opts.limit, 12)
+  const scenarios = generateSweepScenarios()
+  const allResults = scenarios.map(scenario => {
+    const result = simulateScenario(scenario, config)
+    result.score = scoreDesign(result)
+    return result
+  })
+  const eligible = allResults.filter(meetsProductionBar)
+  const results = eligible.length > 0 ? eligible : allResults
+  return results.sort(compareDesigns).slice(0, limit)
+}
+
+function scoreDesign (result) {
+  const availabilityScore = result.availabilityAfterSourceStop * 5
+  const commitScore = result.commitRate * 1.5
+  const privacyPenalty = result.adversaryReconstructsCiphertext * 16
+  const undetectedPenalty = result.undetectedActiveServing * 14
+  const activeLeakPenalty = result.activeServingViolation * 0.15
+  const costPenalty = result.costUnits * 0.01
+  const complexityPenalty = (result.witnessRounds || 0) * 0.03
+  return round(availabilityScore + commitScore - privacyPenalty - undetectedPenalty - activeLeakPenalty - costPenalty - complexityPenalty)
+}
+
+function meetsProductionBar (result) {
+  return result.commitRate >= 0.985 &&
+    result.availabilityAfterSourceStop >= 0.995 &&
+    result.adversaryReconstructsCiphertext <= 0.005 &&
+    result.undetectedActiveServing <= 0.005
+}
+
+function compareDesigns (a, b) {
+  const delta = conservativeScore(b) - conservativeScore(a)
+  if (delta !== 0) return delta
+  return a.costUnits - b.costUnits
+}
+
+function conservativeScore (result) {
+  const thresholdRatio = result.readThreshold / result.custodyCount
+  return result.score -
+    result.adversaryReconstructsCiphertext * 4 -
+    result.undetectedActiveServing * 2 +
+    thresholdRatio * 0.05
+}
+
+function printSweepReport (config, results) {
+  console.log('HiveRelay blind atomic custody optimization sweep')
+  console.log(`iterations=${config.iterations} seed=${config.seed}`)
+  console.log('')
+  console.log([
+    pad('rank', 5),
+    pad('scenario', 28),
+    pad('score', 8),
+    pad('avail', 9),
+    pad('adv-recon', 11),
+    pad('undetected', 12),
+    pad('cost', 7),
+    pad('watchers', 9)
+  ].join(' '))
+  console.log('-'.repeat(94))
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    console.log([
+      pad(String(i + 1), 5),
+      pad(r.name, 28),
+      pad(String(r.score), 8),
+      pad(percent(r.availabilityAfterSourceStop), 9),
+      pad(percent(r.adversaryReconstructsCiphertext), 11),
+      pad(percent(r.undetectedActiveServing), 12),
+      pad(String(r.costUnits), 7),
+      pad(r.maxWitnessProbes ? `${r.witnessCount}x${r.witnessRounds}` : '0', 9)
+    ].join(' '))
+  }
+  const best = results[0]
+  if (best) {
+    console.log('')
+    console.log('Production bar: commit >= 98.5%, availability >= 99.5%, adversary reconstruction <= 0.5%, undetected serving <= 0.5%')
+    console.log('Recommended design from this sweep:')
+    console.log(`- ${best.name}: ${best.description}`)
+    console.log(`- receipt quorum: ${best.receiptQuorum}/${best.custodyCount}`)
+    console.log(`- reconstruction threshold: ${best.readThreshold}/${best.custodyCount}`)
+    console.log(`- expiry witnesses: ${best.witnessCount} x ${best.witnessRounds} rotating rounds`)
+    console.log(`- risk: ${percent(best.adversaryReconstructsCiphertext)} adversary reconstruction, ${percent(best.undetectedActiveServing)} undetected active serving`)
+  }
 }
 
 function parseArgs (argv) {
@@ -365,6 +527,7 @@ function main () {
   const iterations = toPositiveInt(args.iterations, DEFAULT_ITERATIONS)
   const seed = String(args.seed || DEFAULT_SEED)
   const json = args.json === true
+  const sweep = args.sweep === true
 
   const config = {
     iterations,
@@ -379,10 +542,14 @@ function main () {
     witnessDetectRate: toProbability(args.witnessDetect, 0.84)
   }
 
-  const results = SCENARIOS.map(scenario => simulateScenario(scenario, config))
+  const results = sweep
+    ? runSweep(config, { limit: args.limit })
+    : SCENARIOS.map(scenario => simulateScenario(scenario, config))
 
   if (json) {
-    console.log(JSON.stringify({ config, results, breakthrough: summarizeBreakthrough(results) }, null, 2))
+    console.log(JSON.stringify({ config, mode: sweep ? 'sweep' : 'scenario', results, breakthrough: summarizeBreakthrough(results) }, null, 2))
+  } else if (sweep) {
+    printSweepReport(config, results)
   } else {
     printReport(config, results)
   }

@@ -1,5 +1,5 @@
 > [!WARNING]
-> **Doc may be partially out of date.** This file was written before the Compute removal, Core/Services split, and Catalog auto-sync removal. See [REFACTOR-NOTES.md](REFACTOR-NOTES.md) for current architecture.
+> **Archived economics exploration.** This is not part of the default HiveRelay product promise. The current kernel is always-on P2P availability plus blind atomic custody; payments, tokens, SLA collateral, and market settlement should be packaged as optional plugin/marketplace artifacts. See [PROJECT-FOCUS-AND-BLOAT-AUDIT.md](PROJECT-FOCUS-AND-BLOAT-AUDIT.md).
 
 # HiveRelay: Token Economics and Incentive Design
 

@@ -2,9 +2,9 @@
  * HiveRelay Interactive Setup Wizard (TUI)
  *
  * Guides the operator through configuring a relay node:
- *   - Node profile (light / standard / heavy)
+ *   - Product profile (relay-core / custody-relay / service-operator)
  *   - Resource limits (memory, storage, bandwidth, connections)
- *   - Services (enable/disable individual services)
+ *   - Optional service plugins
  *   - Transports (holesail, tor, websocket)
  *   - Network (API port, regions, bootstrap)
  *   - Seeding & registry settings
@@ -22,26 +22,66 @@ import { join } from 'path'
 // ─── Node Profiles ──────────────────────────────────────────────────
 
 const PROFILES = {
-  light: {
-    label: 'Light  — Low resource usage (Raspberry Pi, old laptop)',
-    maxStorageBytes: 10 * 1024 * 1024 * 1024, // 10 GB
-    maxConnections: 64,
-    maxRelayBandwidthMbps: 25,
-    services: ['identity', 'schema', 'sla']
-  },
-  standard: {
-    label: 'Standard — Balanced for VPS or desktop (recommended)',
+  'relay-core': {
+    label: 'Relay Core — availability + custody kernel (recommended)',
     maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
     maxConnections: 256,
     maxRelayBandwidthMbps: 100,
-    services: ['identity', 'schema', 'sla', 'storage', 'arbitration']
+    services: [],
+    config: {
+      mode: 'relay-core',
+      enableServices: false
+    }
   },
-  heavy: {
-    label: 'Heavy  — Maximum capacity (dedicated server)',
+  'custody-relay': {
+    label: 'Custody Relay — blind atomic custody focus',
+    maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
+    maxConnections: 256,
+    maxRelayBandwidthMbps: 100,
+    services: [],
+    config: {
+      mode: 'custody-relay',
+      enableServices: false,
+      strictSeedingPrivacy: true,
+      custodyExpiryInterval: 60_000
+    }
+  },
+  homehive: {
+    label: 'HomeHive — private/local relay profile',
+    maxStorageBytes: 10 * 1024 * 1024 * 1024, // 10 GB
+    maxConnections: 32,
+    maxRelayBandwidthMbps: 25,
+    services: [],
+    config: {
+      mode: 'homehive',
+      enableServices: false,
+      discovery: { dht: true, announce: false, mdns: true },
+      access: { open: false },
+      pairing: { enabled: true },
+      acceptMode: 'allowlist'
+    }
+  },
+  'service-operator': {
+    label: 'Service Operator — opt-in app services on top of core',
+    maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
+    maxConnections: 256,
+    maxRelayBandwidthMbps: 100,
+    services: ['identity', 'storage', 'schema'],
+    config: {
+      mode: 'service-operator',
+      enableServices: true
+    }
+  },
+  'experimental-lab': {
+    label: 'Experimental Lab — AI/ZK/SLA/arbitration plugin playground',
     maxStorageBytes: 200 * 1024 * 1024 * 1024, // 200 GB
     maxConnections: 1024,
     maxRelayBandwidthMbps: 500,
-    services: ['identity', 'schema', 'sla', 'storage', 'arbitration', 'ai', 'zk']
+    services: ['identity', 'storage', 'schema', 'ai', 'zk', 'sla', 'arbitration'],
+    config: {
+      mode: 'experimental-lab',
+      enableServices: true
+    }
   },
   custom: {
     label: 'Custom — Configure everything manually'
@@ -50,13 +90,13 @@ const PROFILES = {
 
 // All available services with descriptions
 const ALL_SERVICES = [
-  { name: 'identity  — Identity & key management (core)', value: 'identity' },
-  { name: 'schema    — Data schema validation (core)', value: 'schema' },
-  { name: 'sla       — Service-level agreements (core)', value: 'sla' },
-  { name: 'storage   — Persistent data storage', value: 'storage' },
-  { name: 'arbitration — Dispute resolution', value: 'arbitration' },
-  { name: 'ai        — AI/ML inference', value: 'ai' },
-  { name: 'zk        — Zero-knowledge proofs', value: 'zk' }
+  { name: 'identity  — plugin: identity and relay-local signing helpers', value: 'identity' },
+  { name: 'storage   — plugin: service RPC storage helpers', value: 'storage' },
+  { name: 'schema    — plugin: schema validation', value: 'schema' },
+  { name: 'ai        — experimental plugin: AI/ML inference', value: 'ai' },
+  { name: 'zk        — experimental plugin: zero-knowledge proofs', value: 'zk' },
+  { name: 'sla       — experimental plugin: service-level agreements', value: 'sla' },
+  { name: 'arbitration — experimental plugin: dispute resolution', value: 'arbitration' }
 ]
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -104,6 +144,7 @@ export async function runSetup () {
     config.maxConnections = p.maxConnections
     config.maxRelayBandwidthMbps = p.maxRelayBandwidthMbps
     config._selectedServices = p.services
+    Object.assign(config, p.config || {})
   }
 
   // ─── Step 2: Storage Path ────────────────────────────────────────
@@ -184,16 +225,18 @@ export async function runSetup () {
   // ─── Step 4: Services ────────────────────────────────────────────
 
   console.log()
-  const profileServices = config._selectedServices || ['identity', 'schema', 'sla', 'storage', 'arbitration']
+  const profileServices = config._selectedServices || []
 
   const services = await checkbox({
-    message: 'Enable services:',
+    message: 'Enable optional service plugins:',
     choices: ALL_SERVICES.map(s => ({
       ...s,
       checked: profileServices.includes(s.value)
     }))
   })
   config.services = services
+  config.plugins = services
+  config.enableServices = services.length > 0
   delete config._selectedServices
 
   // ─── Step 5: Core Features ───────────────────────────────────────
@@ -301,7 +344,7 @@ export async function runSetup () {
 
   console.log()
   const enableLightning = await confirm({
-    message: 'Enable Lightning Network payments?',
+    message: 'Enable experimental Lightning Network payments?',
     default: false
   })
 
@@ -399,7 +442,7 @@ export async function runSetup () {
   console.log(`  Max storage:   ${formatBytes(config.maxStorageBytes)}`)
   console.log(`  Connections:   ${config.maxConnections}`)
   console.log(`  Bandwidth:     ${config.maxRelayBandwidthMbps} Mbps`)
-  console.log(`  Services:      ${services.join(', ')}`)
+  console.log(`  Plugins:       ${services.length ? services.join(', ') : 'none — core relay only'}`)
   console.log(`  Relay:         ${config.enableRelay ? 'enabled' : 'disabled'}`)
   console.log(`  Seeding:       ${config.enableSeeding ? 'enabled' : 'disabled'}`)
   console.log(`  API:           ${config.enableAPI ? 'http://127.0.0.1:' + (config.apiPort || 9100) : 'disabled'}`)

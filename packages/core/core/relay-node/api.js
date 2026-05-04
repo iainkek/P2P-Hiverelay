@@ -78,6 +78,8 @@ const LOCAL_ONLY_DISPATCH_ROUTES = new Set([
   'identity.verify'
 ])
 const AVAILABLE_MODES = [
+  'relay-core',
+  'custody-relay',
   'public',
   'standard',
   'private',
@@ -86,7 +88,9 @@ const AVAILABLE_MODES = [
   'seed-only',
   'relay-only',
   'stealth',
-  'gateway'
+  'gateway',
+  'service-operator',
+  'experimental-lab'
 ]
 
 export class RelayAPI extends EventEmitter {
@@ -1682,8 +1686,18 @@ export class RelayAPI extends EventEmitter {
 
         if (path === '/api/manage/modes') {
           return this._json(res, {
-            current: this.node._operatingMode || 'standard',
+            current: this.node._operatingMode || 'relay-core',
             available: [
+              {
+                id: 'relay-core',
+                name: 'Relay Core',
+                description: 'Default focused kernel — availability, registry, gateway, custody, no service plugins'
+              },
+              {
+                id: 'custody-relay',
+                name: 'Custody Relay',
+                description: 'Blind atomic custody profile — encrypted temporary handoff and expiry proofs'
+              },
               {
                 id: 'public',
                 name: 'Public',
@@ -1692,7 +1706,7 @@ export class RelayAPI extends EventEmitter {
               {
                 id: 'standard',
                 name: 'Standard Relay',
-                description: 'Full relay + seeding + all services'
+                description: 'Legacy alias for Relay Core defaults'
               },
               {
                 id: 'private',
@@ -1728,6 +1742,16 @@ export class RelayAPI extends EventEmitter {
                 id: 'gateway',
                 name: 'Gateway',
                 description: 'HTTP gateway focus — serve Hyperdrive content over HTTPS'
+              },
+              {
+                id: 'service-operator',
+                name: 'Service Operator',
+                description: 'Opt-in service plugin host on top of the relay core'
+              },
+              {
+                id: 'experimental-lab',
+                name: 'Experimental Lab',
+                description: 'AI/ZK/SLA/arbitration plugin playground, not a default production profile'
               }
             ]
           })
@@ -2078,7 +2102,11 @@ export class RelayAPI extends EventEmitter {
         ? 'Enable Tor transport for full stealth mode'
         : mode === 'homehive'
           ? 'HomeHive mode active — low resource, LAN-priority'
-          : null
+          : mode === 'custody-relay'
+            ? 'Custody relay mode active — blind atomic handoff focused'
+            : mode === 'relay-core'
+              ? 'Relay Core active — focused availability/custody kernel'
+              : null
     })
   }
 

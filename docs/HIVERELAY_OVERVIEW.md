@@ -1,5 +1,5 @@
 > [!WARNING]
-> **Doc may be partially out of date.** This file was written before the Compute removal, Core/Services split, and Catalog auto-sync removal. See [REFACTOR-NOTES.md](REFACTOR-NOTES.md) for current architecture.
+> **Vision/archive doc.** This file contains the broader platform vision and some older service-marketplace language. The current default product focus is narrower: always-on P2P availability plus blind atomic custody. Treat AI, ZK, SLA, arbitration, payments, and special transports as plugin/profile artifacts unless explicitly enabled. See [PROJECT-FOCUS-AND-BLOAT-AUDIT.md](PROJECT-FOCUS-AND-BLOAT-AUDIT.md) and [../artifacts/plugin-handoffs/](../artifacts/plugin-handoffs/) for the current pruning model.
 
 # HiveRelay: Infrastructure for the Peer-to-Peer Internet
 

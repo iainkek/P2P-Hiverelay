@@ -4,7 +4,7 @@
 
 Drop-in, always-on relay infrastructure for **any** Hyperswarm-based app. Your data stays end-to-end encrypted; the relay literally can't read a byte. Works with anything built on Hyperswarm, Hyperdrive, Hyperbee, Pear/Bare, or raw DHT — not Pear-specific, not browser-specific, not opinionated about your stack. Plug it in and your users stop seeing "offline".
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.6.0**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.7.3**
 
 > The relay layer of the Hive substrate — blind, always-on, paid in Lightning sats. The consumer-facing Umbrel App Store version is branded **Blindspark**. The protocol and SDK retain the HiveRelay name.
 
@@ -12,11 +12,13 @@ Drop-in, always-on relay infrastructure for **any** Hyperswarm-based app. Your d
 
 ## The Problem
 
-You build a P2P app on Hyperswarm. It works beautifully — until you close your laptop. Then your users see "offline" and your app is dead. Mobile users behind carrier NATs can't connect at all. Browser users can't use UDP. There's no persistence, no discovery, no payment rail, and no services backend.
+You build a P2P app on Hyperswarm. It works beautifully — until you close your laptop. Then your users see "offline" and your app is dead. Mobile users behind carrier NATs can't connect at all. Browser users can't use UDP. There is no durable availability layer and no shared discovery surface.
 
 ## The Fix
 
-HiveRelay gives your app always-on availability, NAT traversal, browser access, app discovery, AI inference, identity, and a services layer — without running your own servers.
+HiveRelay gives your app always-on availability, NAT traversal, browser access, app discovery, and blind atomic custody for temporary encrypted handoff — without running your own servers.
+
+The default product is intentionally focused: **persistent P2P availability plus blind atomic custody**. AI, ZK, SLA, arbitration, payments, and special transports are optional plugin/profile layers, not the core relay promise.
 
 ```js
 import { HiveRelayClient } from 'p2p-hiverelay-client'
@@ -230,13 +232,16 @@ p2p-hiverelay start --region NA --max-storage 50GB --holesail
 p2p-hiverelay tui          # Connect to running node
 ```
 
-Full interactive control of services, resources, transports, accept-mode, federation, network settings — no restart needed.
+Interactive control of the relay core plus any explicitly enabled service plugins, resources, transports, accept-mode, federation, and network settings.
 
 ### Operating Modes
 
 | Mode | Description |
 |------|-------------|
-| **Standard** | Full relay + seeding + all services (256 conn, 100 Mbps) |
+| **Relay Core** | Default focused kernel: availability, registry, gateway, custody, no service plugins |
+| **Custody Relay** | Blind atomic custody profile for encrypted temporary handoff |
+| **Service Operator** | Opt-in service plugin host on top of the relay core |
+| **Experimental Lab** | AI/ZK/SLA/arbitration plugin playground, not a production default |
 | **HomeHive** | Home/personal relay — 32 connections, 25 Mbps, LAN-priority, device pairing |
 | **Seed Only** | App seeding only — relay disabled |
 | **Relay Only** | Circuit relay only — seeding disabled |
@@ -261,15 +266,9 @@ hiverelay federation mirror https://my-other-relay.example.com
 
 Followed catalogs go through your accept-mode gate. Mirrored peers bypass the gate (use sparingly — only for "your own other node" or trusted partners).
 
-### Earnings (rate card — v0.6.0 with LNbits integration)
+### Optional Economics
 
-| Service | Rate | Hardware Needed |
-|---------|------|----------------|
-| Storage | 10 sats/GB-month | Any |
-| Egress | 20 sats/GB | Any |
-| AI inference (M3) | 1-2 sats/1K tokens | 16GB+ RAM, GPU/Apple Silicon |
-
-Earnings honest expectations: see [`docs/OPERATOR-INCENTIVES-Y1.md`](docs/OPERATOR-INCENTIVES-Y1.md).
+Payments and service-market economics are optional plugin/marketplace layers. Core adoption should not require Lightning, a token, AI hardware, SLA collateral, or arbitration. For the archived operator-economics exploration, see [`docs/OPERATOR-INCENTIVES-Y1.md`](docs/OPERATOR-INCENTIVES-Y1.md) and [`artifacts/plugin-handoffs/`](artifacts/plugin-handoffs/).
 
 ---
 

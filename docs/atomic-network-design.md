@@ -892,3 +892,12 @@ npm run simulate:atomic-custody -- --iterations 5000
 ```
 
 The current simulation breakthrough candidate is documented in [ATOMIC-CUSTODY-SIMULATION.md](ATOMIC-CUSTODY-SIMULATION.md): add independent non-storage expiry witnesses that sign tombstones over observed non-serving state.
+
+Current recommended simulation profile:
+
+```text
+10-of-16 encrypted shards
+13-of-16 custody receipt quorum
+5-of-7 expiry witness tombstone quorum
+2 rotating witness rounds for high-risk data
+```

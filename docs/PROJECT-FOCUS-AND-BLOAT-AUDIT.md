@@ -110,6 +110,15 @@ HiveRelay is not trying to be a decentralized cloud, AI platform, token economy,
 
 HiveRelay is the always-on P2P availability and custody substrate that those things can use.
 
+## Artifact Preservation
+
+Non-core work has been preserved as future-agent handoff material in:
+
+- [artifacts/plugin-handoffs/README.md](../artifacts/plugin-handoffs/README.md)
+- [artifacts/plugin-handoffs/plugin-manifest.json](../artifacts/plugin-handoffs/plugin-manifest.json)
+
+Those artifacts intentionally keep AI, ZK, SLA, arbitration, payments, special transports, dashboards, and HomeHive as packageable work without letting them inflate the default relay promise.
+
 ## Technical Refactor Priorities
 
 ### P0: Split RelayNode
@@ -163,6 +172,8 @@ Suggested profiles:
 | `homehive` | local/private relay |
 | `service-operator` | opt-in app services |
 | `experimental-lab` | AI/ZK/SLA/arbitration demos |
+
+The setup wizard and runtime modes should prefer `relay-core` and `custody-relay`. `service-operator` and `experimental-lab` are opt-in profiles for operators who knowingly accept the larger trust and maintenance surface.
 
 ### P1: Move Claims To Capability Docs
 

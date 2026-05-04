@@ -3,6 +3,8 @@
  */
 
 export default {
+  productProfile: 'relay-core',
+
   // Node identity
   storage: './hiverelay-storage',
 
@@ -94,6 +96,8 @@ export default {
   },
   serviceDefaultPeerRole: 'authenticated-user',
   serviceAdminAllowlist: [],
+  enableServices: false,
+  plugins: [],
   serviceSupervision: {
     enabled: true,
     intervalMs: 30_000,
