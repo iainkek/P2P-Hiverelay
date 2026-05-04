@@ -130,7 +130,7 @@ function makeSimRelay (world, pubkey, opts = {}) {
 
   const seededApps = []
   const node = {
-    config: { regions: [meta.region], autoHeal: { enabled: true } },
+    config: { regions: [meta.region], operator: meta.operator, autoHeal: { enabled: true } },
     swarm: { keyPair: { publicKey: pubkey } },
     appRegistry: {
       catalog: () => Array.from(meta.hosting).map(appKey => ({
@@ -289,9 +289,14 @@ async function scenarioSybilAttack () {
     }))
   }
 
-  for (let tick = 1; tick <= 15; tick++) {
-    await tickAll(relays)
+  let capSkipsTotal = 0
+  for (const r of relays) {
+    r.heal.on('recruit-skipped', e => {
+      if (e.reason === 'operator-fairshare-cap') capSkipsTotal++
+    })
   }
+
+  for (let tick = 1; tick <= 15; tick++) await tickAll(relays)
 
   let sybilHosts = 0
   let honestHosts = 0
@@ -301,7 +306,7 @@ async function scenarioSybilAttack () {
       else honestHosts++
     }
   }
-  console.log(`  honest replicas: ${honestHosts} | sybil replicas: ${sybilHosts}`)
+  console.log(`  honest replicas: ${honestHosts} | sybil replicas: ${sybilHosts} | cap-skips: ${capSkipsTotal}`)
   console.log(`  total: ${honestHosts + sybilHosts}, regions: ${regionsCovering(world, 'app-sybil').size}, ops: ${operatorsCovering(world, 'app-sybil').size}`)
   console.log(`→ sybil over-recruitment: ${sybilHosts > 5 ? '✗ over-replicated by sybils' : '✓ diversity bounds sybil cluster'}`)
 

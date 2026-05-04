@@ -101,6 +101,14 @@ export class AutoHeal extends EventEmitter {
     this.proofGraceMs = opts.proofGraceMs || 60 * 60 * 1000
     // Inject a fetcher for tests; in production we use the real fetch.
     this._fetchProof = opts.fetchProof || fetchAndVerifyAnchorProof
+    // Per-tick proof-fetch budget. Beyond ~1K relays × 1K drives, fetching
+    // every anchored peer's proof every tick is too expensive (O(K·N) per
+    // relay per cycle). When we have more pending fetches than this, we
+    // sample the most-stale entries first; remaining peers get verified
+    // on subsequent ticks. With proofFreshnessMs/2 cache window this still
+    // ensures every peer's proof is refreshed within the freshness window
+    // — just not all in one tick.
+    this.maxProofsPerTick = opts.maxProofsPerTick || 64
     // Cache of verified proofs: `${appKey}:${peerPubkey}` → { proof, fetchedAt }
     // Prevents fetching the same proof every tick. Entries auto-expire
     // when they exceed proofFreshnessMs.
@@ -171,6 +179,7 @@ export class AutoHeal extends EventEmitter {
       storageMargin: this.storageMargin,
       verifyProofs: this.verifyProofs,
       proofFreshnessMs: this.proofFreshnessMs,
+      maxProofsPerTick: this.maxProofsPerTick,
       tracked: drives.length,
       below: drives.filter(d => !d.meetsThreshold).length,
       backoffs: this._backoff.size,
@@ -224,15 +233,44 @@ export class AutoHeal extends EventEmitter {
       //   - Region threshold not yet met but our region wouldn't move us
       //     closer to it (we're already represented).
       const ourRegion = this._localRegion()
+      const ourOperator = this._localOperator()
       const ourPubkey = this._localPubkey()
       const addsRegion = !live.regions.includes(ourRegion)
+      const addsOperator = !live.operators.includes(ourOperator)
       const meetsRegionThreshold = live.regions.length >= this.thresholds.minRegions
+      const meetsOperatorThreshold = live.operators.length >= this.thresholds.minOperators
       const belowReplicas = live.replicas < this._targetReplicas()
+      // Per-operator cap. Even when both diversity thresholds are met, a
+      // single operator with many relays could still pad the replica count
+      // (sybil cluster). Cap any operator at ceil(target / minOperators)
+      // replicas — that's the fairshare ceiling beyond which a single
+      // operator dominates. Default ON; set maxPerOperator: 0 to disable.
+      const ourOperatorCount = live.raw.filter(r => r.operator === ourOperator).length
+      const fairshareCap = Math.ceil(this._targetReplicas() / this.thresholds.minOperators)
+      const maxPerOperator = this.thresholds.maxPerOperator ?? fairshareCap
+      const operatorAtCap = maxPerOperator > 0 && ourOperatorCount >= maxPerOperator
+
+      // Three valid recruit paths:
+      //   A. We close a region gap (addsRegion). Highest-value.
+      //   B. We close an operator gap (addsOperator). Equally high-value —
+      //      operator-diversity protects against correlated infrastructure
+      //      failures (a whole AWS region going down).
+      //   C. Both diversity dimensions are at threshold but replica count is
+      //      below target — fill buffer with a redundant peer. Requires
+      //      meetsOperatorThreshold AND that our operator isn't already at
+      //      the per-operator cap (sybil-resistance).
       const wouldAddDiversity = (
         !replicas.has(ourPubkey) &&
-        (addsRegion || (belowReplicas && meetsRegionThreshold))
+        !operatorAtCap &&
+        (addsRegion || addsOperator ||
+          (belowReplicas && meetsRegionThreshold && meetsOperatorThreshold))
       )
-      if (!wouldAddDiversity) continue
+      if (!wouldAddDiversity) {
+        if (operatorAtCap) {
+          this.emit('recruit-skipped', { appKey, reason: 'operator-fairshare-cap', operator: ourOperator })
+        }
+        continue
+      }
 
       // Capacity / policy gates — same checks the seed-request handler
       // would apply. We refuse to recruit if we'd violate accept-mode
@@ -361,6 +399,7 @@ export class AutoHeal extends EventEmitter {
     const now = Date.now()
     const ourPubkey = this._localPubkey()
     const ourRegion = this._localRegion()
+    const ourOperator = this._localOperator()
     if (!this.node.appRegistry.catalog) return
 
     for (const entry of this.node.appRegistry.catalog()) {
@@ -368,6 +407,7 @@ export class AutoHeal extends EventEmitter {
       const set = this._setFor(entry.appKey)
       set.set(ourPubkey, {
         region: ourRegion,
+        operator: ourOperator,
         anchored: entry.anchored === true,
         lastSeen: now
       })
@@ -383,6 +423,14 @@ export class AutoHeal extends EventEmitter {
     for (const peer of snap.peerCatalogs) {
       const peerPubkey = peer.pubkey
       const peerRegion = peer.region || 'unknown'
+      // Operator identity: prefer the peer's self-declared operator ID
+      // (set in their capability doc / catalog response). When absent, fall
+      // back to the relay pubkey — which means each relay counts as its own
+      // operator. That's safe for honest networks but allows sybil clusters
+      // to inflate operator-diversity. Production deployments should expose
+      // a stable operator field so diversity scoring reflects real fault
+      // domains, not raw key counts.
+      const peerOperator = peer.operator || peerPubkey
       if (!peerPubkey || !Array.isArray(peer.apps)) continue
 
       for (const app of peer.apps) {
@@ -393,6 +441,7 @@ export class AutoHeal extends EventEmitter {
         const set = this._setFor(appKey)
         set.set(peerPubkey, {
           region: peerRegion,
+          operator: peerOperator,
           anchored: app.anchored === true,
           lastSeen: now
         })
@@ -438,10 +487,13 @@ export class AutoHeal extends EventEmitter {
       if (this.verifyProofs && pubkey !== ourPubkey && appKey) {
         if (!this._hasFreshProof(appKey, pubkey)) continue
       }
-      anchored.push({ pubkey, region: meta.region })
+      // Operator: meta.operator if peer declared one; else pubkey (each relay
+      // counts as its own operator — backward-compat for catalogs without
+      // operator IDs).
+      anchored.push({ pubkey, region: meta.region, operator: meta.operator || pubkey })
     }
     const regions = [...new Set(anchored.map(r => r.region).filter(Boolean))]
-    const operators = [...new Set(anchored.map(r => r.pubkey))]
+    const operators = [...new Set(anchored.map(r => r.operator).filter(Boolean))]
     return {
       replicas: anchored.length,
       regions,
@@ -471,39 +523,56 @@ export class AutoHeal extends EventEmitter {
     }
 
     const ourPubkey = this._localPubkey()
-    const tasks = []
-
+    // Phase 1: collect candidates with their staleness so we can prioritize.
+    // A candidate is a (appKey, peerPubkey) pair we haven't recently verified.
+    const candidates = []
     for (const [appKey, replicas] of this._fleet) {
       for (const [peerPubkey, meta] of replicas) {
         if (!meta.anchored) continue
         if (peerPubkey === ourPubkey) continue
+        const url = peerToUrl.get(peerPubkey)
+        if (!url) continue
         const cacheKey = `${appKey}:${peerPubkey}`
         const cached = this._proofCache.get(cacheKey)
         // Skip if recently fetched (cache covers freshnessMs/2 to ensure
         // we always have a valid cache entry between ticks)
         if (cached && (Date.now() - cached.fetchedAt) < this.proofFreshnessMs / 2) continue
-        const url = peerToUrl.get(peerPubkey)
-        if (!url) continue
-        tasks.push(this._fetchProof(url, appKey, {
-          expectedPubkey: peerPubkey,
-          freshnessMs: this.proofFreshnessMs * 2 // give some slack on remote clock
-        }).then(result => {
-          this._proofCache.set(cacheKey, { result, fetchedAt: Date.now() })
-          if (!result.ok) {
-            this.emit('proof-failed', { appKey, peerPubkey, reason: result.reason })
-          }
-        }).catch(() => {
-          // Network error etc — record as failed proof so the peer doesn't count
-          this._proofCache.set(cacheKey, {
-            result: { ok: false, reason: 'fetch-error' },
-            fetchedAt: Date.now()
-          })
-        }))
+        const staleness = cached ? Date.now() - cached.fetchedAt : Infinity
+        candidates.push({ appKey, peerPubkey, url, staleness, cacheKey })
       }
     }
 
-    // Cap concurrent fetches at 16 — typical operator network has ≤30 peers,
-    // we don't need infinite parallelism.
+    // Phase 2: sort by staleness desc (oldest first → highest priority) and
+    // cap at the per-tick budget. Prevents O(K·N) blow-up on large fleets;
+    // remaining entries are picked up by subsequent ticks before they expire
+    // (cache window is freshnessMs/2 wide).
+    candidates.sort((a, b) => b.staleness - a.staleness)
+    const selected = candidates.slice(0, this.maxProofsPerTick)
+    if (candidates.length > selected.length) {
+      this.emit('proof-budget-throttled', {
+        candidates: candidates.length,
+        budget: this.maxProofsPerTick,
+        deferred: candidates.length - selected.length
+      })
+    }
+
+    const tasks = selected.map(c => this._fetchProof(c.url, c.appKey, {
+      expectedPubkey: c.peerPubkey,
+      freshnessMs: this.proofFreshnessMs * 2 // give some slack on remote clock
+    }).then(result => {
+      this._proofCache.set(c.cacheKey, { result, fetchedAt: Date.now() })
+      if (!result.ok) {
+        this.emit('proof-failed', { appKey: c.appKey, peerPubkey: c.peerPubkey, reason: result.reason })
+      }
+    }).catch(() => {
+      this._proofCache.set(c.cacheKey, {
+        result: { ok: false, reason: 'fetch-error' },
+        fetchedAt: Date.now()
+      })
+    }))
+
+    // Cap concurrent fetches at 16 — even within a tick, we don't want to
+    // open hundreds of sockets at once.
     const BATCH = 16
     for (let i = 0; i < tasks.length; i += BATCH) {
       await Promise.all(tasks.slice(i, i + BATCH))
@@ -540,6 +609,13 @@ export class AutoHeal extends EventEmitter {
 
   _localRegion () {
     return (this.node.config?.regions?.[0]) || 'unknown'
+  }
+
+  _localOperator () {
+    // Operators can declare their identity in node.config.operator (string).
+    // Most natural value: the org / deployment owner identifier (e.g.,
+    // "acme-corp"). Without it, fall back to pubkey so we have *something*.
+    return this.node.config?.operator || this._localPubkey()
   }
 
   _canAccept (appKey) {

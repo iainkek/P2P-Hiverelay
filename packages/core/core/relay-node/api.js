@@ -378,6 +378,12 @@ export class RelayAPI extends EventEmitter {
           relayKey: this.node.swarm
             ? Buffer.from(this.node.swarm.keyPair.publicKey).toString('hex')
             : null,
+          // Surface region + operator so peer relays' AutoHeal can score
+          // diversity correctly. operator is optional — when absent, peers
+          // fall back to treating each pubkey as its own operator (less
+          // sybil-resistant). Operators set this in node.config.operator.
+          region: (this.node.config?.regions?.[0]) || null,
+          operator: this.node.config?.operator || null,
           filters: {
             type: normalizedType,
             parent: parent || null,

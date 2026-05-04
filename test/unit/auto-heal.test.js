@@ -22,14 +22,18 @@ import { AutoHeal } from 'p2p-hiverelay/core/auto-heal.js'
 
 function makeNode (opts = {}) {
   const region = opts.region || 'NA'
+  const operator = opts.operator
   const pubkey = opts.pubkey || 'mypub'
   const localCatalog = opts.localCatalog || []
   const peerCatalogs = opts.peerCatalogs || []
   const acceptMode = opts.acceptMode || 'open'
   const seededApps = []
 
+  const config = { regions: [region], autoHeal: { enabled: true } }
+  if (operator) config.operator = operator
+
   const node = {
-    config: { regions: [region], autoHeal: { enabled: true } },
+    config,
     swarm: { keyPair: { publicKey: pubkey } },
     appRegistry: {
       catalog: () => localCatalog,
@@ -139,27 +143,31 @@ test('AutoHeal: does NOT recruit when threshold already met', async (t) => {
 
 test('AutoHeal: does NOT recruit when our region adds no diversity', async (t) => {
   const recruited = []
-  // We're NA. There are already 4 NA replicas (over-represented). Threshold
-  // requires minRegions=4 and we can't help with that goal. Stay out.
+  // We're NA, op-shared. Existing replicas: 4 NA peers all on op-shared. We
+  // share both region AND operator with the fleet — no new fault domain.
+  // Stay out.
   const node = makeNode({
     region: 'NA',
+    operator: 'op-shared',
     peerCatalogs: [
-      { pubkey: 'p1', region: 'NA', apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }] },
-      { pubkey: 'p2', region: 'NA', apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }] },
-      { pubkey: 'p3', region: 'NA', apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }] },
-      { pubkey: 'p4', region: 'NA', apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }] }
+      { pubkey: 'p1', region: 'NA', operator: 'op-shared', apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }] },
+      { pubkey: 'p2', region: 'NA', operator: 'op-shared', apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }] },
+      { pubkey: 'p3', region: 'NA', operator: 'op-shared', apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }] },
+      { pubkey: 'p4', region: 'NA', operator: 'op-shared', apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }] }
     ],
     seedApp: async (k, o) => recruited.push({ k, o })
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
     verifyProofs: false,
-    thresholds: { minReplicas: 3, minRegions: 3, minOperators: 3 }
+    // Even if buffer would tempt us, meetsOperatorThreshold (3) is NOT met
+    // (only op-shared = 1 operator), so the buffer-padding clause stays off.
+    thresholds: { minReplicas: 3, minRegions: 3, minOperators: 3, replicaBuffer: 0 }
   })
   heal._running = true
   await heal._tick()
 
-  t.is(recruited.length, 0, 'declined — no region diversity gain')
+  t.is(recruited.length, 0, 'declined — no region or operator diversity gain')
 })
 
 test('AutoHeal: does NOT recruit when accept-mode rejects', async (t) => {
@@ -712,4 +720,181 @@ test('AutoHeal/bridge: snapshot includes proof bridge state', async (t) => {
   t.is(snap.verifyProofs, false, 'snapshot reports verifyProofs setting')
   t.ok(typeof snap.proofFreshnessMs === 'number', 'snapshot reports freshness window')
   t.is(snap.proofCacheSize, 0, 'snapshot reports cache size')
+})
+
+// ─── Sybil-resistance & operator-diversity tests ──────────────────────
+
+test('AutoHeal: sybil cluster sharing one operator counts as 1 operator (not N)', async (t) => {
+  // 5 sybils all on op-sybil + 1 honest on op-honest. minOperators=2.
+  // With pubkey-as-operator, this would count as 6 operators (false positive).
+  // With operator-field semantics, it's 2 operators correctly.
+  const node = makeNode({
+    region: 'EU',
+    operator: 'op-eu',
+    peerCatalogs: [
+      { pubkey: 's1', region: 'NA', operator: 'op-sybil', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 's2', region: 'NA', operator: 'op-sybil', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 's3', region: 'NA', operator: 'op-sybil', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 's4', region: 'NA', operator: 'op-sybil', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 's5', region: 'NA', operator: 'op-sybil', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'h1', region: 'NA', operator: 'op-honest', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ]
+  })
+  const heal = new AutoHeal(node, { tickMs: 60_000, verifyProofs: false })
+  heal._running = true
+  await heal._tick()
+
+  const snap = heal.snapshot()
+  const drive = snap.drives.find(d => d.appKey === 'd')
+  t.is(drive.operators.length, 2, 'distinct operators = 2 (op-sybil + op-honest), NOT 6')
+})
+
+test('AutoHeal: addsOperator alone is enough to recruit (closes operator gap)', async (t) => {
+  // Region threshold met (3 regions), but only 1 operator. We add a new
+  // operator → recruit even though our region is already covered.
+  const recruited = []
+  const node = makeNode({
+    region: 'NA',
+    operator: 'op-fresh',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', operator: 'op-shared', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p2', region: 'EU', operator: 'op-shared', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p3', region: 'AS', operator: 'op-shared', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    random: () => 0, // pin jitter to "accept"
+    thresholds: { minReplicas: 3, minRegions: 3, minOperators: 2, replicaBuffer: 0 }
+  })
+  heal._running = true
+  await heal._tick()
+  t.is(recruited.length, 1, 'recruited because addsOperator (op-fresh is new)')
+})
+
+test('AutoHeal: buffer-padding requires meetsOperatorThreshold too', async (t) => {
+  // Region threshold met, operator threshold NOT met, replicaBuffer is on.
+  // The buffer-padding clause requires BOTH thresholds met. Sybil cluster
+  // sharing region+operator with the fleet should NOT pass the gate.
+  const recruited = []
+  const node = makeNode({
+    region: 'NA',
+    operator: 'op-sybil',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', operator: 'op-sybil', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p2', region: 'EU', operator: 'op-sybil', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p3', region: 'AS', operator: 'op-sybil', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    thresholds: { minReplicas: 3, minRegions: 3, minOperators: 3, replicaBuffer: 5 }
+  })
+  heal._running = true
+  await heal._tick()
+  t.is(recruited.length, 0, 'sybil cluster member declined — operator threshold not met')
+})
+
+// ─── Proof-fetch sampling tests ───────────────────────────────────────
+
+test('AutoHeal: proof-fetch budget caps fetches per tick (sampling)', async (t) => {
+  let calls = 0
+  const fetchProof = async () => {
+    calls++
+    return { ok: true, proof: { anchored: true, version: 1, attestedAt: Date.now() } }
+  }
+  // 100 anchored peers, all need verification
+  const peerCatalogs = []
+  for (let i = 0; i < 100; i++) {
+    peerCatalogs.push({
+      pubkey: 'p' + i,
+      region: 'NA',
+      url: 'https://p' + i + '.example',
+      apps: [{ appKey: 'd', durability: 1, anchored: true }]
+    })
+  }
+  const node = makeNode({ region: 'OC', peerCatalogs })
+  const events = []
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: true,
+    fetchProof,
+    maxProofsPerTick: 32,
+    thresholds: { minReplicas: 200, minRegions: 200, minOperators: 200 }
+  })
+  heal.on('proof-budget-throttled', e => events.push(e))
+  heal._running = true
+  await heal._tick()
+
+  t.is(calls, 32, 'capped at maxProofsPerTick')
+  t.is(events.length, 1, 'emitted throttle event')
+  t.is(events[0].deferred, 68, '68 deferred to subsequent ticks')
+})
+
+test('AutoHeal: per-operator fairshare cap prevents single-op padding', async (t) => {
+  // Network needs 5 replicas across 2 operators, target=7 with default buffer.
+  // fairshareCap = ceil(7/2) = 4. Existing fleet has 4 replicas all on op-X.
+  // We're op-X. Even though replicas < target (4 < 7), the cap blocks us.
+  const recruited = []
+  const events = []
+  const node = makeNode({
+    region: 'EU', // distinct region — addsRegion would normally pass
+    operator: 'op-X',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', operator: 'op-X', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p2', region: 'NA', operator: 'op-X', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p3', region: 'NA', operator: 'op-X', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p4', region: 'NA', operator: 'op-X', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    random: () => 0,
+    thresholds: { minReplicas: 5, minRegions: 2, minOperators: 2, replicaBuffer: 2 }
+  })
+  heal.on('recruit-skipped', e => events.push(e))
+  heal._running = true
+  await heal._tick()
+
+  t.is(recruited.length, 0, 'declined: op-X already has fairshare cap (4)')
+  t.ok(events.some(e => e.reason === 'operator-fairshare-cap'), 'emitted operator-fairshare-cap event')
+})
+
+test('AutoHeal: subsequent ticks pick up deferred peers (eventual coverage)', async (t) => {
+  const calledFor = new Set()
+  const fetchProof = async (url, appKey) => {
+    calledFor.add(url)
+    return { ok: true, proof: { anchored: true, version: 1, attestedAt: Date.now() } }
+  }
+  const peerCatalogs = []
+  for (let i = 0; i < 60; i++) {
+    peerCatalogs.push({
+      pubkey: 'p' + i,
+      region: 'NA',
+      url: 'https://p' + i + '.example',
+      apps: [{ appKey: 'd', durability: 1, anchored: true }]
+    })
+  }
+  const node = makeNode({ region: 'OC', peerCatalogs })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: true,
+    fetchProof,
+    maxProofsPerTick: 25,
+    thresholds: { minReplicas: 200, minRegions: 200, minOperators: 200 }
+  })
+  heal._running = true
+
+  await heal._tick() // 25 fetched
+  t.is(calledFor.size, 25, 'tick 1: 25 fetched')
+  await heal._tick() // remaining ~25 fetched (cached entries skipped within freshness/2)
+  t.ok(calledFor.size >= 50, 'tick 2: ≥50 unique peers covered cumulatively')
+  await heal._tick() // pick up the rest
+  t.is(calledFor.size, 60, 'tick 3: all 60 peers eventually verified')
 })

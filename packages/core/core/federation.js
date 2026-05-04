@@ -348,6 +348,11 @@ export class Federation extends EventEmitter {
       url: entry.url,
       pubkey: entry.pubkey || data.pubkey || null,
       region: data.region || null,
+      // Operator: optional self-declared identity of the relay's deployment
+      // owner (e.g. "acme-corp"). Used by AutoHeal for operator-diversity
+      // scoring + sybil-cluster detection. Older catalogs without operator
+      // get treated as their own pubkey-as-operator (no diversity boost).
+      operator: data.operator || null,
       fetchedAt: Date.now(),
       apps: data.apps
     })
