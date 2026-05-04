@@ -15,6 +15,7 @@
     "test": "brittle test/**/*.test.js",
     "test:unit": "brittle --timeout 120000 test/unit/**/*.test.js",
     "test:integration": "brittle test/integration/**/*.test.js",
+    "simulate:atomic-custody": "node scripts/simulate-blind-atomic-custody.js",
     "lint": "standard",
     "lint:fix": "standard --fix"
   },

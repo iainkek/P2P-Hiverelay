@@ -884,3 +884,11 @@ Expected expiry behavior:
 - relays remove the temporary custody entry after `retainUntil`,
 - gateway access returns `404 Drive not seeded`,
 - a signed `custody-non-serving-proof` is recorded for the challenged relay.
+
+Run the custody design simulation:
+
+```bash
+npm run simulate:atomic-custody -- --iterations 5000
+```
+
+The current simulation breakthrough candidate is documented in [ATOMIC-CUSTODY-SIMULATION.md](ATOMIC-CUSTODY-SIMULATION.md): add independent non-storage expiry witnesses that sign tombstones over observed non-serving state.
