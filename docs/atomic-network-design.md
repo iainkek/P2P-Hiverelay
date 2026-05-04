@@ -25,6 +25,22 @@ That means:
 
 Transparent custody can exist later as an explicit operator mode for public apps and public mirrors. It must not be the default for this feature.
 
+Default relay config:
+
+```js
+custody: {
+  enabled: true,
+  defaultMode: 'blind',
+  allowTransparent: false,
+  requireEncryptedPayload: true,
+  metadataVisibility: 'redacted',
+  redactedCatalog: true,
+  proofTarget: 'ciphertext'
+}
+```
+
+This default applies across relay modes unless an operator explicitly opts into transparent custody for a public mirror use case.
+
 ## Terminology
 
 The community message uses `K` as "the key at the source." In HiveRelay design we need to separate three different keys:

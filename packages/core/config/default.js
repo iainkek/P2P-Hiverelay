@@ -49,6 +49,19 @@ export default {
   strictSeedingPrivacy: true,
   enableDistributedDriveBridge: false,
 
+  // Blind custody is the default relay posture. Relays may mirror public
+  // content, but custody receipts/proofs must be for encrypted material unless
+  // an operator explicitly enables transparent custody.
+  custody: {
+    enabled: true,
+    defaultMode: 'blind',
+    allowTransparent: false,
+    requireEncryptedPayload: true,
+    metadataVisibility: 'redacted',
+    redactedCatalog: true,
+    proofTarget: 'ciphertext'
+  },
+
   // Seeding registry
   registryKey: null, // null = create new autobase
   registryScanInterval: 60_000, // 1 minute

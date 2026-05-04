@@ -61,6 +61,15 @@ const DEFAULT_CONFIG = {
   corsOrigins: [],
   strictSeedingPrivacy: true,
   enableDistributedDriveBridge: false,
+  custody: {
+    enabled: true,
+    defaultMode: 'blind',
+    allowTransparent: false,
+    requireEncryptedPayload: true,
+    metadataVisibility: 'redacted',
+    redactedCatalog: true,
+    proofTarget: 'ciphertext'
+  },
   gatewayPublicOnlyPrivacyTier: true,
   requireSignedCatalog: false,
   catalogSignatureMaxAgeMs: 5 * 60 * 1000,
@@ -189,6 +198,11 @@ function buildConfig (mode, opts) {
       ...DEFAULT_CONFIG.pairing,
       ...(preset.pairing || {}),
       ...(opts.pairing || {})
+    },
+    custody: {
+      ...DEFAULT_CONFIG.custody,
+      ...(preset.custody || {}),
+      ...(opts.custody || {})
     }
   }
 }

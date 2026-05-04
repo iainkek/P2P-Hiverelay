@@ -9,6 +9,17 @@ function tmpStorage () {
   return path.join(tmpdir(), 'hiverelay-test-' + randomBytes(8).toString('hex'))
 }
 
+test('RelayNode - defaults custody to blind mode', (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+
+  t.is(node.config.custody.enabled, true, 'custody enabled by default')
+  t.is(node.config.custody.defaultMode, 'blind', 'blind custody is the default')
+  t.is(node.config.custody.allowTransparent, false, 'transparent custody requires explicit opt-in')
+  t.is(node.config.custody.requireEncryptedPayload, true, 'custody requires encrypted payloads')
+  t.is(node.config.custody.metadataVisibility, 'redacted', 'blind custody redacts metadata by default')
+  t.is(node.config.custody.proofTarget, 'ciphertext', 'proofs target ciphertext')
+})
+
 test('RelayNode - creates and starts', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
   t.ok(node, 'node created')
