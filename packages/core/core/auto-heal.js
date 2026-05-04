@@ -219,19 +219,22 @@ export class AutoHeal extends EventEmitter {
 
       // Would adding US to this fleet meaningfully improve diversity?
       //
-      // Two cases qualify:
-      //   1. We bring a region the fleet doesn't already have. Highest-value
-      //      recruitment — directly closes a regional gap.
-      //   2. The fleet already meets the region threshold but is short on
-      //      total replicas. Adding from a represented region still helps
-      //      because more redundancy is a real win even if not new geo.
+      // Three cases qualify (see the wouldAddDiversity expression below):
+      //   A. We close a region gap — fleet doesn't already have our region.
+      //   B. We close an operator gap — fleet doesn't already have our
+      //      operator. Operator-diversity protects against correlated
+      //      infrastructure failures (e.g., one cloud region going down).
+      //   C. Both diversity dimensions are met but replicas < target — we
+      //      fill a buffer slot, requiring meetsOperatorThreshold AND that
+      //      our operator isn't already at the per-operator fairshare cap
+      //      (sybil-cluster resistance).
       //
       // Cases that DO NOT qualify:
-      //   - Our region is over-represented AND replica count is already
-      //     above the threshold — recruiting just inflates a popular region
-      //     without closing any gap. Leave it for a relay that adds more.
-      //   - Region threshold not yet met but our region wouldn't move us
-      //     closer to it (we're already represented).
+      //   - We share both region AND operator with the existing fleet, AND
+      //     the buffer-pad clause (C) doesn't apply — recruiting wouldn't
+      //     add a fault domain or fill the buffer. Stand down.
+      //   - Our operator is already at the fairshare cap. Even if we're a
+      //     valid relay, recruiting more from one operator dilutes diversity.
       const ourRegion = this._localRegion()
       const ourOperator = this._localOperator()
       const ourPubkey = this._localPubkey()
@@ -319,11 +322,11 @@ export class AutoHeal extends EventEmitter {
         })
         recruits++
         this._clearBackoff(appKey) // success — clear any prior backoff
-        this.emit('recruited', {
-          appKey,
-          before: live,
-          reason: live.regions.length < this.thresholds.minRegions ? 'region-gap' : 'replica-gap'
-        })
+        let recruitReason
+        if (live.regions.length < this.thresholds.minRegions) recruitReason = 'region-gap'
+        else if (live.operators.length < this.thresholds.minOperators) recruitReason = 'operator-gap'
+        else recruitReason = 'replica-gap'
+        this.emit('recruited', { appKey, before: live, reason: recruitReason })
       } catch (err) {
         this._recordFailure(appKey)
         this.emit('recruit-error', { appKey, error: err.message })

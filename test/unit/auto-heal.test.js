@@ -835,6 +835,32 @@ test('AutoHeal: proof-fetch budget caps fetches per tick (sampling)', async (t) 
   t.is(events[0].deferred, 68, '68 deferred to subsequent ticks')
 })
 
+test('AutoHeal: recruited event reports operator-gap when applicable', async (t) => {
+  // Region threshold met (3 regions); operator threshold NOT met (1 op).
+  // Recruit reason should be operator-gap, not replica-gap.
+  const events = []
+  const node = makeNode({
+    region: 'NA',
+    operator: 'op-fresh',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', operator: 'op-shared', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p2', region: 'EU', operator: 'op-shared', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p3', region: 'AS', operator: 'op-shared', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ]
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    random: () => 0,
+    thresholds: { minReplicas: 3, minRegions: 3, minOperators: 2, replicaBuffer: 0 }
+  })
+  heal.on('recruited', e => events.push(e))
+  heal._running = true
+  await heal._tick()
+  t.is(events.length, 1, 'recruited fired')
+  t.is(events[0].reason, 'operator-gap', 'reason correctly identifies operator-diversity gap')
+})
+
 test('AutoHeal: per-operator fairshare cap prevents single-op padding', async (t) => {
   // Network needs 5 replicas across 2 operators, target=7 with default buffer.
   // fairshareCap = ceil(7/2) = 4. Existing fleet has 4 replicas all on op-X.
