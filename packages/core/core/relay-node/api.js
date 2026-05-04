@@ -729,43 +729,13 @@ export class RelayAPI extends EventEmitter {
           if (!isValidHexKey(appKey)) {
             return this._json(res, { error: 'invalid appKey' }, 400)
           }
-          if (!this.node.appRegistry || typeof this.node.appRegistry.get !== 'function') {
-            return this._json(res, { error: 'registry unavailable' }, 503)
+          try {
+            const proof = await this.node.createAnchorProof(appKey)
+            return this._json(res, proof)
+          } catch (err) {
+            const code = /invalid appKey/.test(err.message) ? 400 : 503
+            return this._json(res, { error: err.message || 'proof generation failed' }, code)
           }
-          const entry = this.node.appRegistry.get(appKey)
-          const swarm = this.node.swarm
-          if (!swarm || !swarm.keyPair) {
-            return this._json(res, { error: 'no relay identity' }, 503)
-          }
-          const anchored = !!(entry && entry.anchored === true)
-          const version = entry?.anchoredLength || 0
-          const anchoredAt = entry?.anchoredAt || null
-          const attestedAt = Date.now()
-
-          // Build the canonical signed payload
-          const sodium = await import('sodium-universal').then(m => m.default)
-          const b4a = await import('b4a').then(m => m.default)
-          const tag = b4a.from('hiverelay-anchor-proof-v1')
-          const keyBuf = b4a.from(appKey, 'hex')
-          const versionBuf = b4a.alloc(8)
-          new DataView(versionBuf.buffer, versionBuf.byteOffset).setBigUint64(0, BigInt(version), false)
-          const tsBuf = b4a.alloc(8)
-          new DataView(tsBuf.buffer, tsBuf.byteOffset).setBigUint64(0, BigInt(attestedAt), false)
-          const flagBuf = b4a.from([anchored ? 1 : 0])
-          const payload = b4a.concat([tag, keyBuf, versionBuf, tsBuf, flagBuf])
-          const sig = b4a.alloc(sodium.crypto_sign_BYTES)
-          sodium.crypto_sign_detached(sig, payload, swarm.keyPair.secretKey)
-
-          return this._json(res, {
-            schemaVersion: 1,
-            appKey,
-            anchored,
-            version,
-            anchoredAt,
-            attestedAt,
-            relayPubkey: b4a.toString(swarm.keyPair.publicKey, 'hex'),
-            signature: b4a.toString(sig, 'hex')
-          })
         }
 
         // Anchor status — distinguishes "we accepted seeding" from "we
@@ -1338,6 +1308,23 @@ export class RelayAPI extends EventEmitter {
             return this._json(res, { ok: true, ...entry })
           } catch (err) {
             return this._json(res, { error: err.message || String(err) }, 400)
+          }
+        }
+
+        if (path.startsWith('/api/custody/') && path.endsWith('/witness')) {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/witness')) return
+          if (req.method !== 'POST') return this._json(res, { error: 'method not allowed' }, 405)
+          const intentId = path.slice('/api/custody/'.length, -'/witness'.length)
+          if (!this.node.seedingRegistry) return this._json(res, { error: 'registry not running' }, 503)
+          try {
+            const body = await this._readBody(req)
+            const entry = await this.node.seedingRegistry.recordCustodyExpiryWitness(
+              { ...body, intentId },
+              this.node.swarm?.keyPair
+            )
+            return this._json(res, entry)
+          } catch (err) {
+            return this._json(res, { error: err.message || 'witness rejected' }, 400)
           }
         }
 

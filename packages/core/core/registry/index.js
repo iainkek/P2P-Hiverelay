@@ -20,6 +20,7 @@ import {
 import {
   computeReceiptRoot,
   createCustodyCommit,
+  createCustodyExpiryWitness,
   createCustodyIntent,
   createCustodyNonServingProof,
   createCustodyProof,
@@ -89,6 +90,7 @@ export class SeedingRegistry extends EventEmitter {
     this._sourceRetirements = new Map() // intentId -> source-retired
     this._custodyProofs = new Map() // intentId -> custody-proof[]
     this._custodyNonServingProofs = new Map() // intentId -> custody-non-serving-proof[]
+    this._custodyExpiryWitnesses = new Map() // intentId -> custody-expiry-witness[]
     this._custodyStatusCache = new Map()
 
     this._indexedOffsets = new Map() // logId -> indexed block count
@@ -327,7 +329,8 @@ export class SeedingRegistry extends EventEmitter {
       entry.type === 'custody-commit' ||
       entry.type === 'source-retired' ||
       entry.type === 'custody-proof' ||
-      entry.type === 'custody-non-serving-proof'
+      entry.type === 'custody-non-serving-proof' ||
+      entry.type === 'custody-expiry-witness'
     ) {
       const verified = verifyCustodyEntry(entry)
       if (!verified.valid) {
@@ -550,6 +553,23 @@ export class SeedingRegistry extends EventEmitter {
         this._invalidateCustodyStatus(entry.intentId)
       }
     }
+
+    if (entry.type === 'custody-expiry-witness') {
+      if (!this._custodyExpiryWitnesses.has(entry.intentId)) {
+        this._custodyExpiryWitnesses.set(entry.intentId, [])
+      }
+      const list = this._custodyExpiryWitnesses.get(entry.intentId)
+      // Dedup on (witnessPubkey, relayPubkey, challengeNonce)
+      const key = `${entry.witnessPubkey}:${entry.relayPubkey}:${entry.challengeNonce}`
+      const idx = list.findIndex(w => `${w.witnessPubkey}:${w.relayPubkey}:${w.challengeNonce}` === key)
+      if (idx === -1) {
+        list.push(entry)
+        this._invalidateCustodyStatus(entry.intentId)
+      } else if (list[idx].timestamp <= entry.timestamp) {
+        list[idx] = entry
+        this._invalidateCustodyStatus(entry.intentId)
+      }
+    }
   }
 
   /**
@@ -678,6 +698,26 @@ export class SeedingRegistry extends EventEmitter {
     return this._appendCustodyEntry(entry, 'custody-non-serving-proof-recorded')
   }
 
+  /**
+   * Record a witness tombstone — an independent attestation that a relay
+   * is no longer actively serving content past its `retainUntil`. The
+   * witness does NOT store content; it just probes the relay's catalog,
+   * gateway, and swarm and signs over what it observed.
+   *
+   * Pre-signed entries are accepted as-is (after verification). Otherwise
+   * the registry signs with the supplied witnessKeyPair.
+   */
+  async recordCustodyExpiryWitness (witness, witnessKeyPair) {
+    const intent = this._custodyIntents.get(witness.intentId)
+    const entry = witness.signature
+      ? this._verifiedCustodyEntry(witness)
+      : createCustodyExpiryWitness({
+        ...witness,
+        blindContentId: witness.blindContentId || intent?.blindContentId
+      }, witnessKeyPair)
+    return this._appendCustodyEntry(entry, 'custody-expiry-witness-recorded')
+  }
+
   _verifiedCustodyEntry (entry) {
     const verified = verifyCustodyEntry(entry)
     if (!verified.valid) throw new Error(`INVALID_CUSTODY_ENTRY: ${verified.reason}`)
@@ -691,7 +731,97 @@ export class SeedingRegistry extends EventEmitter {
     await this.localLog.append(b4a.from(JSON.stringify(entry)))
     this._applyEntry(entry)
     this.emit(eventName, entry)
+    // Local-append also fires `custody-entry-appended` so the relay-node
+    // (or any other consumer) can broadcast the entry over Protomux for
+    // real-time push without waiting for log replication.
+    this.emit('custody-entry-appended', { entry, eventName })
     return entry
+  }
+
+  /**
+   * Apply a custody entry pushed to us by a peer over the Protomux custody
+   * channel. Returns true if the entry was new and applied, false if it
+   * was a duplicate or invalid.
+   *
+   * Pushed entries do NOT get appended to OUR local log — that would
+   * misattribute the entry to us. They only update our in-memory indexes.
+   * The actual durable record lives in the peer's log, which we'll receive
+   * on the next replication cycle. This channel is the fast-path; log
+   * replication is the durable transport.
+   */
+  _applyPushedEntry (entry, fromPeer) {
+    if (!entry || typeof entry !== 'object') return false
+    if (typeof entry.type !== 'string') return false
+    if (!entry.type.startsWith('custody-') && entry.type !== 'source-retired') return false
+
+    // Validate the same way the indexer does — drops invalid signatures,
+    // forbidden plaintext fields, etc.
+    const normalized = this._normalizeIndexedEntry(entry, { source: 'push', fromPeer })
+    if (!normalized) {
+      this.emit('custody-entry-rejected', { reason: 'invalid-pushed-entry', fromPeer })
+      return false
+    }
+
+    // Dedup check: if we already have this exact entry (same intentId +
+    // type + relayPubkey + timestamp), skip the apply.
+    if (this._isDuplicateCustodyEntry(normalized)) return false
+
+    this._applyEntry(normalized, { source: 'push', fromPeer })
+
+    // Map type → bubbled event name so consumers see the same events
+    // regardless of whether the entry came via push or log replication.
+    const eventByType = {
+      'custody-intent': 'custody-intent-published',
+      'custody-receipt': 'custody-receipt-recorded',
+      'custody-commit': 'custody-commit-published',
+      'source-retired': 'source-retired-published',
+      'custody-proof': 'custody-proof-recorded',
+      'custody-non-serving-proof': 'custody-non-serving-proof-recorded',
+      'custody-expiry-witness': 'custody-expiry-witness-recorded'
+    }
+    const eventName = eventByType[normalized.type]
+    if (eventName) this.emit(eventName, normalized)
+    return true
+  }
+
+  _isDuplicateCustodyEntry (entry) {
+    if (entry.type === 'custody-intent') {
+      const existing = this._custodyIntents.get(entry.intentId)
+      return !!existing && existing.timestamp >= entry.timestamp
+    }
+    if (entry.type === 'custody-receipt') {
+      const receipts = this._custodyReceipts.get(entry.intentId)
+      const current = receipts?.get(entry.relayPubkey)
+      return !!current && current.timestamp >= entry.timestamp
+    }
+    if (entry.type === 'custody-commit') {
+      const existing = this._custodyCommits.get(entry.intentId)
+      return !!existing && existing.timestamp >= entry.timestamp
+    }
+    if (entry.type === 'source-retired') {
+      const existing = this._sourceRetirements.get(entry.intentId)
+      return !!existing && existing.timestamp >= entry.timestamp
+    }
+    if (entry.type === 'custody-proof' || entry.type === 'custody-non-serving-proof') {
+      // Proofs accumulate; dedup on (relayPubkey + challengeNonce + timestamp)
+      const list = (entry.type === 'custody-proof'
+        ? this._custodyProofs
+        : this._custodyNonServingProofs).get(entry.intentId) || []
+      return list.some(p =>
+        p.relayPubkey === entry.relayPubkey &&
+        p.challengeNonce === entry.challengeNonce &&
+        p.timestamp === entry.timestamp
+      )
+    }
+    if (entry.type === 'custody-expiry-witness') {
+      const list = this._custodyExpiryWitnesses.get(entry.intentId) || []
+      return list.some(w =>
+        w.witnessPubkey === entry.witnessPubkey &&
+        w.relayPubkey === entry.relayPubkey &&
+        w.challengeNonce === entry.challengeNonce
+      )
+    }
+    return false
   }
 
   /**
@@ -763,6 +893,10 @@ export class SeedingRegistry extends EventEmitter {
     return [...(this._custodyNonServingProofs.get(intentId) || [])]
   }
 
+  getCustodyExpiryWitnesses (intentId) {
+    return [...(this._custodyExpiryWitnesses.get(intentId) || [])]
+  }
+
   getCustodyStatus (intentId) {
     const cached = this._custodyStatusCache.get(intentId)
     if (cached) return cached
@@ -819,9 +953,11 @@ export class SeedingRegistry extends EventEmitter {
     let committed = 0
     let withProof = 0
     let withNonServingProof = 0
+    let withWitnessTombstone = 0
     let totalReceipts = 0
     let totalProofs = 0
     let totalNonServingProofs = 0
+    let totalWitnessTombstones = 0
     let retired = 0
     for (const intentId of this._custodyIntents.keys()) {
       intents++
@@ -834,6 +970,10 @@ export class SeedingRegistry extends EventEmitter {
       totalReceipts += status.receiptCount
       totalProofs += status.proofCount
       totalNonServingProofs += status.nonServingProofCount
+
+      const witnesses = this._custodyExpiryWitnesses.get(intentId) || []
+      if (witnesses.length > 0) withWitnessTombstone++
+      totalWitnessTombstones += witnesses.length
     }
     return {
       intents,
@@ -842,9 +982,11 @@ export class SeedingRegistry extends EventEmitter {
       retired,
       withProof,
       withNonServingProof,
+      withWitnessTombstone,
       totalReceipts,
       totalProofs,
       totalNonServingProofs,
+      totalWitnessTombstones,
       // Derived health indicator: ratio of committed intents to total. A
       // healthy registry should converge to ~1.0 over time. Sustained low
       // values mean the network is failing to gather quorums.

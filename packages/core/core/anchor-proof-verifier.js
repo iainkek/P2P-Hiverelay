@@ -117,12 +117,41 @@ export function verifyAnchorProof (proof, opts = {}) {
 /**
  * Convenience: fetch a peer's anchor proof and verify it.
  *
- * @param {string} peerUrl  - e.g. 'https://relay-us.example.com:9100'
+ * Prefers the Protomux anchor channel if `opts.anchorChannel` is provided
+ * and the peer's pubkey is reachable on it — that path works without HTTPS
+ * (NAT, swarm-only fleets). Falls back to HTTPS for legacy peers and for
+ * cases where the channel isn't yet open.
+ *
+ * @param {string} peerUrl  - e.g. 'https://relay-us.example.com:9100' (HTTPS fallback)
  * @param {string} appKey   - hex-encoded
- * @param {object} opts     - same as verifyAnchorProof opts; also fetchTimeoutMs
- * @returns {Promise<{ ok, proof?, reason?, fetchedAt? }>}
+ * @param {object} opts
+ *   - anchorChannel: AnchorProtocol instance (preferred path)
+ *   - peerPubkey: hex pubkey for channel routing (required if anchorChannel set)
+ *   - fetchTimeoutMs: HTTPS fallback timeout
+ *   - + anything verifyAnchorProof accepts
+ * @returns {Promise<{ ok, proof?, reason?, fetchedAt?, transport? }>}
  */
 export async function fetchAndVerifyAnchorProof (peerUrl, appKey, opts = {}) {
+  // ─── Preferred: Protomux anchor channel ───
+  if (opts.anchorChannel && opts.peerPubkey) {
+    const ch = await opts.anchorChannel.requestProof(opts.peerPubkey, appKey)
+    if (ch.ok && ch.proof) {
+      const verified = verifyAnchorProof(ch.proof, { ...opts, expectedAppKey: appKey })
+      if (verified.ok) {
+        verified.fetchedAt = Date.now()
+        verified.transport = 'protomux'
+        return verified
+      }
+      return verified
+    }
+    // Channel known but no proof / closed — fall through to HTTPS unless
+    // explicitly disabled.
+    if (opts.disableHttpFallback) {
+      return { ok: false, reason: 'channel:' + (ch.error || 'no-proof') }
+    }
+  }
+
+  // ─── Fallback: HTTPS GET /api/anchors/:appKey/proof ───
   const url = peerUrl.replace(/\/$/, '') + '/api/anchors/' + encodeURIComponent(appKey) + '/proof'
   const timeoutMs = opts.fetchTimeoutMs ?? 5000
   const controller = new AbortController()
@@ -142,6 +171,9 @@ export async function fetchAndVerifyAnchorProof (peerUrl, appKey, opts = {}) {
   }
 
   const result = verifyAnchorProof(body, { ...opts, expectedAppKey: appKey })
-  if (result.ok) result.fetchedAt = Date.now()
+  if (result.ok) {
+    result.fetchedAt = Date.now()
+    result.transport = 'https'
+  }
   return result
 }

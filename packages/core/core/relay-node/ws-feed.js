@@ -103,7 +103,8 @@ export class DashboardFeed {
       // created, receipts arrive, and quorums commit. Bubbled up from
       // SeedingRegistry by relay-node/index.js with normalized names.
       'custody-intent', 'custody-receipt', 'custody-commit',
-      'custody-proof', 'custody-retired', 'custody-non-serving-proof'
+      'custody-proof', 'custody-retired', 'custody-non-serving-proof',
+      'custody-expiry-witness'
     ]
     for (const evt of events) {
       const handler = () => this._debouncedEventBroadcast()

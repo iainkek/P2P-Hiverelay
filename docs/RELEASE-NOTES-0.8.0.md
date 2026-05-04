@@ -1,12 +1,21 @@
-# HiveRelay 0.8.0 — Atomic Custody · Self-Healing · Live Telemetry
+# HiveRelay 0.8.0 — Atomic Custody · Self-Healing · Live Telemetry · Real-Time P2P
 
 Released: 2026-05-04
 
 This is the first **0.8.x** minor — the largest semantic shift since 0.5.0
 (Core/Services split). The trust pipeline that was implicit in earlier versions
 is now cryptographically gated, replicas are diversity-enforced and
-self-healing, and the WebSocket dashboard feed surfaces all of it in
-near-real-time.
+self-healing, propagation is real-time over Protomux (no HTTPS dependency),
+and the WebSocket dashboard feed surfaces all of it.
+
+Two new Protomux channels close the gap that v0.7.x left open:
+- `hiverelay-anchor` — AutoHeal proof requests over the existing swarm
+  connection (works on pure-swarm and NAT'd fleets, no HTTPS required)
+- `hiverelay-custody` — push semantics for custody entries; receivers
+  apply them immediately rather than waiting for log-replication latency
+
+The Witness Tombstone role lands too — independent non-storage attestation
+that closes the post-expiry serving leak surfaced by the simulation.
 
 If you operate a relay or build on the client SDK, read the **Migration**
 section below before upgrading.

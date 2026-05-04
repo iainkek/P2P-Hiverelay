@@ -101,6 +101,11 @@ export class AutoHeal extends EventEmitter {
     this.proofGraceMs = opts.proofGraceMs || 60 * 60 * 1000
     // Inject a fetcher for tests; in production we use the real fetch.
     this._fetchProof = opts.fetchProof || fetchAndVerifyAnchorProof
+    // Optional Protomux anchor channel — when present, the fetcher prefers
+    // it over HTTPS so we work on pure-swarm and NAT'd fleets. The channel
+    // routes by peer pubkey; HTTPS is the fallback for peers without an
+    // open channel.
+    this._anchorChannel = opts.anchorChannel || null
     // Per-tick proof-fetch budget. Beyond ~1K relays × 1K drives, fetching
     // every anchored peer's proof every tick is too expensive (O(K·N) per
     // relay per cycle). When we have more pending fetches than this, we
@@ -561,7 +566,9 @@ export class AutoHeal extends EventEmitter {
 
     const tasks = selected.map(c => this._fetchProof(c.url, c.appKey, {
       expectedPubkey: c.peerPubkey,
-      freshnessMs: this.proofFreshnessMs * 2 // give some slack on remote clock
+      freshnessMs: this.proofFreshnessMs * 2, // give some slack on remote clock
+      anchorChannel: this._anchorChannel,
+      peerPubkey: c.peerPubkey
     }).then(result => {
       this._proofCache.set(c.cacheKey, { result, fetchedAt: Date.now() })
       if (!result.ok) {

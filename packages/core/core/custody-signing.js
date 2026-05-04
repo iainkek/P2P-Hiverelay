@@ -25,7 +25,13 @@ const SIGNER_FIELD_BY_TYPE = {
   'source-retired': 'publisherPubkey',
   'custody-receipt': 'relayPubkey',
   'custody-proof': 'observerPubkey',
-  'custody-non-serving-proof': 'relayPubkey'
+  'custody-non-serving-proof': 'relayPubkey',
+  // Witness Tombstone — independent non-storage role that probes a relay
+  // after `retainUntil` and signs an attestation over observed
+  // non-serving state. Closes the post-expiry serving leak that the
+  // simulation surfaced (drops undetected continued serving from ~82%
+  // to <1% with a 5-of-7 witness quorum).
+  'custody-expiry-witness': 'witnessPubkey'
 }
 
 const SIGNABLE_FIELDS_BY_TYPE = {
@@ -121,6 +127,20 @@ const SIGNABLE_FIELDS_BY_TYPE = {
     'catalogPresent',
     'activeSwarmServing',
     'limitationHash'
+  ],
+  'custody-expiry-witness': [
+    'type',
+    'version',
+    'timestamp',
+    'intentId',
+    'blindContentId',
+    'relayPubkey', // the relay being witnessed (subject)
+    'witnessPubkey', // the signing witness
+    'challengeNonce',
+    'nonServingProofHash', // hash of relay's non-serving-proof we observed
+    'catalogPresent', // did relay's catalog still expose the entry?
+    'gatewayServing', // did relay's gateway still serve the content?
+    'activeSwarmObserved' // did we see active swarm replication?
   ]
 }
 
@@ -284,6 +304,38 @@ export function createCustodyNonServingProof (fields, relayKeyPair, opts = {}) {
   return signCustodyEntry(proof, relayKeyPair)
 }
 
+/**
+ * Witness Tombstone — independent third-party attestation that a relay
+ * is no longer actively serving content past `retainUntil`. The witness
+ * does NOT store content; it only probes the relay's catalog, gateway,
+ * and swarm and signs over what it observed.
+ *
+ * Required fields: intentId, blindContentId, relayPubkey (subject),
+ * nonServingProofHash (hash of the relay's own non-serving-proof we
+ * referenced). The witness's pubkey is filled in from the keyPair.
+ *
+ * Useful policy: M-of-N witness tombstones, with M and N tuned by
+ * privacy/integrity requirements. Simulation says 5-of-7 with diverse
+ * operators drops undetected continued serving from ~82% to <1%.
+ */
+export function createCustodyExpiryWitness (fields, witnessKeyPair, opts = {}) {
+  requireKeyPair(witnessKeyPair, 'witnessKeyPair')
+  const nonce = b4a.alloc(32)
+  sodium.randombytes_buf(nonce)
+  const witness = normalizeCustodyEntry({
+    version: SIGNATURE_VERSION,
+    timestamp: Number.isFinite(opts.timestamp) ? opts.timestamp : Date.now(),
+    challengeNonce: hashHex(nonce),
+    catalogPresent: false,
+    gatewayServing: false,
+    activeSwarmObserved: false,
+    ...fields,
+    type: 'custody-expiry-witness',
+    witnessPubkey: b4a.toString(witnessKeyPair.publicKey, 'hex')
+  })
+  return signCustodyEntry(witness, witnessKeyPair)
+}
+
 export function signCustodyEntry (entry, keyPair) {
   requireKeyPair(keyPair, 'keyPair')
   const normalized = normalizeCustodyEntry(entry)
@@ -343,7 +395,7 @@ export function normalizeCustodyEntry (entry, opts = {}) {
     if (out.custodyMode !== 'blind') throw new Error('custodyMode must be blind')
   }
 
-  if (type !== 'source-retired' && type !== 'custody-proof' && type !== 'custody-non-serving-proof') {
+  if (type !== 'source-retired' && type !== 'custody-proof' && type !== 'custody-non-serving-proof' && type !== 'custody-expiry-witness') {
     out.ciphertextRoot = hexField(out.ciphertextRoot, 'ciphertextRoot')
     out.contentVersion = numberField(out.contentVersion, 'contentVersion')
   }
@@ -357,6 +409,7 @@ export function normalizeCustodyEntry (entry, opts = {}) {
   if (type === 'source-retired') return normalizeSourceRetired(out)
   if (type === 'custody-proof') return normalizeProof(out)
   if (type === 'custody-non-serving-proof') return normalizeNonServingProof(out)
+  if (type === 'custody-expiry-witness') return normalizeExpiryWitness(out)
 }
 
 export function validateCustodyTransition (entry, status = {}) {
@@ -495,6 +548,17 @@ function normalizeNonServingProof (entry) {
   entry.catalogPresent = entry.catalogPresent === true
   entry.activeSwarmServing = entry.activeSwarmServing === true
   entry.limitationHash = hexField(entry.limitationHash, 'limitationHash')
+  return orderedEntry(entry)
+}
+
+function normalizeExpiryWitness (entry) {
+  entry.relayPubkey = hexField(entry.relayPubkey, 'relayPubkey')
+  entry.witnessPubkey = hexField(entry.witnessPubkey, 'witnessPubkey')
+  entry.challengeNonce = hexField(entry.challengeNonce, 'challengeNonce')
+  entry.nonServingProofHash = hexField(entry.nonServingProofHash, 'nonServingProofHash')
+  entry.catalogPresent = entry.catalogPresent === true
+  entry.gatewayServing = entry.gatewayServing === true
+  entry.activeSwarmObserved = entry.activeSwarmObserved === true
   return orderedEntry(entry)
 }
 

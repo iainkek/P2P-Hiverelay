@@ -1489,7 +1489,7 @@ export class HiveRelayClient extends EventEmitter {
     while (Date.now() < deadline) {
       status = this.getDurableStatus(driveKey)
       if (status.durable && status.activePeers >= minPeers) return status
-      await new Promise((r) => setTimeout(r, pollMs))
+      await new Promise((resolve) => setTimeout(resolve, pollMs))
     }
     return status
   }
@@ -1817,6 +1817,114 @@ export class HiveRelayClient extends EventEmitter {
    * @param {string} pubkey - hex (64 chars)
    * @returns {Promise<object|null>}
    */
+  // ─── Atomic Blind Custody ──────────────────────────────────────────
+  // Apps drive the custody pipeline through these methods. The relay
+  // signs entries with its own keypair (blind custody), so the app
+  // doesn't need to ship a publisher key. Each method posts to a
+  // /api/custody/... endpoint that requires the relay's API key.
+
+  /**
+   * Publish a custody intent — the source's signed declaration that it
+   * wants N replicas of an encrypted ciphertext root. Returns the signed
+   * intent including its `intentId`, which the app uses to watch quorum
+   * progress and sign the eventual commit.
+   *
+   * @param {string} relayUrl  base relay URL (https://relay.example:9100)
+   * @param {object} intent    fields per docs/atomic-network-design.md
+   * @param {object} opts      { apiKey } for relay auth
+   * @returns {Promise<object>} signed custody-intent
+   */
+  async publishCustodyIntent (relayUrl, intent, opts = {}) {
+    return this._postCustody(relayUrl, '/api/custody/intent', intent, opts)
+  }
+
+  /**
+   * Publish a custody commit — declares quorum reached + receipt root +
+   * optional next authority. Must come after recordCustodyReceipt has
+   * accumulated `requiredReplicas` valid receipts.
+   */
+  async publishCustodyCommit (relayUrl, intentId, commit = {}, opts = {}) {
+    return this._postCustody(relayUrl, '/api/custody/' + encodeURIComponent(intentId) + '/commit', commit, opts)
+  }
+
+  /**
+   * Publish a source-retired entry — the publisher relinquishes future
+   * authority over this content's custody state. Required before clients
+   * can treat the handoff as durable.
+   */
+  async publishSourceRetired (relayUrl, intentId, retirement = {}, opts = {}) {
+    return this._postCustody(relayUrl, '/api/custody/' + encodeURIComponent(intentId) + '/source-retired', retirement, opts)
+  }
+
+  /**
+   * Record a custody-proof — an observer (or the publisher) attests that
+   * a relay passed a ciphertext-block challenge. Useful for ongoing
+   * audits. Body fields: relayPubkey, challengeNonce, shardIds,
+   * blockIndices, passed, latencyMs, observerPubkey.
+   */
+  async recordCustodyProof (relayUrl, proof, opts = {}) {
+    return this._postCustody(relayUrl, '/api/custody/proof', proof, opts)
+  }
+
+  /**
+   * Record a custody-non-serving-proof — the relay attests it has stopped
+   * serving content after retainUntil (catalog absent, swarm not serving,
+   * gateway returns not-found).
+   */
+  async recordCustodyNonServingProof (relayUrl, intentId, proof = {}, opts = {}) {
+    return this._postCustody(relayUrl, '/api/custody/' + encodeURIComponent(intentId) + '/non-serving-proof', proof, opts)
+  }
+
+  /**
+   * Record a custody-expiry-witness tombstone — an independent third
+   * party attests that the relay has stopped serving. Used in M-of-N
+   * witness quorum policies for high-integrity expiry guarantees.
+   */
+  async recordCustodyExpiryWitness (relayUrl, intentId, witness = {}, opts = {}) {
+    return this._postCustody(relayUrl, '/api/custody/' + encodeURIComponent(intentId) + '/witness', witness, opts)
+  }
+
+  /**
+   * Get the current custody status for an intent — quorum count, commit
+   * status, proofs received, etc. Read-only, no auth required.
+   */
+  async getCustodyStatus (relayUrl, intentId) {
+    if (typeof relayUrl !== 'string' || !relayUrl.length) {
+      throw new Error('getCustodyStatus: relayUrl required')
+    }
+    const base = relayUrl.replace(/\/+$/, '')
+    const endpoint = base + '/api/custody/' + encodeURIComponent(intentId) + '/status'
+    const res = await _fetchJson(endpoint, { method: 'GET' })
+    if (res.status === 404) return null
+    if (!res.ok) {
+      const err = new Error('getCustodyStatus failed: ' + (res.body?.error || res.status))
+      err.status = res.status
+      throw err
+    }
+    return res.body
+  }
+
+  async _postCustody (relayUrl, path, body, opts = {}) {
+    if (typeof relayUrl !== 'string' || !relayUrl.length) {
+      throw new Error('relayUrl required')
+    }
+    const base = relayUrl.replace(/\/+$/, '')
+    const headers = { 'Content-Type': 'application/json' }
+    if (opts.apiKey) headers['X-API-Key'] = opts.apiKey
+    const res = await _fetchJson(base + path, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body || {})
+    })
+    if (!res.ok) {
+      const err = new Error('custody endpoint failed: ' + (res.body?.error || res.status))
+      err.status = res.status
+      err.body = res.body
+      throw err
+    }
+    return res.body
+  }
+
   async fetchSeedingManifest (relayUrl, pubkey) {
     if (typeof relayUrl !== 'string' || !relayUrl.length) {
       throw new Error('fetchSeedingManifest: relayUrl required')

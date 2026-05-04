@@ -21,6 +21,8 @@ import { AutoHeal } from '../auto-heal.js'
 import { ManifestStore } from '../manifest-store.js'
 import { resolveAcceptMode, decideAcceptance } from '../accept-mode.js'
 import { SeedProtocol } from '../protocol/seed-request.js'
+import { AnchorProtocol } from '../protocol/anchor-channel.js'
+import { CustodyProtocol } from '../protocol/custody-channel.js'
 import { verifyDelegationCert, verifyRevocation } from '../delegation.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
@@ -552,6 +554,20 @@ export class RelayNode extends EventEmitter {
         challengeInterval: this.config.proofChallengeInterval || 300000
       })
 
+      // Anchor proof channel — lets peers request our signed anchor proofs
+      // over the existing Hyperswarm connection (no HTTPS dependency).
+      // AutoHeal uses this to count peers as live replicas.
+      this._anchorProtocol = new AnchorProtocol({
+        proofProvider: async (appKey) => {
+          try {
+            const proof = await this.createAnchorProof(appKey)
+            return { ok: true, proof }
+          } catch (err) {
+            return { ok: false, error: err.message || 'proof-error' }
+          }
+        }
+      })
+
       // Feed proof results into reputation scoring
       this._proofOfRelay.on('proof-result', (result) => {
         this.reputation.recordChallenge(result.relayPubkey, result.passed, result.latencyMs)
@@ -995,6 +1011,29 @@ export class RelayNode extends EventEmitter {
           this.seedingRegistry = new SeedingRegistry(registryStore, this.swarm, {
             registryKey: this.config.registryKey || null
           })
+
+          // Custody push channel — broadcasts new custody entries to every
+          // connected peer over Protomux for real-time fan-out. The
+          // registry's append-only log still handles durability + catch-up;
+          // this channel is just the fast-path for already-connected peers.
+          this._custodyProtocol = new CustodyProtocol({
+            applyEntry: async (entry, fromPeer) => {
+              return this.seedingRegistry._applyPushedEntry(entry, fromPeer)
+            }
+          })
+
+          // When the registry appends a new custody entry locally, push it
+          // to all connected peers. Fire-and-forget; log replication backs
+          // it up if the push doesn't reach.
+          this.seedingRegistry.on('custody-entry-appended', ({ entry }) => {
+            try {
+              const sent = this._custodyProtocol.broadcast(entry)
+              if (sent > 0) this.emit('custody-broadcast', { type: entry.type, peers: sent })
+            } catch (err) {
+              this.emit('custody-broadcast-error', { error: err.message })
+            }
+          })
+
           // Bubble custody pipeline events up to the node so the WS dashboard
           // feed can broadcast them to subscribers immediately rather than
           // waiting for the 2s tick. Each event maps to a normalized name on
@@ -1007,7 +1046,8 @@ export class RelayNode extends EventEmitter {
             'custody-commit-published': 'custody-commit',
             'source-retired-published': 'custody-retired',
             'custody-proof-recorded': 'custody-proof',
-            'custody-non-serving-proof-recorded': 'custody-non-serving-proof'
+            'custody-non-serving-proof-recorded': 'custody-non-serving-proof',
+            'custody-expiry-witness-recorded': 'custody-expiry-witness'
           }
           for (const [from, to] of Object.entries(eventBubbleMap)) {
             this.seedingRegistry.on(from, (entry) => this.emit(to, entry))
@@ -1107,7 +1147,12 @@ export class RelayNode extends EventEmitter {
           // Per-tick proof-fetch budget. Bounds O(K·N) traffic on large
           // fleets; deferred peers are picked up on subsequent ticks.
           maxProofsPerTick: this.config.autoHeal.maxProofsPerTick,
-          storageMargin: this.config.autoHeal.storageMargin
+          storageMargin: this.config.autoHeal.storageMargin,
+          // Protomux anchor channel — preferred over HTTPS for proof
+          // requests. Works on pure-swarm and NAT'd fleets where no HTTPS
+          // endpoint is reachable. Falls back to HTTPS when the channel
+          // isn't open for a given peer.
+          anchorChannel: this._anchorProtocol
         })
         this.autoHeal.on('recruited', (info) => this.emit('auto-heal-recruited', info))
         this.autoHeal.on('recruit-error', (info) => this.emit('auto-heal-error', info))
@@ -1484,6 +1529,16 @@ export class RelayNode extends EventEmitter {
     if (this._proofOfRelay) {
       try { this._proofOfRelay.attach(conn) } catch (err) {
         this.emit('protocol-error', { protocol: 'proof', error: err })
+      }
+    }
+    if (this._anchorProtocol && remotePubKeyHex) {
+      try { this._anchorProtocol.attach(conn, remotePubKeyHex) } catch (err) {
+        this.emit('protocol-error', { protocol: 'anchor', error: err })
+      }
+    }
+    if (this._custodyProtocol && remotePubKeyHex) {
+      try { this._custodyProtocol.attach(conn, remotePubKeyHex) } catch (err) {
+        this.emit('protocol-error', { protocol: 'custody', error: err })
       }
     }
     if (this.serviceProtocol) {
@@ -2357,6 +2412,54 @@ export class RelayNode extends EventEmitter {
     const result = { checked, expired, skipped }
     this.emit('custody-expiry-pass', { ...result, at: now })
     return result
+  }
+
+  /**
+   * Build a signed anchor proof for one of our locally-seeded apps.
+   *
+   * Used by both the HTTP `/api/anchors/<appKey>/proof` endpoint and the
+   * Protomux anchor channel. Returns the canonical proof shape that
+   * `verifyAnchorProof()` accepts.
+   *
+   * @param {string} appKey hex-encoded
+   * @returns {Promise<object>} signed proof
+   */
+  async createAnchorProof (appKey) {
+    if (!isValidHexKey(appKey, 64)) throw new Error('invalid appKey')
+    if (!this.appRegistry || typeof this.appRegistry.get !== 'function') {
+      throw new Error('registry unavailable')
+    }
+    if (!this.swarm?.keyPair) throw new Error('no relay identity')
+
+    const entry = this.appRegistry.get(appKey)
+    const anchored = !!(entry && entry.anchored === true)
+    const version = entry?.anchoredLength || 0
+    const anchoredAt = entry?.anchoredAt || null
+    const attestedAt = Date.now()
+
+    const sodium = await import('sodium-universal').then(m => m.default)
+    const b4a = await import('b4a').then(m => m.default)
+    const tag = b4a.from('hiverelay-anchor-proof-v1')
+    const keyBuf = b4a.from(appKey, 'hex')
+    const versionBuf = b4a.alloc(8)
+    new DataView(versionBuf.buffer, versionBuf.byteOffset).setBigUint64(0, BigInt(version), false)
+    const tsBuf = b4a.alloc(8)
+    new DataView(tsBuf.buffer, tsBuf.byteOffset).setBigUint64(0, BigInt(attestedAt), false)
+    const flagBuf = b4a.from([anchored ? 1 : 0])
+    const payload = b4a.concat([tag, keyBuf, versionBuf, tsBuf, flagBuf])
+    const sig = b4a.alloc(sodium.crypto_sign_BYTES)
+    sodium.crypto_sign_detached(sig, payload, this.swarm.keyPair.secretKey)
+
+    return {
+      schemaVersion: 1,
+      appKey,
+      anchored,
+      version,
+      anchoredAt,
+      attestedAt,
+      relayPubkey: b4a.toString(this.swarm.keyPair.publicKey, 'hex'),
+      signature: b4a.toString(sig, 'hex')
+    }
   }
 
   async createCustodyNonServingProof (intentId, opts = {}) {
