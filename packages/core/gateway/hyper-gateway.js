@@ -180,9 +180,10 @@ export class HyperGateway extends EventEmitter {
     this._totalBytesServed = 0
     this._driveOperationTimeout = opts.driveOperationTimeout || 30000 // 30s default
 
-    // If a Corestore is provided (e.g. the relay node's store), create a
-    // namespaced session instead of spinning up an entirely separate P2P stack.
-    // This halves memory usage by sharing storage and the existing swarm.
+    // If a Corestore is provided (e.g. the relay node's store), reuse that
+    // same store so gateway reads hit the already-seeded Hyperdrive cores.
+    // A separate namespace would isolate the data and make anchored drives
+    // appear unavailable to the HTTP gateway.
     this._externalStore = opts.store || null
     this._store = null
     this._swarm = null
@@ -210,12 +211,10 @@ export class HyperGateway extends EventEmitter {
     if (this._ready) return
 
     if (this._externalStore) {
-      // Re-use the relay node's Corestore via a namespaced session —
-      // avoids creating a second Corestore + Hyperswarm (Fix 2.1).
-      this._store = this._externalStore.namespace('gateway')
+      this._store = this._externalStore
       await this._store.ready()
-      // The relay node's swarm already calls store.replicate(conn),
-      // which covers namespaced sessions, so no extra swarm is needed.
+      // The relay node's swarm already calls store.replicate(conn), so no
+      // extra swarm is needed for gateway reads.
     } else {
       // Standalone / backward-compatible mode: own store + swarm
       const storagePath = this.node.config
@@ -474,6 +473,13 @@ export class HyperGateway extends EventEmitter {
   }
 
   async _getDrive (keyHex) {
+    const seededEntry = this.node.seededApps && this.node.seededApps.get(keyHex)
+    const seededDrive = seededEntry && seededEntry.drive
+    if (seededDrive && !seededDrive.closed && !seededDrive.closing) {
+      this._drives.set(keyHex, seededDrive)
+      return seededDrive
+    }
+
     // Return cached drive if already open and has content
     if (this._drives.has(keyHex)) {
       const cached = this._drives.get(keyHex)

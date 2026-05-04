@@ -443,7 +443,7 @@ async function start () {
 
 async function startTestnet () {
   const createTestnet = (await import('@hyperswarm/testnet')).default
-  const { HiveRelayClient } = await import('../client/index.js')
+  const { HiveRelayClient } = await import('../../client/index.js')
   const Hyperswarm = (await import('hyperswarm')).default
   const { mkdirSync, rmSync } = await import('fs')
   const { tmpdir } = await import('os')
@@ -480,9 +480,11 @@ async function startTestnet () {
       storage,
       enableAPI: true,
       apiPort: port,
+      apiHost: '127.0.0.1',
       enableRelay: true,
       enableSeeding: true,
       enableMetrics: true,
+      acceptMode: 'open',
       maxConnections: 64,
       bootstrapNodes: testnet.bootstrap,
       shutdownTimeoutMs: 5000
@@ -560,7 +562,7 @@ async function startTestnet () {
       ], { timeout: 10000 })
 
       const driveKey = b4a.toString(drive.key, 'hex')
-      console.log(`  [client] published drive: ${driveKey.slice(0, 16)}...`)
+      console.log(`  [client] published drive: ${driveKey}`)
 
       // Seed the drive
       try {
