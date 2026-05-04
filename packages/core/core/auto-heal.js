@@ -41,13 +41,24 @@
  */
 
 import EventEmitter from 'events'
+import { fetchAndVerifyAnchorProof } from './anchor-proof-verifier.js'
 
 // Default thresholds — tuned for an archival use case where availability
 // matters more than over-replication. Operators can override via opts.
+//
+// Note: minReplicas is the SLO floor (anything below = degraded). targetReplicas
+// is what AutoHeal recruits up to, leaving headroom for churn / transient
+// outages. Without that buffer, any single offline replica drops the network
+// below SLO. See scripts/simulate-auto-heal-bridge.js scenarioChurn for the
+// reactive-recruitment discovery this targets.
 export const DEFAULT_THRESHOLDS = {
   minReplicas: 7,
   minRegions: 4,
-  minOperators: 5
+  minOperators: 5,
+  // Recruit to minReplicas + replicaBuffer to absorb transient offline dips.
+  // Defaults to +2 over min, matching the SLO of "≤2 simultaneous failures
+  // tolerated". Operators can set replicaBuffer: 0 to disable the buffer.
+  replicaBuffer: 2
 }
 
 const DEFAULT_TICK_MS = 30 * 60 * 1000 // 30 min — slow loop; archival isn't latency-sensitive
@@ -69,6 +80,31 @@ export class AutoHeal extends EventEmitter {
     // maxStorageBytes. Default 90% leaves headroom for the seed-request
     // path + manifest growth between ticks.
     this.storageMargin = opts.storageMargin ?? 0.90
+    // Cryptographic proof bridge — when true, AutoHeal counts a peer as
+    // a live replica only when it produces a recently-verified signed
+    // anchor proof from `/api/anchors/<appKey>/proof`. Without proofs,
+    // diversity scoring trusts the peer's self-reported `anchored: true`.
+    //
+    // Default ON for archive-tier drives because the whole point of the
+    // tier is durable, verifiable preservation. Operators can disable
+    // for staging/testnet via `verifyProofs: false`.
+    this.verifyProofs = opts.verifyProofs !== false
+    // How fresh a proof must be to count. Default 1h — long enough that
+    // the per-archive proof-emit timer (every 30 min) has time to refresh,
+    // short enough that a relay that silently dropped a drive is detected
+    // within an hour.
+    this.proofFreshnessMs = opts.proofFreshnessMs || 60 * 60 * 1000
+    // After AutoHeal recruits a new replica, give it this much grace
+    // before we expect a fresh proof — replication takes time, and
+    // demanding instant anchored-proof would prevent recruitment from
+    // ever counting toward diversity.
+    this.proofGraceMs = opts.proofGraceMs || 60 * 60 * 1000
+    // Inject a fetcher for tests; in production we use the real fetch.
+    this._fetchProof = opts.fetchProof || fetchAndVerifyAnchorProof
+    // Cache of verified proofs: `${appKey}:${peerPubkey}` → { proof, fetchedAt }
+    // Prevents fetching the same proof every tick. Entries auto-expire
+    // when they exceed proofFreshnessMs.
+    this._proofCache = new Map()
     // ReplicaSets observed across the network: appKey → { relayPubkey → meta }
     this._fleet = new Map()
     // Per-drive recruit-failure backoff. appKey → { failures, retryAt }.
@@ -112,7 +148,7 @@ export class AutoHeal extends EventEmitter {
   snapshot () {
     const drives = []
     for (const [appKey, replicas] of this._fleet) {
-      const live = this._liveReplicas(replicas)
+      const live = this._liveReplicas(replicas, appKey)
       const back = this._backoff.get(appKey) || null
       drives.push({
         appKey,
@@ -133,9 +169,12 @@ export class AutoHeal extends EventEmitter {
       thresholds: this.thresholds,
       maxRecruitsPerTick: this.maxRecruitsPerTick,
       storageMargin: this.storageMargin,
+      verifyProofs: this.verifyProofs,
+      proofFreshnessMs: this.proofFreshnessMs,
       tracked: drives.length,
       below: drives.filter(d => !d.meetsThreshold).length,
       backoffs: this._backoff.size,
+      proofCacheSize: this._proofCache.size,
       drives
     }
   }
@@ -151,12 +190,19 @@ export class AutoHeal extends EventEmitter {
     this._refreshFromFederation()
     this._pruneStale()
 
+    // 1b. Verify peer-claimed anchored bits via signed anchor proofs. This
+    // upgrades the trust model from "peer says they have it" to "peer
+    // cryptographically demonstrates they have it." Stale-cache aware: we
+    // only fetch a proof if we don't have one in the cache or the cached
+    // one is older than freshnessMs.
+    if (this.verifyProofs) await this._refreshAnchorProofs()
+
     // 2. For each archive drive, decide whether to recruit.
     let recruits = 0
     for (const [appKey, replicas] of this._fleet) {
       if (recruits >= this.maxRecruitsPerTick) break
 
-      const live = this._liveReplicas(replicas)
+      const live = this._liveReplicas(replicas, appKey)
       if (this._meetsThreshold(live)) continue
 
       // Already seeding it locally? Nothing to do.
@@ -181,7 +227,7 @@ export class AutoHeal extends EventEmitter {
       const ourPubkey = this._localPubkey()
       const addsRegion = !live.regions.includes(ourRegion)
       const meetsRegionThreshold = live.regions.length >= this.thresholds.minRegions
-      const belowReplicas = live.replicas < this.thresholds.minReplicas
+      const belowReplicas = live.replicas < this._targetReplicas()
       const wouldAddDiversity = (
         !replicas.has(ourPubkey) &&
         (addsRegion || (belowReplicas && meetsRegionThreshold))
@@ -289,7 +335,7 @@ export class AutoHeal extends EventEmitter {
     // visiblePeers ≈ relays we know about that aren't already replicas.
     // We need (replicas + regions + operators) all to hit threshold; use the
     // worst single-dimension shortfall as gap.
-    const replicaGap = Math.max(0, this.thresholds.minReplicas - live.replicas)
+    const replicaGap = Math.max(0, this._targetReplicas() - live.replicas)
     const regionGap = Math.max(0, this.thresholds.minRegions - live.regions.length)
     const operatorGap = Math.max(0, this.thresholds.minOperators - live.operators.length)
     const gap = Math.max(replicaGap, regionGap, operatorGap)
@@ -375,12 +421,24 @@ export class AutoHeal extends EventEmitter {
 
   // ─── Internal: scoring / policy ────────────────────────────────────
 
-  _liveReplicas (replicas) {
+  _liveReplicas (replicas, appKey) {
     // Count only ANCHORED replicas — a relay that accepted the seed but
     // hasn't actually replicated bytes is not a real availability vote.
+    //
+    // When verifyProofs is on, "anchored" requires a recently-verified
+    // signed anchor proof in addition to the peer's self-report. This
+    // raises the bar from "they say they have it" to "we cryptographically
+    // confirmed they had it within the freshness window."
+    //
+    // Local relay (us) is always trusted because we trust our own registry.
+    const ourPubkey = this._localPubkey()
     const anchored = []
     for (const [pubkey, meta] of replicas) {
-      if (meta.anchored) anchored.push({ pubkey, region: meta.region })
+      if (!meta.anchored) continue
+      if (this.verifyProofs && pubkey !== ourPubkey && appKey) {
+        if (!this._hasFreshProof(appKey, pubkey)) continue
+      }
+      anchored.push({ pubkey, region: meta.region })
     }
     const regions = [...new Set(anchored.map(r => r.region).filter(Boolean))]
     const operators = [...new Set(anchored.map(r => r.pubkey))]
@@ -392,9 +450,81 @@ export class AutoHeal extends EventEmitter {
     }
   }
 
+  _hasFreshProof (appKey, peerPubkey) {
+    const cached = this._proofCache.get(`${appKey}:${peerPubkey}`)
+    if (!cached) return false
+    const age = Date.now() - cached.fetchedAt
+    if (age > this.proofFreshnessMs) return false
+    if (cached.result.ok !== true) return false
+    return cached.result.proof.anchored === true
+  }
+
+  async _refreshAnchorProofs () {
+    if (!this.node.federation || typeof this.node.federation.snapshot !== 'function') return
+    const snap = this.node.federation.snapshot()
+    if (!Array.isArray(snap?.peerCatalogs)) return
+
+    // Build a peer pubkey → URL map so we know where to fetch from
+    const peerToUrl = new Map()
+    for (const peer of snap.peerCatalogs) {
+      if (peer.pubkey && peer.url) peerToUrl.set(peer.pubkey, peer.url)
+    }
+
+    const ourPubkey = this._localPubkey()
+    const tasks = []
+
+    for (const [appKey, replicas] of this._fleet) {
+      for (const [peerPubkey, meta] of replicas) {
+        if (!meta.anchored) continue
+        if (peerPubkey === ourPubkey) continue
+        const cacheKey = `${appKey}:${peerPubkey}`
+        const cached = this._proofCache.get(cacheKey)
+        // Skip if recently fetched (cache covers freshnessMs/2 to ensure
+        // we always have a valid cache entry between ticks)
+        if (cached && (Date.now() - cached.fetchedAt) < this.proofFreshnessMs / 2) continue
+        const url = peerToUrl.get(peerPubkey)
+        if (!url) continue
+        tasks.push(this._fetchProof(url, appKey, {
+          expectedPubkey: peerPubkey,
+          freshnessMs: this.proofFreshnessMs * 2 // give some slack on remote clock
+        }).then(result => {
+          this._proofCache.set(cacheKey, { result, fetchedAt: Date.now() })
+          if (!result.ok) {
+            this.emit('proof-failed', { appKey, peerPubkey, reason: result.reason })
+          }
+        }).catch(() => {
+          // Network error etc — record as failed proof so the peer doesn't count
+          this._proofCache.set(cacheKey, {
+            result: { ok: false, reason: 'fetch-error' },
+            fetchedAt: Date.now()
+          })
+        }))
+      }
+    }
+
+    // Cap concurrent fetches at 16 — typical operator network has ≤30 peers,
+    // we don't need infinite parallelism.
+    const BATCH = 16
+    for (let i = 0; i < tasks.length; i += BATCH) {
+      await Promise.all(tasks.slice(i, i + BATCH))
+    }
+
+    // Prune stale cache entries
+    const cutoff = Date.now() - this.proofFreshnessMs
+    for (const [key, entry] of this._proofCache) {
+      if (entry.fetchedAt < cutoff) this._proofCache.delete(key)
+    }
+  }
+
+  // Target = min + buffer. We keep recruiting until we hit target so that
+  // transient churn (one host briefly offline) doesn't drop us below min.
+  _targetReplicas () {
+    return this.thresholds.minReplicas + (this.thresholds.replicaBuffer ?? 0)
+  }
+
   _meetsThreshold (live) {
     return (
-      live.replicas >= this.thresholds.minReplicas &&
+      live.replicas >= this._targetReplicas() &&
       live.regions.length >= this.thresholds.minRegions &&
       live.operators.length >= this.thresholds.minOperators
     )

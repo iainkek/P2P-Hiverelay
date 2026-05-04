@@ -68,6 +68,7 @@ test('AutoHeal: ignores non-archive drives', async (t) => {
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 2, minRegions: 2, minOperators: 2 }
   })
   heal._running = true
@@ -93,6 +94,7 @@ test('AutoHeal: recruits when below threshold AND adds region diversity', async 
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 }
   })
   heal._running = true
@@ -126,7 +128,8 @@ test('AutoHeal: does NOT recruit when threshold already met', async (t) => {
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
-    thresholds: { minReplicas: 3, minRegions: 3, minOperators: 3 }
+    verifyProofs: false,
+    thresholds: { minReplicas: 3, minRegions: 3, minOperators: 3, replicaBuffer: 0 }
   })
   heal._running = true
   await heal._tick()
@@ -150,6 +153,7 @@ test('AutoHeal: does NOT recruit when our region adds no diversity', async (t) =
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 3, minRegions: 3, minOperators: 3 }
   })
   heal._running = true
@@ -172,6 +176,7 @@ test('AutoHeal: does NOT recruit when accept-mode rejects', async (t) => {
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 }
   })
   heal._running = true
@@ -199,6 +204,7 @@ test('AutoHeal: does NOT recruit if we already host the drive', async (t) => {
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 }
   })
   heal._running = true
@@ -229,6 +235,7 @@ test('AutoHeal: caps recruits per tick at maxRecruitsPerTick', async (t) => {
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
     maxRecruitsPerTick: 2
   })
@@ -251,6 +258,7 @@ test('AutoHeal: prunes stale peer entries past staleMs', async (t) => {
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     staleMs: 1, // stale immediately
     thresholds: { minReplicas: 2, minRegions: 2, minOperators: 2 },
     random: () => 0 // deterministic: jitter always accepts
@@ -265,7 +273,7 @@ test('AutoHeal: prunes stale peer entries past staleMs', async (t) => {
   node.federation.snapshot = () => ({ peerCatalogs: [] })
 
   // Wait one tick interval to let staleness kick in
-  await new Promise(r => setTimeout(r, 10))
+  await new Promise(resolve => setTimeout(resolve, 10))
   heal._running = true
   await heal._tick()
 
@@ -290,6 +298,7 @@ test('AutoHeal: snapshot reports correct diversity', async (t) => {
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 }
   })
   heal._running = true
@@ -321,6 +330,7 @@ test('AutoHeal: refuses to recruit when storage cap reached', async (t) => {
   node.seeder = { totalBytesStored: 950 * 1024 }
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
     random: () => 0 // jitter always accepts so the storage gate is the only thing blocking
   })
@@ -347,6 +357,7 @@ test('AutoHeal: backs off retrying a drive after a recruit error', async (t) => 
   node.seedApp = async () => { throw new Error('REPLICATION_FAILED') }
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
     random: () => 0
   })
@@ -387,6 +398,7 @@ test('AutoHeal: jitter probabilistically declines recruitment', async (t) => {
   // probability low → decline.
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 30, minRegions: 2, minOperators: 30 },
     random: () => 0.99
   })
@@ -418,6 +430,7 @@ test('AutoHeal: jitter accepts when probability is high', async (t) => {
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 5, minRegions: 4, minOperators: 5 },
     random: () => 0.5 // mid-range; should pass since prob is 1.0
   })
@@ -437,6 +450,7 @@ test('AutoHeal: snapshot exposes new fields (running, backoffs, below)', async (
   })
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
+    verifyProofs: false,
     thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 },
     random: () => 0.99 // decline jitter so we just observe state
   })
@@ -464,7 +478,7 @@ test('AutoHeal: only counts ANCHORED replicas as live', async (t) => {
       { pubkey: 'p3', region: 'AS', apps: [{ appKey: 'd', durability: 1, anchored: false }] }
     ]
   })
-  const heal = new AutoHeal(node, { tickMs: 60_000 })
+  const heal = new AutoHeal(node, { tickMs: 60_000, verifyProofs: false })
   heal._running = true
   await heal._tick()
 
@@ -472,4 +486,230 @@ test('AutoHeal: only counts ANCHORED replicas as live', async (t) => {
   const drive = snap.drives.find(d => d.appKey === 'd')
   t.is(drive.replicas, 1, 'unanchored peers do not count')
   t.is(drive.regions.length, 1)
+})
+
+test('AutoHeal: replicaBuffer keeps recruiting past minReplicas (churn absorption)', async (t) => {
+  // Drive sits at exactly minReplicas. Without buffer, AutoHeal stops here.
+  // With buffer=2, target=minReplicas+2 — keep recruiting to absorb churn.
+  const recruited = []
+  const node = makeNode({
+    region: 'OC',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p2', region: 'EU', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p3', region: 'AS', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    thresholds: { minReplicas: 3, minRegions: 3, minOperators: 3, replicaBuffer: 2 }
+  })
+  heal._running = true
+  await heal._tick()
+  // Target = 5, currently 3 → must recruit. Our region adds operator diversity (we're 'mypub' / new operator).
+  t.is(recruited.length, 1, 'recruited despite minReplicas being met (target = min + buffer)')
+})
+
+// ─── Bridge tests: AutoHeal ↔ Anchor Proofs ─────────────────────────
+
+test('AutoHeal/bridge: with verifyProofs ON and a successful fetcher, peers count as anchored', async (t) => {
+  const fetched = []
+  const fetchProof = async (url, appKey, opts) => {
+    fetched.push({ url, appKey, opts })
+    return {
+      ok: true,
+      proof: { appKey, anchored: true, version: 1, attestedAt: Date.now(), relayPubkey: 'p1', signature: 'sig' },
+      fetchedAt: Date.now()
+    }
+  }
+  const node = makeNode({
+    region: 'OC',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', url: 'https://r1.example', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ]
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: true,
+    fetchProof,
+    thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 } // unreachable; just observe state
+  })
+  heal._running = true
+  // First tick: refresh proofs (populates cache), then run with fresh proofs available.
+  await heal._tick()
+
+  t.is(fetched.length, 1, 'fetched proof for the one peer')
+  t.is(fetched[0].url, 'https://r1.example', 'used peer url')
+  t.is(fetched[0].appKey, 'd')
+
+  const snap = heal.snapshot()
+  const drive = snap.drives.find(d => d.appKey === 'd')
+  t.is(drive.replicas, 1, 'verified-anchored peer counts as live')
+  t.is(snap.proofCacheSize, 1, 'proof cached')
+})
+
+test('AutoHeal/bridge: with verifyProofs ON and a FAILING fetcher, peers do NOT count', async (t) => {
+  const fetchProof = async () => ({ ok: false, reason: 'bad-signature-cryptographic' })
+  const events = []
+  const node = makeNode({
+    region: 'OC',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', url: 'https://r1.example', apps: [{ appKey: 'd', durability: 1, anchored: true }] },
+      { pubkey: 'p2', region: 'EU', url: 'https://r2.example', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ]
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: true,
+    fetchProof,
+    thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 }
+  })
+  heal.on('proof-failed', e => events.push(e))
+  heal._running = true
+  await heal._tick()
+
+  const snap = heal.snapshot()
+  const drive = snap.drives.find(d => d.appKey === 'd')
+  t.is(drive.replicas, 0, 'peers self-reporting anchored without valid proof do NOT count')
+  t.is(events.length, 2, 'emitted proof-failed for each peer')
+  t.is(events[0].reason, 'bad-signature-cryptographic')
+})
+
+test('AutoHeal/bridge: stale proof (older than freshnessMs) is rejected', async (t) => {
+  // Pre-seed the cache with a "stale" entry by manipulating fetchedAt.
+  const fetchProof = async (url, appKey) => ({
+    ok: true,
+    proof: { appKey, anchored: true, version: 1, attestedAt: Date.now(), relayPubkey: 'p1', signature: 'sig' }
+  })
+  const node = makeNode({
+    region: 'OC',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', url: 'https://r1.example', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ]
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: true,
+    proofFreshnessMs: 60_000, // 1 minute window
+    fetchProof,
+    thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 }
+  })
+  // Manually plant a stale cache entry (fetched 10 minutes ago)
+  heal._proofCache.set('d:p1', {
+    result: { ok: true, proof: { appKey: 'd', anchored: true } },
+    fetchedAt: Date.now() - 10 * 60_000
+  })
+  // Test the gate directly (it doesn't require running a tick)
+  t.absent(heal._hasFreshProof('d', 'p1'), 'stale proof rejected by _hasFreshProof gate')
+})
+
+test('AutoHeal/bridge: fetch errors cache as failed (no infinite retry)', async (t) => {
+  let calls = 0
+  const fetchProof = async () => {
+    calls++
+    throw new Error('ECONNREFUSED')
+  }
+  const node = makeNode({
+    region: 'OC',
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', url: 'https://r1.example', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ]
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: true,
+    proofFreshnessMs: 60 * 60 * 1000, // 1h
+    fetchProof,
+    thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 }
+  })
+  heal._running = true
+
+  await heal._tick()
+  await heal._tick() // second tick should NOT refetch (cached entry within freshness/2 window)
+
+  t.is(calls, 1, 'second tick used cached failure, no refetch')
+  const cached = heal._proofCache.get('d:p1')
+  t.ok(cached, 'failure cached')
+  t.is(cached.result.ok, false)
+  t.is(cached.result.reason, 'fetch-error')
+})
+
+test('AutoHeal/bridge: local relay self-replicas do not need proofs', async (t) => {
+  const fetchProof = async () => {
+    throw new Error('should not be called for local relay')
+  }
+  // We are 'mypub' and we host the drive locally. Peer 'p1' also has it.
+  const node = makeNode({
+    region: 'OC',
+    pubkey: 'mypub',
+    localCatalog: [
+      { appKey: 'd', durability: 1, anchored: true, region: 'OC' }
+    ],
+    peerCatalogs: [
+      { pubkey: 'p1', region: 'NA', url: 'https://r1.example', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ]
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: true,
+    fetchProof,
+    thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 }
+  })
+  heal._running = true
+  // Should not throw — local relay should not trigger fetchProof
+  // (and even though peer p1 fetch returns nothing valid, we just want no crash)
+  let threw = null
+  try {
+    await heal._tick()
+  } catch (e) { threw = e }
+
+  // p1 will be fetched and that one will fail (mock throws). Verify no crash.
+  t.absent(threw, 'tick completes')
+  // Local relay (us) must not be in cache — only p1 should be
+  t.absent(heal._proofCache.has('d:mypub'), 'local pubkey not in proof cache')
+  t.ok(heal._proofCache.has('d:p1'), 'peer p1 in cache')
+})
+
+test('AutoHeal/bridge: missing peer URL causes peer to be excluded silently', async (t) => {
+  // If a peer has no URL we cannot fetch their proof. We should NOT count them.
+  let calls = 0
+  const fetchProof = async () => { calls++; return { ok: true, proof: { anchored: true } } }
+  const node = makeNode({
+    region: 'OC',
+    peerCatalogs: [
+      // No url field — fetch should be skipped, peer should not count
+      { pubkey: 'p1', region: 'NA', apps: [{ appKey: 'd', durability: 1, anchored: true }] }
+    ]
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: true,
+    fetchProof,
+    thresholds: { minReplicas: 5, minRegions: 5, minOperators: 5 }
+  })
+  heal._running = true
+  await heal._tick()
+
+  t.is(calls, 0, 'no fetch attempted (peer has no URL)')
+  const snap = heal.snapshot()
+  const drive = snap.drives.find(d => d.appKey === 'd')
+  t.is(drive.replicas, 0, 'peer without URL does not count toward replicas')
+})
+
+test('AutoHeal/bridge: defaults are SECURE by default (verifyProofs ON)', async (t) => {
+  const node = makeNode({ region: 'OC' })
+  const heal = new AutoHeal(node, { tickMs: 60_000 }) // NO verifyProofs override
+  t.is(heal.verifyProofs, true, 'verifyProofs defaults to true')
+  t.ok(heal.proofFreshnessMs > 0, 'proofFreshnessMs has a default')
+})
+
+test('AutoHeal/bridge: snapshot includes proof bridge state', async (t) => {
+  const node = makeNode({ region: 'OC' })
+  const heal = new AutoHeal(node, { tickMs: 60_000, verifyProofs: false })
+  const snap = heal.snapshot()
+  t.is(snap.verifyProofs, false, 'snapshot reports verifyProofs setting')
+  t.ok(typeof snap.proofFreshnessMs === 'number', 'snapshot reports freshness window')
+  t.is(snap.proofCacheSize, 0, 'snapshot reports cache size')
 })
