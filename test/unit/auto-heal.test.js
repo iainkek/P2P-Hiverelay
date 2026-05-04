@@ -835,6 +835,43 @@ test('AutoHeal: proof-fetch budget caps fetches per tick (sampling)', async (t) 
   t.is(events[0].deferred, 68, '68 deferred to subsequent ticks')
 })
 
+test('AutoHeal: constructor honors all bridge options (config pass-through)', async (t) => {
+  // Verifies that when relay-node passes autoHeal config through to the
+  // constructor, every bridge knob is surfaced on the instance for the
+  // snapshot/dashboard. Catches the regression where new opts get added
+  // but relay-node/index.js forgets to wire them.
+  const node = makeNode({ region: 'NA' })
+  const fakeFetcher = async () => ({ ok: true, proof: { anchored: true } })
+  const heal = new AutoHeal(node, {
+    tickMs: 12_345,
+    staleMs: 67_890,
+    maxRecruitsPerTick: 7,
+    storageMargin: 0.55,
+    verifyProofs: false,
+    proofFreshnessMs: 99_000,
+    proofGraceMs: 88_000,
+    maxProofsPerTick: 17,
+    fetchProof: fakeFetcher,
+    thresholds: { minReplicas: 9, minRegions: 2, minOperators: 2, replicaBuffer: 4, maxPerOperator: 3 }
+  })
+  t.is(heal.tickMs, 12_345)
+  t.is(heal.staleMs, 67_890)
+  t.is(heal.maxRecruitsPerTick, 7)
+  t.is(heal.storageMargin, 0.55)
+  t.is(heal.verifyProofs, false)
+  t.is(heal.proofFreshnessMs, 99_000)
+  t.is(heal.proofGraceMs, 88_000)
+  t.is(heal.maxProofsPerTick, 17)
+  t.is(heal._fetchProof, fakeFetcher, 'fetcher injected')
+  t.is(heal.thresholds.minReplicas, 9)
+  t.is(heal.thresholds.replicaBuffer, 4)
+  t.is(heal.thresholds.maxPerOperator, 3)
+
+  const snap = heal.snapshot()
+  t.is(snap.maxProofsPerTick, 17, 'snapshot surfaces maxProofsPerTick')
+  t.is(snap.thresholds.replicaBuffer, 4, 'snapshot surfaces replicaBuffer')
+})
+
 test('AutoHeal: recruited event reports operator-gap when applicable', async (t) => {
   // Region threshold met (3 regions); operator threshold NOT met (1 op).
   // Recruit reason should be operator-gap, not replica-gap.

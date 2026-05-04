@@ -799,6 +799,59 @@ export class SeedingRegistry extends EventEmitter {
     if (intentId) this._custodyStatusCache.delete(intentId)
   }
 
+  /**
+   * Aggregate custody snapshot for dashboards and the WS feed.
+   *
+   * Walks every active intent and rolls up:
+   *   - total intent count
+   *   - how many have committed (publisher acknowledged quorum)
+   *   - how many have reached receipt quorum (ready to commit)
+   *   - how many have at least one validated proof
+   *   - how many have an unresolved non-serving-proof outstanding
+   *   - total receipts and proofs counts (for trend graphs)
+   *
+   * Cheap to compute on each broadcast — bounded by intent count, which is
+   * already bounded by the registry's append-only log size.
+   */
+  custodySnapshot () {
+    let intents = 0
+    let withQuorum = 0
+    let committed = 0
+    let withProof = 0
+    let withNonServingProof = 0
+    let totalReceipts = 0
+    let totalProofs = 0
+    let totalNonServingProofs = 0
+    let retired = 0
+    for (const intentId of this._custodyIntents.keys()) {
+      intents++
+      const status = this.getCustodyStatus(intentId)
+      if (status.quorumReached) withQuorum++
+      if (status.committed) committed++
+      if (status.proofCount > 0) withProof++
+      if (status.nonServingProofCount > 0) withNonServingProof++
+      if (status.sourceRetired) retired++
+      totalReceipts += status.receiptCount
+      totalProofs += status.proofCount
+      totalNonServingProofs += status.nonServingProofCount
+    }
+    return {
+      intents,
+      withQuorum,
+      committed,
+      retired,
+      withProof,
+      withNonServingProof,
+      totalReceipts,
+      totalProofs,
+      totalNonServingProofs,
+      // Derived health indicator: ratio of committed intents to total. A
+      // healthy registry should converge to ~1.0 over time. Sustained low
+      // values mean the network is failing to gather quorums.
+      commitRate: intents > 0 ? committed / intents : null
+    }
+  }
+
   get key () {
     return this.localLog ? this.localLog.key : null
   }

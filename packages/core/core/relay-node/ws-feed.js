@@ -93,7 +93,18 @@ export class DashboardFeed {
     if (this._broadcastTimer.unref) this._broadcastTimer.unref()
 
     // Listen for relay node events and push immediate updates
-    const events = ['connection', 'connection-closed', 'seeding', 'unseeded', 'circuit-closed']
+    const events = [
+      'connection', 'connection-closed', 'seeding', 'unseeded', 'circuit-closed',
+      // AutoHeal events — push immediately so dashboards can show fresh
+      // recruitment activity without waiting for the 2s tick.
+      'auto-heal-recruited', 'auto-heal-error',
+      'auto-heal-proof-failed', 'auto-heal-throttled',
+      // Custody pipeline events — emitted by the registry as intents are
+      // created, receipts arrive, and quorums commit. Bubbled up from
+      // SeedingRegistry by relay-node/index.js with normalized names.
+      'custody-intent', 'custody-receipt', 'custody-commit',
+      'custody-proof', 'custody-retired', 'custody-non-serving-proof'
+    ]
     for (const evt of events) {
       const handler = () => this._debouncedEventBroadcast()
       this.node.on(evt, handler)
@@ -203,18 +214,22 @@ export class DashboardFeed {
         seeder: stats.seeder || { coresSeeded: 0, totalBytesStored: 0, totalBytesServed: 0 },
         memory: { heapUsed: mem.heapUsed, rss: mem.rss },
         errors: node.metrics ? node.metrics._errorCount : 0,
-        reputation: node.reputation ? {
-          trackedRelays: Object.keys(node.reputation.export()).length,
-          topRelay: (() => {
-            const lb = node.reputation.getLeaderboard(1)
-            return lb.length ? lb[0] : null
-          })()
-        } : null,
+        reputation: node.reputation
+          ? {
+              trackedRelays: Object.keys(node.reputation.export()).length,
+              topRelay: (() => {
+                const lb = node.reputation.getLeaderboard(1)
+                return lb.length ? lb[0] : null
+              })()
+            }
+          : null,
         tor: node.torTransport ? node.torTransport.getInfo() : null,
-        bandwidth: node._bandwidthReceipt ? {
-          totalProvenBytes: node._bandwidthReceipt.getTotalProvenBandwidth(),
-          receiptsIssued: node._bandwidthReceipt._issuedReceipts ? node._bandwidthReceipt._issuedReceipts.length : 0
-        } : null,
+        bandwidth: node._bandwidthReceipt
+          ? {
+              totalProvenBytes: node._bandwidthReceipt.getTotalProvenBandwidth(),
+              receiptsIssued: node._bandwidthReceipt._issuedReceipts ? node._bandwidthReceipt._issuedReceipts.length : 0
+            }
+          : null,
         credits: node.creditManager ? node.creditManager.stats() : null,
         metering: node.serviceMeter ? node.serviceMeter.stats() : null,
         invoices: node.invoiceManager ? node.invoiceManager.stats() : null,
@@ -236,6 +251,42 @@ export class DashboardFeed {
     if (node.networkDiscovery) {
       try {
         payload.network = node.networkDiscovery.getNetworkState()
+      } catch {}
+    }
+
+    // ─── AutoHeal: replica-durability scheduler state ───
+    // Surfaces per-drive diversity (replicas / regions / operators), threshold
+    // status, recruit backoffs, and proof-cache size. Dashboards use this to
+    // alert on archive-tier drives that have fallen below the SLO floor.
+    if (node.autoHeal && typeof node.autoHeal.snapshot === 'function') {
+      try {
+        const snap = node.autoHeal.snapshot()
+        payload.autoHeal = {
+          enabled: snap.enabled,
+          running: snap.running,
+          tickMs: snap.tickMs,
+          thresholds: snap.thresholds,
+          tracked: snap.tracked,
+          below: snap.below,
+          backoffs: snap.backoffs,
+          verifyProofs: snap.verifyProofs,
+          proofCacheSize: snap.proofCacheSize,
+          // Drive list capped to keep payload bounded — relays seeding 10K+
+          // archive drives shouldn't blow up every WS frame. Dashboards
+          // requesting full detail can hit GET /api/health-detail.
+          drives: snap.drives.slice(0, 50)
+        }
+      } catch {}
+    }
+
+    // ─── Atomic custody: registry snapshot ───
+    // Aggregate custody state — intent count, quorum-met, committed,
+    // proofs received, non-serving-proofs outstanding. Lets dashboards
+    // visualize whether the trust pipeline is converging.
+    const registry = node.seedingRegistry || node.registry
+    if (registry && typeof registry.custodySnapshot === 'function') {
+      try {
+        payload.custody = registry.custodySnapshot()
       } catch {}
     }
 

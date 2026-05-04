@@ -163,3 +163,75 @@ test('SeedingRegistry: custody commit becomes effective after out-of-order recei
   t.is(status.quorumReached, true, 'quorum reached after receipts arrive')
   t.is(status.committed, true, 'previously indexed commit becomes effective')
 })
+
+test('SeedingRegistry: custodySnapshot rolls up aggregate state for dashboards', async (t) => {
+  const { registry } = registryFixture()
+  const publisher = keyPair()
+  const relayA = keyPair()
+  const relayB = keyPair()
+  const observer = keyPair()
+  const now = Date.now()
+
+  // Empty registry → all zeros
+  const empty = registry.custodySnapshot()
+  t.is(empty.intents, 0, 'no intents')
+  t.is(empty.committed, 0, 'no commits')
+  t.is(empty.commitRate, null, 'commitRate null on empty registry')
+
+  // Publish two intents — one will reach quorum + commit + proof, the other
+  // stays at intent-only.
+  const intentA = await registry.publishCustodyIntent({
+    addressKey: hashHex('a'),
+    blindContentId: hashHex('blind-a'),
+    ciphertextRoot: hashHex('ct-a'),
+    contentVersion: 1,
+    requiredReplicas: 2,
+    deadline: now + 60_000,
+    retainUntil: now + 120_000
+  }, publisher)
+
+  await registry.publishCustodyIntent({
+    addressKey: hashHex('b'),
+    blindContentId: hashHex('blind-b'),
+    ciphertextRoot: hashHex('ct-b'),
+    contentVersion: 1,
+    requiredReplicas: 2,
+    deadline: now + 60_000,
+    retainUntil: now + 120_000
+  }, publisher)
+
+  // Drive intentA to commit + proof
+  await registry.recordCustodyReceipt({
+    intentId: intentA.intentId,
+    blindContentId: hashHex('blind-a'),
+    ciphertextRoot: hashHex('ct-a'),
+    contentVersion: 1,
+    retainUntil: now + 120_000
+  }, relayA)
+  await registry.recordCustodyReceipt({
+    intentId: intentA.intentId,
+    blindContentId: hashHex('blind-a'),
+    ciphertextRoot: hashHex('ct-a'),
+    contentVersion: 1,
+    retainUntil: now + 120_000
+  }, relayB)
+  await registry.publishCustodyCommit({ intentId: intentA.intentId }, publisher)
+  await registry.recordCustodyProof({
+    intentId: intentA.intentId,
+    relayPubkey: b4a.toString(relayA.publicKey, 'hex'),
+    challengeNonce: hashHex('nonce'),
+    shardIds: [0],
+    blockIndices: [0],
+    passed: true,
+    latencyMs: 5
+  }, observer)
+
+  const snap = registry.custodySnapshot()
+  t.is(snap.intents, 2, 'two intents tracked')
+  t.is(snap.withQuorum, 1, 'one with quorum reached')
+  t.is(snap.committed, 1, 'one committed')
+  t.is(snap.withProof, 1, 'one has at least one proof')
+  t.is(snap.totalReceipts, 2, 'total receipts counted')
+  t.is(snap.totalProofs, 1, 'total proofs counted')
+  t.is(snap.commitRate, 0.5, 'commitRate = committed / intents')
+})

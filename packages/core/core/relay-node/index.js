@@ -995,6 +995,23 @@ export class RelayNode extends EventEmitter {
           this.seedingRegistry = new SeedingRegistry(registryStore, this.swarm, {
             registryKey: this.config.registryKey || null
           })
+          // Bubble custody pipeline events up to the node so the WS dashboard
+          // feed can broadcast them to subscribers immediately rather than
+          // waiting for the 2s tick. Each event maps to a normalized name on
+          // the node (custody-intent / -receipt / -commit / -proof) — the
+          // registry's internal names include verbs which dashboards don't
+          // care about.
+          const eventBubbleMap = {
+            'custody-intent-published': 'custody-intent',
+            'custody-receipt-recorded': 'custody-receipt',
+            'custody-commit-published': 'custody-commit',
+            'source-retired-published': 'custody-retired',
+            'custody-proof-recorded': 'custody-proof',
+            'custody-non-serving-proof-recorded': 'custody-non-serving-proof'
+          }
+          for (const [from, to] of Object.entries(eventBubbleMap)) {
+            this.seedingRegistry.on(from, (entry) => this.emit(to, entry))
+          }
           await this.seedingRegistry.start()
 
           // Periodic scan for matching seed requests
@@ -1080,11 +1097,23 @@ export class RelayNode extends EventEmitter {
           tickMs: this.config.autoHeal.tickMs,
           staleMs: this.config.autoHeal.staleMs,
           thresholds: this.config.autoHeal.thresholds,
-          maxRecruitsPerTick: this.config.autoHeal.maxRecruitsPerTick
+          maxRecruitsPerTick: this.config.autoHeal.maxRecruitsPerTick,
+          // Cryptographic peer verification — peers count as live replicas
+          // only when their /api/anchors/<appKey>/proof endpoint produces a
+          // recently-verified Ed25519 signature. Default ON for archive tier.
+          verifyProofs: this.config.autoHeal.verifyProofs,
+          proofFreshnessMs: this.config.autoHeal.proofFreshnessMs,
+          proofGraceMs: this.config.autoHeal.proofGraceMs,
+          // Per-tick proof-fetch budget. Bounds O(K·N) traffic on large
+          // fleets; deferred peers are picked up on subsequent ticks.
+          maxProofsPerTick: this.config.autoHeal.maxProofsPerTick,
+          storageMargin: this.config.autoHeal.storageMargin
         })
         this.autoHeal.on('recruited', (info) => this.emit('auto-heal-recruited', info))
         this.autoHeal.on('recruit-error', (info) => this.emit('auto-heal-error', info))
         this.autoHeal.on('tick-error', (info) => this.emit('auto-heal-error', info))
+        this.autoHeal.on('proof-failed', (info) => this.emit('auto-heal-proof-failed', info))
+        this.autoHeal.on('proof-budget-throttled', (info) => this.emit('auto-heal-throttled', info))
         this.autoHeal.start()
       }
 
