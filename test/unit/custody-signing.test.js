@@ -5,6 +5,7 @@ import {
   computeReceiptRoot,
   createCustodyCommit,
   createCustodyIntent,
+  createCustodyNonServingProof,
   createCustodyProof,
   createCustodyReceipt,
   createSourceRetired,
@@ -26,8 +27,10 @@ test('custody signing: intent/receipt/commit/retirement/proof verify', (t) => {
   const now = Date.now()
   const blindContentId = hashHex('blind-content')
   const ciphertextRoot = hashHex('ciphertext-root')
+  const addressKey = hashHex('address-key')
 
   const intent = createCustodyIntent({
+    addressKey,
     blindContentId,
     ciphertextRoot,
     contentVersion: 7,
@@ -81,6 +84,20 @@ test('custody signing: intent/receipt/commit/retirement/proof verify', (t) => {
   }, observer, { timestamp: now + 4000 })
 
   t.ok(verifyCustodyEntry(proof, { now: now + 4000 }).valid, 'custody proof verifies')
+
+  const nonServingProof = createCustodyNonServingProof({
+    intentId: intent.intentId,
+    addressKey: intent.addressKey,
+    blindContentId,
+    challengeNonce: hashHex('post-expiry-challenge'),
+    retainUntil: now + 120_000,
+    notServing: true,
+    notServingReason: 'expired-unseeded',
+    catalogPresent: false,
+    activeSwarmServing: false
+  }, relay, { timestamp: now + 130_000 })
+
+  t.ok(verifyCustodyEntry(nonServingProof, { now: now + 130_000 }).valid, 'non-serving proof verifies')
 })
 
 test('custody signing: tampering and forbidden plaintext metadata are rejected', (t) => {

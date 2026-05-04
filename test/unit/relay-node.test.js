@@ -1,5 +1,6 @@
 import test from 'brittle'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
+import { ServiceProvider, ServiceRegistry } from 'p2p-hiverelay/core/services/index.js'
 import path from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
@@ -387,6 +388,40 @@ test('RelayNode - custody expiry removes expired temporary atomic entries only',
   t.is(expiredEvents[0].appKey, expiredKey, 'expiry event names content key')
 
   await node.appRegistry.flush()
+})
+
+test('RelayNode - service supervision restarts failed persistent services', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  let starts = 0
+  let stops = 0
+
+  class WatchedService extends ServiceProvider {
+    constructor () {
+      super()
+      this.healthy = true
+    }
+
+    manifest () { return { name: 'watched', version: '1.0.0', capabilities: [] } }
+    async start () { starts++; this.healthy = true }
+    async stop () { stops++ }
+    async healthCheck () { return this.healthy }
+  }
+
+  const provider = new WatchedService()
+  node.serviceRegistry = new ServiceRegistry()
+  node.serviceRegistry.register(provider)
+  node._serviceContext = { node, store: node.store, config: node.config }
+  await node.serviceRegistry.startAll(node._serviceContext)
+
+  provider.healthy = false
+  const result = await node._runServiceSupervisionPass()
+
+  t.is(result.checked, 1, 'one service checked')
+  t.is(result.restarted, 1, 'failed service restarted')
+  t.is(result.failed, 0, 'restart succeeded')
+  t.is(starts, 2, 'service start called again')
+  t.is(stops, 1, 'service stopped before restart')
+  t.is(node.serviceRegistry.services.get('watched').status, 'running', 'service is running after restart')
 })
 
 test('RelayNode - replication repair skips non-public tiers in strict privacy mode', async (t) => {

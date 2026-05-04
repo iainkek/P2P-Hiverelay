@@ -2,7 +2,7 @@ import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { SeedingRegistry } from 'p2p-hiverelay/core/registry/index.js'
-import { hashHex } from 'p2p-hiverelay/core/custody-signing.js'
+import { createCustodyNonServingProof, hashHex } from 'p2p-hiverelay/core/custody-signing.js'
 
 function keyPair () {
   const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
@@ -31,8 +31,10 @@ test('SeedingRegistry: custody quorum commit and source retirement', async (t) =
   const now = Date.now()
   const blindContentId = hashHex('blind-content')
   const ciphertextRoot = hashHex('ciphertext-root')
+  const addressKey = hashHex('address-key')
 
   const intent = await registry.publishCustodyIntent({
+    addressKey,
     blindContentId,
     ciphertextRoot,
     contentVersion: 3,
@@ -94,6 +96,22 @@ test('SeedingRegistry: custody quorum commit and source retirement', async (t) =
   t.is(finalStatus.sourceRetired, true, 'status reports source retired')
   t.is(finalStatus.proofCount, 1, 'proof indexed')
   t.is(finalStatus.passingProofs, 1, 'passing proof counted')
+
+  const nonServing = createCustodyNonServingProof({
+    intentId: intent.intentId,
+    addressKey,
+    blindContentId,
+    challengeNonce: hashHex('post-expiry-challenge'),
+    retainUntil: now + 120_000,
+    notServing: true,
+    catalogPresent: false,
+    activeSwarmServing: false
+  }, relayA, { timestamp: now + 130_000 })
+  await registry.recordCustodyNonServingProof(nonServing)
+
+  const expiredStatus = registry.getCustodyStatus(intent.intentId)
+  t.is(expiredStatus.nonServingProofCount, 1, 'non-serving proof indexed')
+  t.alike(expiredStatus.nonServingRelays, [b4a.toString(relayA.publicKey, 'hex')], 'non-serving relay reported')
 })
 
 test('SeedingRegistry: custody commit becomes effective after out-of-order receipts arrive', async (t) => {

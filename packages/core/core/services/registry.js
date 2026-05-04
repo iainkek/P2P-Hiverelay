@@ -22,6 +22,13 @@ const BLOCKED_METHODS = new Set([
   'hasOwnProperty', 'isPrototypeOf'
 ])
 
+function overridesMethod (provider, method) {
+  if (!provider) return false
+  if (Object.prototype.hasOwnProperty.call(provider, method)) return true
+  const proto = provider ? Object.getPrototypeOf(provider) : null
+  return !!proto && Object.prototype.hasOwnProperty.call(proto, method)
+}
+
 export class ServiceRegistry extends EventEmitter {
   constructor (opts = {}) {
     super()
@@ -61,7 +68,23 @@ export class ServiceRegistry extends EventEmitter {
         errors: 0,
         bytesIn: 0,
         bytesOut: 0
+      },
+      status: overridesMethod(provider, 'start') ? 'registered' : 'running',
+      restartCount: 0,
+      lastStartedAt: null,
+      lastStoppedAt: null,
+      lastError: null,
+      context: null,
+      _onProviderError: null,
+      _hasStart: overridesMethod(provider, 'start'),
+      _hasStop: overridesMethod(provider, 'stop')
+    }
+
+    if (provider && typeof provider.on === 'function') {
+      entry._onProviderError = (err) => {
+        this.markFailed(manifest.name, err)
       }
+      provider.on('error', entry._onProviderError)
     }
 
     this.services.set(manifest.name, entry)
@@ -76,8 +99,12 @@ export class ServiceRegistry extends EventEmitter {
     const entry = this.services.get(name)
     if (!entry) return false
 
-    if (entry.provider.stop) {
+    if (entry._hasStop) {
       await entry.provider.stop()
+    }
+
+    if (entry._onProviderError && typeof entry.provider.off === 'function') {
+      entry.provider.off('error', entry._onProviderError)
     }
 
     this.services.delete(name)
@@ -92,6 +119,10 @@ export class ServiceRegistry extends EventEmitter {
     const entry = this.services.get(serviceName)
     if (!entry) {
       throw new Error(`SERVICE_NOT_FOUND: ${serviceName}`)
+    }
+
+    if (entry.status && entry.status !== 'running') {
+      throw new Error(`SERVICE_UNAVAILABLE: ${serviceName} status=${entry.status}`)
     }
 
     // Block dangerous/internal methods from RPC access
@@ -137,10 +168,11 @@ export class ServiceRegistry extends EventEmitter {
     const providers = []
 
     // Check local first
-    if (this.services.has(serviceName)) {
+    const local = this.services.get(serviceName)
+    if (local && local.status === 'running') {
       providers.push({
         relay: 'local',
-        service: this.services.get(serviceName),
+        service: local,
         local: true
       })
     }
@@ -168,6 +200,7 @@ export class ServiceRegistry extends EventEmitter {
   catalog () {
     const entries = []
     for (const [name, entry] of this.services) {
+      if (entry.status !== 'running') continue
       entries.push({
         name,
         version: entry.version,
@@ -184,7 +217,12 @@ export class ServiceRegistry extends EventEmitter {
   stats () {
     const result = {}
     for (const [name, entry] of this.services) {
-      result[name] = { ...entry.stats }
+      result[name] = {
+        ...entry.stats,
+        status: entry.status,
+        restartCount: entry.restartCount,
+        lastError: entry.lastError
+      }
     }
     return result
   }
@@ -197,15 +235,26 @@ export class ServiceRegistry extends EventEmitter {
     const failed = []
 
     for (const [name, entry] of this.services) {
-      if (entry.provider.start) {
+      if (entry._hasStart) {
         try {
           await entry.provider.start(context)
+          entry.status = 'running'
+          entry.context = context
+          entry.lastStartedAt = Date.now()
+          entry.lastError = null
           this.emit('service-started', { name })
           started.push(name)
         } catch (err) {
+          entry.status = 'failed'
+          entry.lastError = err.message || String(err)
           this.emit('service-start-error', { name, error: err.message })
           failed.push({ name, error: err.message })
         }
+      } else {
+        entry.status = 'running'
+        entry.context = context
+        entry.lastStartedAt = Date.now()
+        started.push(name)
       }
     }
 
@@ -222,15 +271,59 @@ export class ServiceRegistry extends EventEmitter {
    */
   async stopAll () {
     for (const [name, entry] of this.services) {
-      if (entry.provider.stop) {
+      if (entry._hasStop) {
         try {
           await entry.provider.stop()
+          entry.status = 'stopped'
+          entry.lastStoppedAt = Date.now()
         } catch (err) {
           this.emit('service-stop-error', { name, error: err.message })
         }
       }
+      if (entry._onProviderError && typeof entry.provider.off === 'function') {
+        entry.provider.off('error', entry._onProviderError)
+      }
     }
     this.services.clear()
     this.remoteServices.clear()
+  }
+
+  markFailed (name, err) {
+    const entry = this.services.get(name)
+    if (!entry) return false
+    entry.status = 'failed'
+    entry.lastError = err?.message || String(err || 'service failed')
+    entry.failedAt = Date.now()
+    this.emit('service-runtime-error', { name, error: entry.lastError })
+    return true
+  }
+
+  async restart (name, context = null) {
+    const entry = this.services.get(name)
+    if (!entry) throw new Error(`SERVICE_NOT_FOUND: ${name}`)
+    const serviceContext = context || entry.context || {}
+
+    try {
+      if (entry._hasStop) await entry.provider.stop()
+    } catch (err) {
+      this.emit('service-stop-error', { name, error: err.message || String(err) })
+    }
+
+    try {
+      if (entry._hasStart) await entry.provider.start(serviceContext)
+      entry.status = 'running'
+      entry.context = serviceContext
+      entry.restartCount++
+      entry.lastStartedAt = Date.now()
+      entry.lastError = null
+      this.emit('service-restarted', { name, restartCount: entry.restartCount })
+      return entry
+    } catch (err) {
+      entry.status = 'failed'
+      entry.restartCount++
+      entry.lastError = err.message || String(err)
+      this.emit('service-restart-error', { name, error: entry.lastError, restartCount: entry.restartCount })
+      throw err
+    }
   }
 }

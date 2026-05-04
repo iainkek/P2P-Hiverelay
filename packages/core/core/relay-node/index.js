@@ -97,6 +97,11 @@ const DEFAULT_CONFIG = {
   // users by default; operators can promote selected pubkeys to relay-admin.
   serviceDefaultPeerRole: 'authenticated-user',
   serviceAdminAllowlist: [],
+  serviceSupervision: {
+    enabled: true,
+    intervalMs: 30_000,
+    maxRestarts: 3
+  },
   // Federation: opt-in cross-relay catalog sharing. No automatic sync.
   // Operators explicitly follow / mirror / unfollow other relays at runtime.
   federation: {
@@ -272,6 +277,8 @@ export class RelayNode extends EventEmitter {
     this._registryScanInterval = null
     this.serviceRegistry = null
     this.serviceProtocol = null
+    this._serviceSupervisionInterval = null
+    this._serviceContext = null
     this.router = null
     this.policyGuard = new PolicyGuard()
     this.policyGuard.on('violation', (details) => this.emit('privacy-violation', details))
@@ -683,11 +690,13 @@ export class RelayNode extends EventEmitter {
         }
 
         // Start all services (passes { node: this } as context)
-        const startupResult = await this.serviceRegistry.startAll({ node: this, store: this.store, config: this.config })
+        this._serviceContext = { node: this, store: this.store, config: this.config }
+        const startupResult = await this.serviceRegistry.startAll(this._serviceContext)
         if (startupResult.failed.length > 0 && this.config.servicesFailOpen !== true) {
           const names = startupResult.failed.map(s => s.name).join(', ')
           throw new Error(`SERVICE_START_FAILED: ${names}`)
         }
+        this._startServiceSupervision()
 
         // Set up seeded apps callback for catalog broadcast
         this.serviceProtocol._getSeededApps = () => this.appRegistry.catalogForBroadcast()
@@ -1068,6 +1077,7 @@ export class RelayNode extends EventEmitter {
       if (this._anchorCheckInterval) { clearInterval(this._anchorCheckInterval); this._anchorCheckInterval = null }
       if (this._repairInterval) { clearInterval(this._repairInterval); this._repairInterval = null }
       if (this._custodyExpiryInterval) { clearInterval(this._custodyExpiryInterval); this._custodyExpiryInterval = null }
+      if (this._serviceSupervisionInterval) { clearInterval(this._serviceSupervisionInterval); this._serviceSupervisionInterval = null }
       if (this.seedingRegistry) { try { await this.seedingRegistry.stop() } catch (_) {} this.seedingRegistry = null }
       if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
       if (this.holesailTransport) { try { await this.holesailTransport.stop() } catch (_) {} this.holesailTransport = null }
@@ -2106,6 +2116,87 @@ export class RelayNode extends EventEmitter {
     this.emit('repair-pass', { ...result, at: this._lastRepairAt })
   }
 
+  // ─── Lightweight service supervision ─────────────────────────────
+  //
+  // Services are part of the persistent availability plane. If a service
+  // provider reports a runtime failure or fails a health check, RPC dispatch
+  // fails closed and this monitor attempts a bounded restart.
+  _startServiceSupervision () {
+    if (this._serviceSupervisionInterval) {
+      clearInterval(this._serviceSupervisionInterval)
+      this._serviceSupervisionInterval = null
+    }
+    const cfg = this.config.serviceSupervision || {}
+    if (cfg.enabled === false || !this.serviceRegistry) return
+
+    const intervalMs = Math.max(5_000, Number(cfg.intervalMs) || 30_000)
+    this._serviceSupervisionInterval = setInterval(() => {
+      this._runServiceSupervisionPass().catch((err) => {
+        this.emit('service-supervision-error', { error: err.message || String(err) })
+      })
+    }, intervalMs)
+    if (this._serviceSupervisionInterval.unref) this._serviceSupervisionInterval.unref()
+  }
+
+  async _runServiceSupervisionPass () {
+    if (!this.serviceRegistry) return { checked: 0, restarted: 0, failed: 0, skipped: 0 }
+
+    const cfg = this.config.serviceSupervision || {}
+    const maxRestarts = Number.isFinite(cfg.maxRestarts) ? Math.max(0, Math.floor(cfg.maxRestarts)) : 3
+    let checked = 0
+    let restarted = 0
+    let failed = 0
+    let skipped = 0
+
+    for (const [name, entry] of this.serviceRegistry.services) {
+      checked++
+
+      if (entry.status === 'running') {
+        const healthy = await this._checkServiceHealth(entry)
+        if (healthy) continue
+        this.serviceRegistry.markFailed(name, new Error('health check failed'))
+      }
+
+      if (entry.status !== 'failed') {
+        skipped++
+        continue
+      }
+
+      if ((entry.restartCount || 0) >= maxRestarts) {
+        failed++
+        this.emit('service-supervision-giveup', { name, restartCount: entry.restartCount || 0, maxRestarts })
+        continue
+      }
+
+      try {
+        await this.serviceRegistry.restart(name, this._serviceContext || { node: this, store: this.store, config: this.config })
+        restarted++
+      } catch (err) {
+        failed++
+        this.emit('service-supervision-restart-error', { name, error: err.message || String(err) })
+      }
+    }
+
+    const result = { checked, restarted, failed, skipped }
+    this.emit('service-supervision-pass', { ...result, at: Date.now() })
+    return result
+  }
+
+  async _checkServiceHealth (entry) {
+    const provider = entry?.provider
+    if (!provider) return false
+    const context = this._serviceContext || { node: this, store: this.store, config: this.config }
+    if (typeof provider.healthCheck === 'function') {
+      const result = await provider.healthCheck(context)
+      return result !== false && result?.ok !== false
+    }
+    if (typeof provider.health === 'function') {
+      const result = await provider.health(context)
+      return result !== false && result?.ok !== false
+    }
+    return true
+  }
+
   // ─── Temporary custody expiry loop ────────────────────────────────
   //
   // The availability plane and atomic custody plane have opposite defaults:
@@ -2181,6 +2272,37 @@ export class RelayNode extends EventEmitter {
     const result = { checked, expired, skipped }
     this.emit('custody-expiry-pass', { ...result, at: now })
     return result
+  }
+
+  async createCustodyNonServingProof (intentId, opts = {}) {
+    if (!this.seedingRegistry) throw new Error('Registry not running')
+    if (!this.swarm?.keyPair) throw new Error('Relay keypair unavailable')
+    if (!isValidHexKey(intentId, 64)) throw new Error('intentId must be 64 hex characters')
+
+    const intent = this.seedingRegistry.getCustodyIntent(intentId)
+    if (!intent) throw new Error('Custody intent not found')
+
+    const appKey = opts.appKey || intent.addressKey
+    if (!isValidHexKey(appKey, 64)) throw new Error('appKey/addressKey unavailable for non-serving proof')
+
+    const entry = this.appRegistry?.get(appKey) || null
+    const catalogPresent = !!entry
+    const activeSwarmServing = !!(entry?.drive && !entry.drive.closed && !entry.drive.closing)
+    if (catalogPresent || activeSwarmServing) {
+      throw new Error('STILL_SERVING: relay still has active registry or drive state for this content')
+    }
+
+    return this.seedingRegistry.recordCustodyNonServingProof({
+      intentId,
+      addressKey: appKey,
+      blindContentId: opts.blindContentId || intent.blindContentId,
+      challengeNonce: opts.challengeNonce,
+      retainUntil: opts.retainUntil ?? intent.retainUntil,
+      notServing: true,
+      notServingReason: opts.notServingReason || 'expired-unseeded',
+      catalogPresent,
+      activeSwarmServing
+    }, this.swarm.keyPair)
   }
 
   // ─── Cold-start primer ────────────────────────────────────────
@@ -2512,6 +2634,8 @@ export class RelayNode extends EventEmitter {
       try { this.serviceProtocol.destroy() } catch (_) {}
       this.serviceProtocol = null
     }
+    if (this._serviceSupervisionInterval) { clearInterval(this._serviceSupervisionInterval); this._serviceSupervisionInterval = null }
+    this._serviceContext = null
     if (this.serviceRegistry) {
       try { await this.serviceRegistry.stopAll() } catch (_) {}
       this.serviceRegistry = null

@@ -24,7 +24,8 @@ const SIGNER_FIELD_BY_TYPE = {
   'custody-commit': 'publisherPubkey',
   'source-retired': 'publisherPubkey',
   'custody-receipt': 'relayPubkey',
-  'custody-proof': 'observerPubkey'
+  'custody-proof': 'observerPubkey',
+  'custody-non-serving-proof': 'relayPubkey'
 }
 
 const SIGNABLE_FIELDS_BY_TYPE = {
@@ -104,6 +105,22 @@ const SIGNABLE_FIELDS_BY_TYPE = {
     'passed',
     'latencyMs',
     'observerPubkey'
+  ],
+  'custody-non-serving-proof': [
+    'type',
+    'version',
+    'timestamp',
+    'intentId',
+    'addressKey',
+    'blindContentId',
+    'relayPubkey',
+    'challengeNonce',
+    'retainUntil',
+    'notServing',
+    'notServingReason',
+    'catalogPresent',
+    'activeSwarmServing',
+    'limitationHash'
   ]
 }
 
@@ -247,6 +264,26 @@ export function createCustodyProof (fields, observerKeyPair, opts = {}) {
   return signCustodyEntry(proof, observerKeyPair)
 }
 
+export function createCustodyNonServingProof (fields, relayKeyPair, opts = {}) {
+  requireKeyPair(relayKeyPair, 'relayKeyPair')
+  const nonce = b4a.alloc(32)
+  sodium.randombytes_buf(nonce)
+  const proof = normalizeCustodyEntry({
+    version: SIGNATURE_VERSION,
+    timestamp: Number.isFinite(opts.timestamp) ? opts.timestamp : Date.now(),
+    challengeNonce: hashHex(nonce),
+    notServing: true,
+    notServingReason: 'expired-unseeded',
+    catalogPresent: false,
+    activeSwarmServing: false,
+    limitationHash: hashHex('not-serving proof attests active relay state, not forensic disk erasure'),
+    ...fields,
+    type: 'custody-non-serving-proof',
+    relayPubkey: b4a.toString(relayKeyPair.publicKey, 'hex')
+  })
+  return signCustodyEntry(proof, relayKeyPair)
+}
+
 export function signCustodyEntry (entry, keyPair) {
   requireKeyPair(keyPair, 'keyPair')
   const normalized = normalizeCustodyEntry(entry)
@@ -306,7 +343,7 @@ export function normalizeCustodyEntry (entry, opts = {}) {
     if (out.custodyMode !== 'blind') throw new Error('custodyMode must be blind')
   }
 
-  if (type !== 'source-retired' && type !== 'custody-proof') {
+  if (type !== 'source-retired' && type !== 'custody-proof' && type !== 'custody-non-serving-proof') {
     out.ciphertextRoot = hexField(out.ciphertextRoot, 'ciphertextRoot')
     out.contentVersion = numberField(out.contentVersion, 'contentVersion')
   }
@@ -319,6 +356,7 @@ export function normalizeCustodyEntry (entry, opts = {}) {
   if (type === 'custody-commit') return normalizeCommit(out)
   if (type === 'source-retired') return normalizeSourceRetired(out)
   if (type === 'custody-proof') return normalizeProof(out)
+  if (type === 'custody-non-serving-proof') return normalizeNonServingProof(out)
 }
 
 export function validateCustodyTransition (entry, status = {}) {
@@ -355,10 +393,19 @@ export function validateCustodyTransition (entry, status = {}) {
     return { valid: false, reason: 'custody commit required before source retirement' }
   }
 
+  if (entry.type === 'custody-non-serving-proof') {
+    if (intent && entry.blindContentId !== intent.blindContentId) return { valid: false, reason: 'blindContentId mismatch' }
+    if (intent && entry.addressKey !== intent.addressKey) return { valid: false, reason: 'addressKey mismatch' }
+    if (intent && entry.retainUntil < intent.retainUntil) return { valid: false, reason: 'retainUntil below intent' }
+    if (intent && entry.timestamp < intent.retainUntil) return { valid: false, reason: 'non-serving proof before retainUntil' }
+    if (entry.notServing !== true) return { valid: false, reason: 'notServing must be true' }
+    if (entry.catalogPresent || entry.activeSwarmServing) return { valid: false, reason: 'relay still reports active serving state' }
+  }
+
   return { valid: true }
 }
 
-export function summarizeCustodyStatus (intent, receipts = [], commit = null, retirement = null, proofs = []) {
+export function summarizeCustodyStatus (intent, receipts = [], commit = null, retirement = null, proofs = [], nonServingProofs = []) {
   const requiredReplicas = intent?.requiredReplicas || 0
   const validReceipts = receipts.filter(r => r.anchored === true)
   return {
@@ -373,7 +420,9 @@ export function summarizeCustodyStatus (intent, receipts = [], commit = null, re
     committed: !!commit,
     sourceRetired: !!retirement,
     proofCount: proofs.length,
-    passingProofs: proofs.filter(p => p.passed === true).length
+    passingProofs: proofs.filter(p => p.passed === true).length,
+    nonServingProofCount: nonServingProofs.length,
+    nonServingRelays: nonServingProofs.filter(p => p.notServing === true).map(p => p.relayPubkey).sort()
   }
 }
 
@@ -433,6 +482,19 @@ function normalizeProof (entry) {
   entry.passed = entry.passed === true
   entry.latencyMs = nonNegativeNumber(entry.latencyMs, 'latencyMs')
   entry.observerPubkey = hexField(entry.observerPubkey, 'observerPubkey')
+  return orderedEntry(entry)
+}
+
+function normalizeNonServingProof (entry) {
+  entry.addressKey = hexField(entry.addressKey, 'addressKey')
+  entry.relayPubkey = hexField(entry.relayPubkey, 'relayPubkey')
+  entry.challengeNonce = hexField(entry.challengeNonce, 'challengeNonce')
+  entry.retainUntil = numberField(entry.retainUntil, 'retainUntil')
+  entry.notServing = entry.notServing === true
+  entry.notServingReason = String(entry.notServingReason || 'expired-unseeded').slice(0, 120)
+  entry.catalogPresent = entry.catalogPresent === true
+  entry.activeSwarmServing = entry.activeSwarmServing === true
+  entry.limitationHash = hexField(entry.limitationHash, 'limitationHash')
   return orderedEntry(entry)
 }
 

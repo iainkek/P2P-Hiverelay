@@ -243,6 +243,39 @@ test('ServiceRegistry - startAll fail-closed unregisters failed service', async 
   t.is(registry.services.has('bad'), false, 'failed service removed')
 })
 
+test('ServiceRegistry - runtime failed service fails closed and can restart', async (t) => {
+  const registry = new ServiceRegistry()
+  let starts = 0
+  let stops = 0
+
+  class FlakyService extends ServiceProvider {
+    manifest () { return { name: 'flaky', version: '1.0.0', capabilities: ['echo'] } }
+    async start () { starts++ }
+    async stop () { stops++ }
+    async echo (params) { return params }
+  }
+
+  registry.register(new FlakyService())
+  await registry.startAll({})
+
+  const before = await registry.handleRequest('flaky', 'echo', { ok: true }, {})
+  t.alike(before, { ok: true }, 'running service handles request')
+
+  registry.markFailed('flaky', new Error('runtime boom'))
+  try {
+    await registry.handleRequest('flaky', 'echo', { ok: false }, {})
+    t.fail('failed service should reject requests')
+  } catch (err) {
+    t.ok(err.message.includes('SERVICE_UNAVAILABLE'), 'failed service fails closed')
+  }
+
+  await registry.restart('flaky', {})
+  const after = await registry.handleRequest('flaky', 'echo', { ok: true }, {})
+  t.alike(after, { ok: true }, 'restarted service handles request')
+  t.is(starts, 2, 'service restarted')
+  t.is(stops, 1, 'service stopped before restart')
+})
+
 // ─── ZKService tests (secp256k1 EC-based) ──────────────────────────
 
 test('ZKService - manifest v2', async (t) => {

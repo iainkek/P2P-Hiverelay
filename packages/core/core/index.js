@@ -19,6 +19,7 @@ export {
   createCustodyCommit,
   createSourceRetired,
   createCustodyProof,
+  createCustodyNonServingProof,
   verifyCustodyEntry,
   computeReceiptRoot,
   summarizeCustodyStatus,

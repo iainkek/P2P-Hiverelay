@@ -94,6 +94,11 @@ export default {
   },
   serviceDefaultPeerRole: 'authenticated-user',
   serviceAdminAllowlist: [],
+  serviceSupervision: {
+    enabled: true,
+    intervalMs: 30_000,
+    maxRestarts: 3
+  },
 
   // Regions
   regions: [], // Empty = accept from all regions

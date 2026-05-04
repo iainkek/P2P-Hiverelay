@@ -35,11 +35,50 @@ custody: {
   requireEncryptedPayload: true,
   metadataVisibility: 'redacted',
   redactedCatalog: true,
-  proofTarget: 'ciphertext'
-}
+  proofTarget: 'ciphertext',
+  defaultRetainMs: 30 * 24 * 60 * 60 * 1000
+},
+custodyExpiryInterval: 60_000,
+custodyExpiryGraceMs: 0
 ```
 
 This default applies across relay modes unless an operator explicitly opts into transparent custody for a public mirror use case.
+
+## Current Implementation Snapshot
+
+The current codebase now has the MVP blind custody spine implemented:
+
+| Capability | Current Status |
+|---|---|
+| Signed custody intent | Implemented |
+| Signed relay custody receipt | Implemented |
+| Quorum commit | Implemented |
+| Source-retired checkpoint | Implemented |
+| Signed custody proof | Implemented |
+| Signed post-expiry non-serving proof | Implemented |
+| Temporary storage class expiry | Implemented |
+| Redacted custody catalog/status | Implemented |
+| Observer script for blind handoff | Implemented |
+| Observer script for TTL expiry | Implemented |
+| True cryptographic deletion proof | Not possible on commodity hardware |
+| TEE/HSM attested deletion | Future optional mode |
+
+The strongest current claim is:
+
+> HiveRelay can prove a blind relay accepted encrypted custody, can prove a source authority retired itself for that content epoch, can expire temporary custody from the active serving plane, and can sign a post-expiry active-state proof that it is no longer cataloging or swarm-serving that content.
+
+The non-serving proof is intentionally scoped. It proves active relay state at challenge time, not forensic disk erasure.
+
+## Two Relay Planes
+
+HiveRelay should expose two related but different product planes.
+
+| Plane | Storage Class | Availability Class | Best For | Default Behavior |
+|---|---|---|---|---|
+| Persistent Availability Plane | `persistent` | `always-on` | Pear apps, Ghost Drive public drives, routing services, package mirrors | Cataloged, repaired, supervised, and kept online |
+| Atomic Blind Custody Plane | `temporary` | `atomic-handoff` | Encrypted file/data handoff, blind dead drops, privacy-preserving transfers | Redacted, TTL-bounded, proofed, and removed from active serving after `retainUntil` |
+
+This split is important. Apps and services want durable relay availability. Atomic blind file movement wants temporary custody, privacy, and auditable removal from the active serving set.
 
 ## Terminology
 
@@ -367,6 +406,42 @@ Published by auditors or challengers after relays answer proof-of-storage challe
 
 This can reuse the existing `ProofOfRelay` machinery, but the proof must be linked back to a custody intent and must challenge ciphertext blocks or shard blocks only.
 
+### `custody-non-serving-proof`
+
+Published by a relay after temporary custody expires and the relay has removed the content from its active catalog and serving plane.
+
+```json
+{
+  "type": "custody-non-serving-proof",
+  "version": 1,
+  "timestamp": 1777902000000,
+  "intentId": "64 hex",
+  "addressKey": "optional 64 hex",
+  "blindContentId": "64 hex",
+  "relayPubkey": "64 hex",
+  "challengeNonce": "64 hex",
+  "retainUntil": 1777901900000,
+  "notServing": true,
+  "notServingReason": "expired-unseeded",
+  "catalogPresent": false,
+  "activeSwarmServing": false,
+  "limitationHash": "64 hex",
+  "signature": "128 hex"
+}
+```
+
+Validation rules:
+
+- `relayPubkey` must match the relay signing key.
+- `timestamp` must be after the intent's `retainUntil`.
+- `notServing` must be `true`.
+- `catalogPresent` must be `false`.
+- `activeSwarmServing` must be `false`.
+- The proof must include a fresh `challengeNonce`.
+- `limitationHash` binds the caveat that this is an active-state proof, not proof of physical deletion.
+
+This is the practical answer to "blind peers pass data on and self-remove." The relay proves it has removed the content from the active serving set after the agreed temporary custody window. It does not claim impossible deletion semantics.
+
 ## How The Handoff Runs
 
 ### Phase 1: Prepare
@@ -407,6 +482,13 @@ Also important: a relay never gets `dataKey`. If the relay has to decrypt to ver
 2. Passing proofs increase custody confidence.
 3. Failing proofs reduce reputation and can trigger repair recruitment.
 4. If quorum falls below threshold, state becomes `DEGRADED`.
+
+### Phase 5: Expire Temporary Custody
+
+1. Relays monitor temporary custody entries with `storageClass: temporary` or `availabilityClass: atomic-handoff`.
+2. Once `retainUntil` plus grace has passed, the relay unseeds the content and removes local registry/catalog state.
+3. An observer can challenge a relay for a signed `custody-non-serving-proof`.
+4. The proof tells clients the relay is no longer actively cataloging or swarm-serving that content.
 
 ## Blind Peering Architecture
 
@@ -479,6 +561,7 @@ POST /api/custody/intents/:intentId/commit
 POST /api/custody/intents/:intentId/retire-source
 GET  /api/custody/content/:blindContentId/status
 POST /api/custody/challenge
+POST /api/custody/:intentId/non-serving-proof
 ```
 
 Suggested auth:
@@ -490,6 +573,7 @@ Suggested auth:
 | commit | publisher signature required |
 | retire source | publisher signature required |
 | challenge | authenticated-user with rate limits |
+| non-serving proof | relay-admin or authenticated operator challenge |
 
 ### Service Routes
 
@@ -523,7 +607,7 @@ Access policy:
 
 File: `packages/core/core/registry/index.js`
 
-Add maps:
+Implemented custody indexes include:
 
 ```js
 this._custodyIntents = new Map()
@@ -531,10 +615,11 @@ this._custodyReceipts = new Map()
 this._custodyCommits = new Map()
 this._sourceRetirements = new Map()
 this._custodyProofs = new Map()
+this._custodyNonServingProofs = new Map()
 this._blindIndexes = new Map()
 ```
 
-Add methods:
+Implemented and planned custody methods:
 
 ```js
 publishCustodyIntent(intent)
@@ -542,6 +627,7 @@ recordCustodyReceipt(receipt)
 recordCustodyCommit(commit)
 recordSourceRetirement(retirement)
 recordCustodyProof(proof)
+recordCustodyNonServingProof(proof)
 getCustodyStatus(intentId)
 getCustodyStatusForContent(blindContentId)
 getRedactedCustodyCatalog(filter)
@@ -560,7 +646,15 @@ Blind validation must additionally reject:
 
 File: `packages/core/core/relay-node/index.js`
 
-Add a custody controller that listens for:
+The relay node now enforces the two-plane custody distinction:
+
+- Persistent content defaults to `storageClass: persistent` and `availabilityClass: always-on`.
+- Blind temporary content defaults to `storageClass: temporary` and `availabilityClass: atomic-handoff`.
+- Temporary custody entries expire after `retainUntil` plus `custodyExpiryGraceMs`.
+- Expired temporary entries are removed from the active app registry and seeded set.
+- `createCustodyNonServingProof()` signs active-state non-serving evidence only after catalog and swarm serving state are both absent.
+
+The custody controller should continue to listen for:
 
 - `anchored` events from `AppLifecycle`,
 - registry `custody-intent` entries,
@@ -637,6 +731,11 @@ Proof failures should affect relay score only when:
 - Simulate one relay failure and verify state becomes degraded.
 - Trigger repair and verify state recovers.
 - Verify relays never receive decrypt material during the flow.
+- Start a short-TTL atomic custody entry.
+- Wait for `retainUntil`.
+- Verify all relays remove the entry from active seeding state.
+- Verify gateway access returns not seeded.
+- Issue and verify a post-expiry non-serving proof.
 
 ### Abuse Tests
 
@@ -653,11 +752,11 @@ Proof failures should affect relay score only when:
 
 ## MVP Decision
 
-Build this in three layers.
+Build this in layers, with the current codebase now covering the first production-shaped spine.
 
 ### Layer 1: Blind Custody Receipts
 
-This is the MVP.
+Implemented MVP foundation.
 
 Ship:
 
@@ -673,7 +772,7 @@ Claim:
 
 ### Layer 2: Quorum Commit And Source Retirement
 
-This is the real product unlock.
+Implemented for the current registry/status flow.
 
 Ship:
 
@@ -688,7 +787,7 @@ Claim:
 
 ### Layer 3: Challenge Audits
 
-This makes the network credible over time.
+Partially implemented. Signed custody proofs and observer verification exist; scheduled production challenge economics are still future work.
 
 Ship:
 
@@ -701,6 +800,21 @@ Ship:
 Claim:
 
 > Blind relay custody is continuously audited after handoff.
+
+### Layer 4: Temporary Expiry And Non-Serving Proofs
+
+Implemented as the atomic handoff cleanup layer.
+
+Ship:
+
+- temporary custody expiry loop,
+- active serving removal after `retainUntil`,
+- signed non-serving proof endpoint,
+- observer verification for expiry behavior.
+
+Claim:
+
+> After the temporary custody window, a relay can sign a scoped proof that it is no longer actively cataloging or swarm-serving that blind content.
 
 ## Why This Can Be A Key HiveRelay Feature
 
@@ -743,3 +857,30 @@ Avoid:
 Best homepage sentence:
 
 > HiveRelay Blind Atomic Custody lets P2P apps hand encrypted content to a verified blind relay quorum, retire the original source as live authority, and keep auditing availability after the source goes offline.
+
+## Verification Commands
+
+Run the normal availability observer:
+
+```bash
+node scripts/observe-testnet-seeding.js
+```
+
+Run the blind custody handoff observer:
+
+```bash
+node scripts/observe-testnet-seeding.js --blind
+```
+
+Run the short-TTL atomic expiry observer:
+
+```bash
+node scripts/observe-testnet-seeding.js --expiry
+```
+
+Expected expiry behavior:
+
+- the handoff reaches custody commit and source retirement,
+- relays remove the temporary custody entry after `retainUntil`,
+- gateway access returns `404 Drive not seeded`,
+- a signed `custody-non-serving-proof` is recorded for the challenged relay.

@@ -38,7 +38,8 @@ async function fetchText (url) {
 }
 
 async function main () {
-  const blindMode = process.argv.includes('--blind')
+  const expiryMode = process.argv.includes('--expiry')
+  const blindMode = process.argv.includes('--blind') || expiryMode
   const id = randomBytes(4).toString('hex')
   const baseDir = join(tmpdir(), `hiverelay-observe-${id}`)
   const basePort = 19400 + Math.floor(Math.random() * 500)
@@ -72,6 +73,8 @@ async function main () {
         enableSeeding: true,
         enableServices: false,
         acceptMode: 'open',
+        custodyExpiryInterval: expiryMode ? 10_000 : undefined,
+        custodyExpiryGraceMs: 0,
         shutdownTimeoutMs: 5000
       })
       await relay.start()
@@ -109,7 +112,7 @@ async function main () {
     const appKey = b4a.toString(drive.key, 'hex')
     const discoveryKey = b4a.toString(drive.discoveryKey, 'hex')
     const publisherKeyPair = publisher.swarm.keyPair
-    const retainUntil = Date.now() + 30 * 24 * 60 * 60 * 1000
+    const retainUntil = Date.now() + (expiryMode ? 15_000 : 30 * 24 * 60 * 60 * 1000)
     const blindContentId = blindMode ? hashHex({ appKey, ciphertextHash, id }) : null
     let custodyIntent = null
     if (blindMode) {
@@ -164,6 +167,7 @@ async function main () {
 
     let retainedCiphertext = null
     let custodyStatus = null
+    let expiryStatus = null
     if (blindMode) {
       const relayEntry = relays[1].seededApps.get(appKey)
       const retained = relayEntry ? await relayEntry.drive.get('/sealed/blob.bin') : null
@@ -211,6 +215,37 @@ async function main () {
       }, publisherKeyPair)
 
       custodyStatus = relays[0].seedingRegistry.getCustodyStatus(custodyIntent.intentId)
+
+      if (expiryMode) {
+        await waitFor('temporary custody expiry', async () => {
+          return relays.every(relay => !relay.appRegistry.has(appKey)) ? true : null
+        }, 20_000)
+
+        const nonServingProof = await relays[0].createCustodyNonServingProof(custodyIntent.intentId, {
+          challengeNonce: hashHex({ id, challenge: 'post-expiry-not-serving' }),
+          notServingReason: 'expired-unseeded'
+        })
+
+        const afterExpiry = await fetchText(
+          `http://127.0.0.1:${basePort + 2}/v1/hyper/${appKey}/sealed/blob.bin`
+        )
+        custodyStatus = relays[0].seedingRegistry.getCustodyStatus(custodyIntent.intentId)
+        expiryStatus = {
+          retainUntil,
+          expiredOnAllRelays: relays.every(relay => !relay.appRegistry.has(appKey)),
+          seededAppsAfterExpiry: relays.map(relay => relay.seededApps.size),
+          gatewayAfterExpiry: afterExpiry,
+          nonServingProof: {
+            type: nonServingProof.type,
+            relayPubkey: nonServingProof.relayPubkey,
+            challengeNonce: nonServingProof.challengeNonce,
+            notServing: nonServingProof.notServing,
+            catalogPresent: nonServingProof.catalogPresent,
+            activeSwarmServing: nonServingProof.activeSwarmServing,
+            limitationHash: nonServingProof.limitationHash
+          }
+        }
+      }
     }
 
     const catalogRes = await fetch(`http://127.0.0.1:${basePort}/catalog.json?pageSize=20`, {
@@ -254,6 +289,7 @@ async function main () {
       beforePublisherStop,
       afterPublisherStop,
       retainedCiphertext,
+      expiryStatus,
       custodyStatus: custodyStatus
         ? {
             intentId: custodyStatus.intentId,
@@ -263,6 +299,8 @@ async function main () {
             sourceRetired: custodyStatus.sourceRetired,
             proofCount: custodyStatus.proofCount,
             passingProofs: custodyStatus.passingProofs,
+            nonServingProofCount: custodyStatus.nonServingProofCount,
+            nonServingRelays: custodyStatus.nonServingRelays,
             relayQuorum: custodyStatus.relayQuorum
           }
         : null,

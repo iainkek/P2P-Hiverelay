@@ -1331,6 +1331,20 @@ export class RelayAPI extends EventEmitter {
           }
         }
 
+        if (path.startsWith('/api/custody/') && path.endsWith('/non-serving-proof')) {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/non-serving-proof')) return
+          const intentId = path.slice('/api/custody/'.length, -'/non-serving-proof'.length)
+          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
+          try {
+            const entry = await this.node.createCustodyNonServingProof(intentId, body || {})
+            return this._json(res, { ok: true, ...entry })
+          } catch (err) {
+            const message = err.message || String(err)
+            const status = message.startsWith('STILL_SERVING') ? 409 : 400
+            return this._json(res, { error: message }, status)
+          }
+        }
+
         if (path === '/registry/auto-accept') {
           if (!this._requireAuth(req, res, 'Unauthorized — API key required for /registry/auto-accept')) return
           this.node.config.registryAutoAccept = body.enabled !== false
@@ -2183,7 +2197,9 @@ export class RelayAPI extends EventEmitter {
       committed: status.committed === true,
       sourceRetired: status.sourceRetired === true,
       proofCount: status.proofCount || 0,
-      passingProofs: status.passingProofs || 0
+      passingProofs: status.passingProofs || 0,
+      nonServingProofCount: status.nonServingProofCount || 0,
+      nonServingRelays: Array.isArray(status.nonServingRelays) ? status.nonServingRelays : []
     }
   }
 

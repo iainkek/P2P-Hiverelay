@@ -1,5 +1,5 @@
 > [!WARNING]
-> **Doc may be partially out of date.** This file was written before the Compute removal, Core/Services split, and Catalog auto-sync removal. See [REFACTOR-NOTES.md](REFACTOR-NOTES.md) for current architecture.
+> **Doc may be partially out of date.** This file has been refreshed for service lifecycle and supervision, but some optional service descriptions may still describe experimental or disabled-by-default modules. See [REFACTOR-NOTES.md](REFACTOR-NOTES.md) for current architecture.
 
 # HiveRelay Services Layer
 
@@ -38,6 +38,32 @@ Central service registry that handles:
 - **Catalog** -- `catalog()` returns all available services for peer exchange
 - **Stats** -- Per-service request counts and error tracking
 - **Lifecycle** -- `startAll(context)` / `stopAll()` for clean init/shutdown
+
+### Service Supervision
+
+The registry now fails closed and supervises persistent services:
+
+| Behavior | Result |
+|---|---|
+| Service startup throws | Service is marked failed and removed from dispatch/catalog |
+| Service emits `error` | Service is marked failed and RPC calls return `SERVICE_UNAVAILABLE` |
+| Health check fails | Relay supervision marks the service failed |
+| Restart succeeds | Service returns to `running`, restart count increments |
+| Restart budget is exhausted | Service remains unavailable instead of being advertised |
+
+Providers can expose either `healthCheck(context)` or `health(context)`. A healthy result is any non-false value; a thrown error or `false` marks the service failed.
+
+Supervision config:
+
+```javascript
+serviceSupervision: {
+  enabled: true,
+  intervalMs: 30_000,
+  maxRestarts: 3
+}
+```
+
+This keeps app-facing routes honest. A broken AI, compute, storage, or plugin service should disappear from service discovery rather than remaining advertised as available.
 
 ### ServiceProtocol
 
@@ -189,6 +215,20 @@ const weather = await protocol.request(relayPubkey, 'weather', 'current', { loca
 ## Configuration
 
 Services are enabled automatically when the relay node starts. Individual services can be disabled via the config or by not registering them. The SLA service requires proof-of-relay to be active for automated enforcement.
+
+Service lifecycle is controlled by:
+
+```javascript
+{
+  serviceDefaultPeerRole: 'authenticated-user',
+  serviceAdminAllowlist: [],
+  serviceSupervision: {
+    enabled: true,
+    intervalMs: 30_000,
+    maxRestarts: 3
+  }
+}
+```
 
 ### Live Management
 

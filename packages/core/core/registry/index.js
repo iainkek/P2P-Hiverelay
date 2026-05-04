@@ -21,6 +21,7 @@ import {
   computeReceiptRoot,
   createCustodyCommit,
   createCustodyIntent,
+  createCustodyNonServingProof,
   createCustodyProof,
   createCustodyReceipt,
   createSourceRetired,
@@ -87,6 +88,7 @@ export class SeedingRegistry extends EventEmitter {
     this._custodyCommits = new Map() // intentId -> custody-commit
     this._sourceRetirements = new Map() // intentId -> source-retired
     this._custodyProofs = new Map() // intentId -> custody-proof[]
+    this._custodyNonServingProofs = new Map() // intentId -> custody-non-serving-proof[]
     this._custodyStatusCache = new Map()
 
     this._indexedOffsets = new Map() // logId -> indexed block count
@@ -324,7 +326,8 @@ export class SeedingRegistry extends EventEmitter {
       entry.type === 'custody-receipt' ||
       entry.type === 'custody-commit' ||
       entry.type === 'source-retired' ||
-      entry.type === 'custody-proof'
+      entry.type === 'custody-proof' ||
+      entry.type === 'custody-non-serving-proof'
     ) {
       const verified = verifyCustodyEntry(entry)
       if (!verified.valid) {
@@ -341,6 +344,7 @@ export class SeedingRegistry extends EventEmitter {
         const peer = source.peerPubkey.toLowerCase()
         if (custodyEntry.type === 'custody-receipt' && custodyEntry.relayPubkey !== peer) return null
         if (custodyEntry.type === 'custody-proof' && custodyEntry.observerPubkey !== peer) return null
+        if (custodyEntry.type === 'custody-non-serving-proof' && custodyEntry.relayPubkey !== peer) return null
       }
 
       // Receipts can be validated as soon as their intent is known. Commits
@@ -528,6 +532,23 @@ export class SeedingRegistry extends EventEmitter {
         list[idx] = entry
         this._invalidateCustodyStatus(entry.intentId)
       }
+      return
+    }
+
+    if (entry.type === 'custody-non-serving-proof') {
+      if (!this._custodyNonServingProofs.has(entry.intentId)) {
+        this._custodyNonServingProofs.set(entry.intentId, [])
+      }
+      const list = this._custodyNonServingProofs.get(entry.intentId)
+      const key = `${entry.relayPubkey}:${entry.challengeNonce}`
+      const idx = list.findIndex(p => `${p.relayPubkey}:${p.challengeNonce}` === key)
+      if (idx === -1) {
+        list.push(entry)
+        this._invalidateCustodyStatus(entry.intentId)
+      } else if (list[idx].timestamp <= entry.timestamp) {
+        list[idx] = entry
+        this._invalidateCustodyStatus(entry.intentId)
+      }
     }
   }
 
@@ -644,6 +665,19 @@ export class SeedingRegistry extends EventEmitter {
     return this._appendCustodyEntry(entry, 'custody-proof-recorded')
   }
 
+  async recordCustodyNonServingProof (proof, relayKeyPair) {
+    const intent = this._custodyIntents.get(proof.intentId)
+    const entry = proof.signature
+      ? this._verifiedCustodyEntry(proof)
+      : createCustodyNonServingProof({
+        ...proof,
+        addressKey: proof.addressKey || intent?.addressKey,
+        blindContentId: proof.blindContentId || intent?.blindContentId,
+        retainUntil: proof.retainUntil ?? intent?.retainUntil
+      }, relayKeyPair)
+    return this._appendCustodyEntry(entry, 'custody-non-serving-proof-recorded')
+  }
+
   _verifiedCustodyEntry (entry) {
     const verified = verifyCustodyEntry(entry)
     if (!verified.valid) throw new Error(`INVALID_CUSTODY_ENTRY: ${verified.reason}`)
@@ -725,6 +759,10 @@ export class SeedingRegistry extends EventEmitter {
     return [...(this._custodyProofs.get(intentId) || [])]
   }
 
+  getCustodyNonServingProofs (intentId) {
+    return [...(this._custodyNonServingProofs.get(intentId) || [])]
+  }
+
   getCustodyStatus (intentId) {
     const cached = this._custodyStatusCache.get(intentId)
     if (cached) return cached
@@ -733,6 +771,7 @@ export class SeedingRegistry extends EventEmitter {
     const rawCommit = this._custodyCommits.get(intentId) || null
     const sourceRetired = this._sourceRetirements.get(intentId) || null
     const proofs = this.getCustodyProofs(intentId)
+    const nonServingProofs = this.getCustodyNonServingProofs(intentId)
     const commitCheck = rawCommit
       ? validateCustodyTransition(rawCommit, { intent, receipts })
       : { valid: false, reason: 'no commit' }
@@ -742,14 +781,15 @@ export class SeedingRegistry extends EventEmitter {
       : { valid: false, reason: 'no source retirement' }
     const effectiveRetirement = retirementCheck.valid ? sourceRetired : null
     const status = {
-      ...summarizeCustodyStatus(intent, receipts, commit, effectiveRetirement, proofs),
+      ...summarizeCustodyStatus(intent, receipts, commit, effectiveRetirement, proofs, nonServingProofs),
       intent,
       receipts,
       commit,
       commitPendingReason: rawCommit && !commit ? commitCheck.reason : null,
       sourceRetirement: effectiveRetirement,
       sourceRetirementPendingReason: sourceRetired && !effectiveRetirement ? retirementCheck.reason : null,
-      proofs
+      proofs,
+      nonServingProofs
     }
     this._custodyStatusCache.set(intentId, status)
     return status
