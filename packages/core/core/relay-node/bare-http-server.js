@@ -141,7 +141,9 @@ export class BareHttpServer {
   _catalog () {
     const buckets = { apps: [], drives: [], resources: [], datasets: [], media: [] }
     if (!this.relay.appRegistry) return buckets
-    const items = this.relay.appRegistry.catalog()
+    const items = this.relay.appRegistry.catalog({
+      redactPrivate: this.relay.config?.custody?.redactedCatalog !== false
+    })
     for (const item of items) {
       const bucket = buckets[item.type + 's'] || buckets.resources
       bucket.push(item)

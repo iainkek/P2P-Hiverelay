@@ -59,8 +59,11 @@ export default {
     requireEncryptedPayload: true,
     metadataVisibility: 'redacted',
     redactedCatalog: true,
-    proofTarget: 'ciphertext'
+    proofTarget: 'ciphertext',
+    defaultRetainMs: 30 * 24 * 60 * 60 * 1000
   },
+  custodyExpiryInterval: 60_000,
+  custodyExpiryGraceMs: 0,
 
   // Seeding registry
   registryKey: null, // null = create new autobase

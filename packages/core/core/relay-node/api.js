@@ -20,7 +20,16 @@ import { createRequire } from 'module'
 import { EventEmitter } from 'events'
 import { DashboardFeed } from './ws-feed.js'
 import { HyperGateway } from '../../gateway/hyper-gateway.js'
-import { CONTENT_TYPES, isValidHexKey, normalizeContentType, normalizePrivacyTier } from '../constants.js'
+import {
+  AVAILABILITY_CLASSES,
+  CONTENT_TYPES,
+  STORAGE_CLASSES,
+  isValidHexKey,
+  normalizeAvailabilityClass,
+  normalizeContentType,
+  normalizePrivacyTier,
+  normalizeStorageClass
+} from '../constants.js'
 import { buildCapabilityDoc } from '../capability-doc.js'
 import { verifySeedingManifest } from '../seeding-manifest.js'
 import { ERR, formatErr } from '../error-prefixes.js'
@@ -61,6 +70,8 @@ const ENDPOINT_RATE_LIMITS = {
 const MAX_DISCOVERY_KEYS = 100
 const PRIVACY_TIER_ERROR = 'privacyTier must be one of: public, local-first, p2p-only'
 const CONTENT_TYPE_ERROR = `type must be one of: ${Array.from(CONTENT_TYPES).join(', ')}`
+const STORAGE_CLASS_ERROR = `storageClass must be one of: ${Array.from(STORAGE_CLASSES).join(', ')}`
+const AVAILABILITY_CLASS_ERROR = `availabilityClass must be one of: ${Array.from(AVAILABILITY_CLASSES).join(', ')}`
 const MANAGEMENT_AUTH_ERROR = 'Unauthorized — management API requires API key or localhost access'
 const LOCAL_ONLY_DISPATCH_ROUTES = new Set([
   'identity.sign',
@@ -253,6 +264,14 @@ export class RelayAPI extends EventEmitter {
     return normalizeContentType(value, fallback)
   }
 
+  _readStorageClass (value, fallback = 'persistent') {
+    return normalizeStorageClass(value, fallback)
+  }
+
+  _readAvailabilityClass (value, fallback = 'always-on') {
+    return normalizeAvailabilityClass(value, fallback)
+  }
+
   async _handle (req, res) {
     const ip = this._getClientIP(req) || '127.0.0.1'
     const requestOrigin = req.headers.origin
@@ -326,7 +345,9 @@ export class RelayAPI extends EventEmitter {
           return this._json(res, { error: CONTENT_TYPE_ERROR }, 400)
         }
 
-        const allEntries = this.node.appRegistry.catalog()
+        const allEntries = this.node.appRegistry.catalog({
+          redactPrivate: this.node.config?.custody?.redactedCatalog !== false
+        })
         const filtered = allEntries.filter((entry) => {
           if (normalizedType && entry.type !== normalizedType) return false
           if (parent && entry.parentKey !== parent) return false
@@ -654,49 +675,30 @@ export class RelayAPI extends EventEmitter {
         }
 
         if (path === '/api/apps') {
-          const apps = []
-          const now = Date.now()
-          for (const [appKey, entry] of this.node.seededApps) {
-            apps.push({
-              appKey,
-              type: this._readContentType(entry.type, 'app'),
-              parentKey: entry.parentKey || null,
-              mountPath: entry.mountPath || null,
-              appId: entry.appId || null,
-              version: entry.version || null,
-              discoveryKey: entry.discoveryKey ? (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : Buffer.from(entry.discoveryKey).toString('hex')) : null,
-              startedAt: entry.startedAt,
-              bytesServed: entry.bytesServed || 0,
-              uptimeMinutes: Math.round((now - entry.startedAt) / 60_000)
-            })
-          }
+          const apps = this.node.appRegistry.catalog({
+            redactPrivate: this.node.config?.custody?.redactedCatalog !== false
+          }).filter(entry => entry.type === 'app')
           return this._json(res, apps)
         }
 
         if (path === '/api/drives') {
-          const drives = []
-          const now = Date.now()
-          for (const [appKey, entry] of this.node.seededApps) {
-            if (this._readContentType(entry.type, 'app') !== 'drive') continue
-            drives.push({
-              appKey,
-              type: 'drive',
-              parentKey: entry.parentKey || null,
-              mountPath: entry.mountPath || null,
-              appId: entry.appId || null,
-              name: entry.name || entry.appId || null,
-              description: entry.description || '',
-              author: entry.author || null,
-              categories: entry.categories || [],
-              privacyTier: entry.privacyTier || 'public',
-              version: entry.version || null,
-              discoveryKey: entry.discoveryKey ? (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : Buffer.from(entry.discoveryKey).toString('hex')) : null,
-              startedAt: entry.startedAt,
-              bytesServed: entry.bytesServed || 0,
-              uptimeMinutes: Math.round((now - entry.startedAt) / 60_000)
-            })
-          }
+          const drives = this.node.appRegistry.catalog({
+            redactPrivate: this.node.config?.custody?.redactedCatalog !== false
+          }).filter(entry => entry.type === 'drive')
           return this._json(res, drives)
+        }
+
+        if (req.method === 'GET' && path.startsWith('/api/custody/') && path.endsWith('/status')) {
+          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
+          const intentId = path.slice('/api/custody/'.length, -'/status'.length)
+          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
+          const status = this.node.seedingRegistry.getCustodyStatus(intentId)
+          const detailed = url.searchParams.get('detailed') === '1' || url.searchParams.get('detailed') === 'true'
+          if (detailed) {
+            if (!this._requireAuth(req, res, 'Unauthorized — API key required for detailed custody status')) return
+            return this._json(res, status)
+          }
+          return this._json(res, this._redactCustodyStatus(status))
         }
 
         // Anchor proof — signed attestation for a single drive. Returns
@@ -1095,6 +1097,18 @@ export class RelayAPI extends EventEmitter {
             if (!type) return this._json(res, { error: CONTENT_TYPE_ERROR }, 400)
             seedOpts.type = type
           }
+          const requestedStorageClass = body.storageClass !== undefined ? body.storageClass : seedOpts.storageClass
+          if (requestedStorageClass !== undefined) {
+            const storageClass = this._readStorageClass(requestedStorageClass, null)
+            if (!storageClass) return this._json(res, { error: STORAGE_CLASS_ERROR }, 400)
+            seedOpts.storageClass = storageClass
+          }
+          const requestedAvailabilityClass = body.availabilityClass !== undefined ? body.availabilityClass : seedOpts.availabilityClass
+          if (requestedAvailabilityClass !== undefined) {
+            const availabilityClass = this._readAvailabilityClass(requestedAvailabilityClass, null)
+            if (!availabilityClass) return this._json(res, { error: AVAILABILITY_CLASS_ERROR }, 400)
+            seedOpts.availabilityClass = availabilityClass
+          }
           // Forward appId from request body for deduplication
           if (body.appId && typeof body.appId === 'string') seedOpts.appId = body.appId
           if (body.version && typeof body.version === 'string') seedOpts.version = body.version
@@ -1145,6 +1159,43 @@ export class RelayAPI extends EventEmitter {
             if (!tier) return this._json(res, { error: PRIVACY_TIER_ERROR }, 400)
             seedOpts.privacyTier = tier
           }
+          if (seedOpts.blind !== undefined && typeof seedOpts.blind !== 'boolean') {
+            return this._json(res, { error: 'blind must be a boolean' }, 400)
+          }
+          if (body.blind !== undefined) {
+            if (typeof body.blind !== 'boolean') return this._json(res, { error: 'blind must be a boolean' }, 400)
+            seedOpts.blind = body.blind
+          }
+          for (const field of ['custodyIntentId', 'blindContentId', 'ciphertextRoot']) {
+            if (body[field] !== undefined) {
+              if (typeof body[field] !== 'string' || !isValidHexKey(body[field], 64)) {
+                return this._json(res, { error: `${field} must be 64 hex characters` }, 400)
+              }
+              seedOpts[field] = body[field].toLowerCase()
+            }
+          }
+          if (body.contentVersion !== undefined) {
+            if (!Number.isFinite(body.contentVersion) || body.contentVersion < 0) {
+              return this._json(res, { error: 'contentVersion must be a non-negative number' }, 400)
+            }
+            seedOpts.contentVersion = Math.floor(body.contentVersion)
+          }
+          if (body.retainUntil !== undefined) {
+            if (!Number.isFinite(body.retainUntil) || body.retainUntil < 0) {
+              return this._json(res, { error: 'retainUntil must be a non-negative number' }, 400)
+            }
+            seedOpts.retainUntil = Math.floor(body.retainUntil)
+          }
+          if (body.shardIds !== undefined) {
+            if (!Array.isArray(body.shardIds)) return this._json(res, { error: 'shardIds must be an array' }, 400)
+            seedOpts.shardIds = []
+            for (const shardId of body.shardIds) {
+              if (!Number.isInteger(shardId) || shardId < 0) {
+                return this._json(res, { error: 'shardIds must contain non-negative integers' }, 400)
+              }
+              seedOpts.shardIds.push(shardId)
+            }
+          }
           const result = await this.node.seedApp(body.appKey, seedOpts)
           return this._json(res, { ok: true, ...result })
         }
@@ -1189,6 +1240,17 @@ export class RelayAPI extends EventEmitter {
             ? 'public'
             : this._readPrivacyTier(body.privacyTier, null)
           if (!privacyTier) return this._json(res, { error: PRIVACY_TIER_ERROR }, 400)
+          const storageClass = body.storageClass === undefined
+            ? (body.blind === true ? 'temporary' : 'persistent')
+            : this._readStorageClass(body.storageClass, null)
+          if (!storageClass) return this._json(res, { error: STORAGE_CLASS_ERROR }, 400)
+          const availabilityClass = body.availabilityClass === undefined
+            ? (body.blind === true ? 'atomic-handoff' : 'always-on')
+            : this._readAvailabilityClass(body.availabilityClass, null)
+          if (!availabilityClass) return this._json(res, { error: AVAILABILITY_CLASS_ERROR }, 400)
+          if (body.blind !== undefined && typeof body.blind !== 'boolean') {
+            return this._json(res, { error: 'blind must be a boolean' }, 400)
+          }
 
           let appKeyBuf, dkBufs
           try {
@@ -1204,6 +1266,9 @@ export class RelayAPI extends EventEmitter {
             contentType,
             parentKey,
             mountPath,
+            blind: body.blind === true,
+            storageClass,
+            availabilityClass,
             replicationFactor: body.replicas || 3,
             geoPreference: body.geo ? [].concat(body.geo) : [],
             maxStorageBytes: body.maxStorageBytes || 0,
@@ -1215,6 +1280,55 @@ export class RelayAPI extends EventEmitter {
 
           const entry = await this.node.seedingRegistry.publishRequest(request)
           return this._json(res, { ok: true, ...entry })
+        }
+
+        if (path === '/api/custody/intent') {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/intent')) return
+          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
+          if (!this.node.swarm?.keyPair && !body.signature) return this._json(res, { error: 'Relay keypair unavailable' }, 503)
+          try {
+            const entry = await this.node.seedingRegistry.publishCustodyIntent(body, this.node.swarm?.keyPair)
+            return this._json(res, { ok: true, ...entry })
+          } catch (err) {
+            return this._json(res, { error: err.message || String(err) }, 400)
+          }
+        }
+
+        if (path.startsWith('/api/custody/') && path.endsWith('/commit')) {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/commit')) return
+          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
+          const intentId = path.slice('/api/custody/'.length, -'/commit'.length)
+          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
+          try {
+            const entry = await this.node.seedingRegistry.publishCustodyCommit({ ...body, intentId }, this.node.swarm?.keyPair)
+            return this._json(res, { ok: true, ...entry })
+          } catch (err) {
+            return this._json(res, { error: err.message || String(err) }, 400)
+          }
+        }
+
+        if (path.startsWith('/api/custody/') && path.endsWith('/source-retired')) {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/:intentId/source-retired')) return
+          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
+          const intentId = path.slice('/api/custody/'.length, -'/source-retired'.length)
+          if (!isValidHexKey(intentId, 64)) return this._json(res, { error: 'intentId must be 64 hex characters' }, 400)
+          try {
+            const entry = await this.node.seedingRegistry.publishSourceRetired({ ...body, intentId }, this.node.swarm?.keyPair)
+            return this._json(res, { ok: true, ...entry })
+          } catch (err) {
+            return this._json(res, { error: err.message || String(err) }, 400)
+          }
+        }
+
+        if (path === '/api/custody/proof') {
+          if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/custody/proof')) return
+          if (!this.node.seedingRegistry) return this._json(res, { error: 'Registry not running' }, 503)
+          try {
+            const entry = await this.node.seedingRegistry.recordCustodyProof(body, this.node.swarm?.keyPair)
+            return this._json(res, { ok: true, ...entry })
+          } catch (err) {
+            return this._json(res, { error: err.message || String(err) }, 400)
+          }
         }
 
         if (path === '/registry/auto-accept') {
@@ -2054,6 +2168,23 @@ export class RelayAPI extends EventEmitter {
       enabled: this.node.config.transports[transport],
       note: 'Transport changes may require a node restart to take full effect'
     })
+  }
+
+  _redactCustodyStatus (status = {}) {
+    return {
+      intentId: status.intentId || null,
+      blindContentId: status.blindContentId || null,
+      custodyMode: status.custodyMode || 'blind',
+      requiredReplicas: status.requiredReplicas || 0,
+      receiptCount: status.receiptCount || 0,
+      quorumReached: status.quorumReached === true,
+      receiptRoot: status.receiptRoot || null,
+      relayQuorum: Array.isArray(status.relayQuorum) ? status.relayQuorum : [],
+      committed: status.committed === true,
+      sourceRetired: status.sourceRetired === true,
+      proofCount: status.proofCount || 0,
+      passingProofs: status.passingProofs || 0
+    }
   }
 
   _getSafeConfig () {

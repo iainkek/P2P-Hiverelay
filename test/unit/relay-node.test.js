@@ -310,6 +310,85 @@ test('RelayNode - seedApp keeps replicate-user-data policy for drive type when s
   t.is(operation, 'replicate-user-data')
 })
 
+test('RelayNode - seedApp uses encrypted policy operation for blind custody', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  node.seeder = { totalBytesStored: 0 }
+
+  let operation = null
+  node.policyGuard = {
+    check (_appKey, _tier, op) {
+      operation = op
+      return { allowed: false, reason: 'blocked by test policy' }
+    }
+  }
+
+  try {
+    await node.seedApp('b'.repeat(64), {
+      type: 'drive',
+      privacyTier: 'p2p-only',
+      blind: true
+    })
+    t.fail('expected policy violation')
+  } catch (err) {
+    t.ok(err.message.includes('POLICY_VIOLATION'))
+  }
+  t.is(operation, 'replicate-encrypted-data')
+})
+
+test('RelayNode - custody expiry removes expired temporary atomic entries only', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const now = Date.now()
+  const expiredKey = '1'.repeat(64)
+  const activeKey = '2'.repeat(64)
+  const persistentKey = '3'.repeat(64)
+  const closed = []
+  const expiredEvents = []
+
+  node.appRegistry._filePath = null
+  node.swarm = {
+    async leave () {}
+  }
+  node.on('custody-expired', event => expiredEvents.push(event))
+
+  node.appRegistry.apps.set(expiredKey, {
+    storageClass: 'temporary',
+    availabilityClass: 'atomic-handoff',
+    blind: true,
+    retainUntil: now - 1,
+    discoveryKey: randomBytes(32),
+    drive: { async close () { closed.push(expiredKey) } }
+  })
+  node.appRegistry.apps.set(activeKey, {
+    storageClass: 'temporary',
+    availabilityClass: 'atomic-handoff',
+    blind: true,
+    retainUntil: now + 60_000,
+    discoveryKey: randomBytes(32),
+    drive: { async close () { closed.push(activeKey) } }
+  })
+  node.appRegistry.apps.set(persistentKey, {
+    storageClass: 'persistent',
+    availabilityClass: 'always-on',
+    blind: false,
+    retainUntil: now - 1,
+    discoveryKey: randomBytes(32),
+    drive: { async close () { closed.push(persistentKey) } }
+  })
+
+  const result = await node._runCustodyExpiryPass(now)
+
+  t.is(result.checked, 2, 'temporary entries checked')
+  t.is(result.expired, 1, 'one expired temporary entry removed')
+  t.is(node.appRegistry.has(expiredKey), false, 'expired temporary entry removed from registry')
+  t.is(node.appRegistry.has(activeKey), true, 'active temporary entry remains')
+  t.is(node.appRegistry.has(persistentKey), true, 'persistent availability entry remains')
+  t.alike(closed, [expiredKey], 'expired drive closed')
+  t.is(expiredEvents.length, 1, 'expiry event emitted')
+  t.is(expiredEvents[0].appKey, expiredKey, 'expiry event names content key')
+
+  await node.appRegistry.flush()
+})
+
 test('RelayNode - replication repair skips non-public tiers in strict privacy mode', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false, enableServices: false })
   const appKey = 'e'.repeat(64)

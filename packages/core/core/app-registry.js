@@ -15,7 +15,12 @@
 import { readFile, writeFile, rename } from 'fs/promises'
 import { join } from 'path'
 import { EventEmitter } from 'events'
-import { compareVersions, normalizeContentType } from './constants.js'
+import {
+  compareVersions,
+  normalizeAvailabilityClass,
+  normalizeContentType,
+  normalizeStorageClass
+} from './constants.js'
 
 const REGISTRY_FILE = 'app-registry.json'
 
@@ -69,6 +74,9 @@ export class AppRegistry extends EventEmitter {
 
   _normalizeEntry (entry = {}) {
     const type = normalizeContentType(entry.type, 'app')
+    const blind = entry.blind === true
+    const storageClass = normalizeStorageClass(entry.storageClass, blind ? 'temporary' : 'persistent')
+    const availabilityClass = normalizeAvailabilityClass(entry.availabilityClass, blind ? 'atomic-handoff' : 'always-on')
     const parentKey = typeof entry.parentKey === 'string' && entry.parentKey.length > 0
       ? entry.parentKey
       : null
@@ -91,6 +99,9 @@ export class AppRegistry extends EventEmitter {
     return {
       ...entry,
       type,
+      blind,
+      storageClass,
+      availabilityClass,
       parentKey,
       mountPath,
       categories,
@@ -247,19 +258,51 @@ export class AppRegistry extends EventEmitter {
 
   // ─── Catalog Output ────────────────────────────────────────
 
+  _shouldRedactEntry (entry, opts = {}) {
+    if (opts.redactPrivate !== true) return false
+    const privacyTier = String(entry.privacyTier || 'public').toLowerCase()
+    return entry.blind === true ||
+      privacyTier !== 'public' ||
+      entry.metadataVisibility === 'redacted'
+  }
+
+  _redactCatalogEntry (catalogEntry, entry, opts = {}) {
+    if (!this._shouldRedactEntry(entry, opts)) return catalogEntry
+
+    return {
+      ...catalogEntry,
+      appKey: entry.blindContentId || null,
+      parentKey: null,
+      mountPath: null,
+      id: entry.blindContentId || 'private-content',
+      name: 'Private Content',
+      description: '',
+      author: 'redacted',
+      version: null,
+      driveKey: null,
+      discoveryKey: null,
+      categories: ['private'],
+      redacted: true,
+      addressKeyRedacted: true,
+      metadataVisibility: 'redacted',
+      blindContentId: entry.blindContentId || null
+    }
+  }
+
   /**
    * Generate the app catalog for HTTP /catalog.json and P2P broadcast.
    * Returns array of { appKey, appId, version, discoveryKey, blind, seededAt, name, description }
    * No drive reads needed — all metadata comes from the registry.
    */
-  catalog () {
+  catalog (opts = {}) {
     const items = []
     const seen = new Map() // appId → index in items array (dedup for app type)
+    const now = Date.now()
 
     for (const [appKey, entry] of this.apps) {
       const type = normalizeContentType(entry.type, 'app')
       const appId = entry.appId || appKey.slice(0, 12)
-      const catalogEntry = {
+      const catalogEntry = this._redactCatalogEntry({
         appKey,
         type,
         parentKey: entry.parentKey || null,
@@ -274,9 +317,11 @@ export class AppRegistry extends EventEmitter {
           ? (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : entry.discoveryKey.toString('hex'))
           : null,
         blind: entry.blind || false,
+        storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
+        availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
         categories: entry.categories || ['uncategorized'],
         privacyTier: entry.privacyTier || 'public',
-        seededAt: entry.startedAt || entry.seededAt || Date.now(),
+        seededAt: entry.startedAt || entry.seededAt || now,
         // Anchor signal — clients can prefer relays whose entries are
         // anchored=true (they actually have blocks) over ones that
         // merely remember accepting the seed.
@@ -291,7 +336,7 @@ export class AppRegistry extends EventEmitter {
         // distinguish "publisher can pull this back" from "permanent
         // commitment" content.
         revocable: entry.revocable !== false
-      }
+      }, entry, opts)
 
       // Dedup app entries by appId — keep latest version
       if (type === 'app') {
@@ -329,20 +374,26 @@ export class AppRegistry extends EventEmitter {
    */
   catalogForBroadcast () {
     const apps = []
+    const now = Date.now()
     for (const [appKey, entry] of this.apps) {
+      const redacted = this._shouldRedactEntry(entry, { redactPrivate: true })
       apps.push({
         appKey,
-        appId: entry.appId || null,
+        appId: redacted ? null : (entry.appId || null),
         type: normalizeContentType(entry.type, 'app'),
-        parentKey: entry.parentKey || null,
-        mountPath: entry.mountPath || null,
-        version: entry.version || null,
+        parentKey: redacted ? null : (entry.parentKey || null),
+        mountPath: redacted ? null : (entry.mountPath || null),
+        version: redacted ? null : (entry.version || null),
         discoveryKey: entry.discoveryKey
-          ? (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : entry.discoveryKey.toString('hex'))
+          ? (redacted ? null : (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : entry.discoveryKey.toString('hex')))
           : null,
         blind: entry.blind || false,
+        storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
+        availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
         privacyTier: entry.privacyTier || 'public',
-        seededAt: entry.startedAt || entry.seededAt || Date.now(),
+        seededAt: entry.startedAt || entry.seededAt || now,
+        redacted,
+        metadataVisibility: redacted ? 'redacted' : 'public',
         // Anchor signal — tells peer relays whether we actually have
         // blocks. Receiving relay uses this to trigger targeted repair
         // when they have the drive unanchored and we have it anchored.
@@ -403,6 +454,14 @@ export class AppRegistry extends EventEmitter {
           description: entry.description || '',
           author: entry.author || null,
           blind: entry.blind || false,
+          storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
+          availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
+          custodyIntentId: entry.custodyIntentId || null,
+          blindContentId: entry.blindContentId || null,
+          ciphertextRoot: entry.ciphertextRoot || null,
+          contentVersion: Number.isFinite(entry.contentVersion) ? entry.contentVersion : null,
+          retainUntil: entry.retainUntil || null,
+          shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
           privacyTier: entry.privacyTier || 'public',
           categories: entry.categories || null,
           bytesServed: 0,
@@ -430,7 +489,16 @@ export class AppRegistry extends EventEmitter {
         parentKey: e.parentKey || null,
         mountPath: e.mountPath || null,
         version: e.version || null,
-        privacyTier: e.privacyTier || 'public'
+        privacyTier: e.privacyTier || 'public',
+        blind: e.blind || false,
+        storageClass: normalizeStorageClass(e.storageClass, e.blind ? 'temporary' : 'persistent'),
+        availabilityClass: normalizeAvailabilityClass(e.availabilityClass, e.blind ? 'atomic-handoff' : 'always-on'),
+        custodyIntentId: e.custodyIntentId || null,
+        blindContentId: e.blindContentId || null,
+        ciphertextRoot: e.ciphertextRoot || null,
+        contentVersion: Number.isFinite(e.contentVersion) ? e.contentVersion : null,
+        retainUntil: e.retainUntil || null,
+        shardIds: Array.isArray(e.shardIds) ? e.shardIds : null
       })).filter(e => e.appKey)
     } catch (_) {
       return []
@@ -464,6 +532,14 @@ export class AppRegistry extends EventEmitter {
           description: entry.description || '',
           author: entry.author || null,
           blind: entry.blind || false,
+          storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
+          availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on'),
+          custodyIntentId: entry.custodyIntentId || null,
+          blindContentId: entry.blindContentId || null,
+          ciphertextRoot: entry.ciphertextRoot || null,
+          contentVersion: Number.isFinite(entry.contentVersion) ? entry.contentVersion : null,
+          retainUntil: entry.retainUntil || null,
+          shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
           privacyTier: entry.privacyTier || 'public',
           categories: entry.categories || null,
           startedAt: entry.startedAt || Date.now(),

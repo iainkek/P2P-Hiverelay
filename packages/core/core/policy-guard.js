@@ -18,7 +18,7 @@ import { EventEmitter } from 'events'
  *
  *   public      → relay sees app code AND user data (full exposure)
  *   local-first → relay sees app code ONLY (user data never leaves device)
- *   p2p-only    → relay sees NOTHING (no relay involvement)
+ *   p2p-only    → relay sees no plaintext; blind custody may hold ciphertext
  */
 const RELAY_EXPOSURE = {
   public: 'full',
@@ -44,7 +44,7 @@ export class PolicyGuard extends EventEmitter {
    *
    * @param {string} appKeyHex - The app being operated on
    * @param {string} tier - The app's declared privacy tier
-   * @param {string} operation - What's happening: 'replicate-user-data' | 'store-on-relay' | 'read-from-relay' | 'delete-from-relay' | 'serve-code'
+   * @param {string} operation - What's happening: 'replicate-user-data' | 'replicate-encrypted-data' | 'store-on-relay' | 'read-from-relay' | 'delete-from-relay' | 'serve-code'
    * @returns {{ allowed: boolean, suspended?: boolean, reason?: string }}
    */
   check (appKeyHex, tier, operation) {
@@ -60,6 +60,17 @@ export class PolicyGuard extends EventEmitter {
       if (exposure === 'none') {
         return this._suspend(appKeyHex, tier, 'p2p-only app must not be served by relay')
       }
+      return { allowed: true }
+    }
+
+    // Blind custody operations move opaque ciphertext. They are permitted
+    // for every tier because the relay does not receive plaintext user data.
+    if (
+      operation === 'replicate-encrypted-data' ||
+      operation === 'store-encrypted-on-relay' ||
+      operation === 'read-encrypted-from-relay' ||
+      operation === 'delete-encrypted-from-relay'
+    ) {
       return { allowed: true }
     }
 

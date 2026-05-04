@@ -4,7 +4,13 @@ import sodium from 'sodium-universal'
 import { EventEmitter } from 'events'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { isValidHexKey, normalizeContentType, normalizePrivacyTier } from '../constants.js'
+import {
+  isValidHexKey,
+  normalizeAvailabilityClass,
+  normalizeContentType,
+  normalizePrivacyTier,
+  normalizeStorageClass
+} from '../constants.js'
 
 /**
  * AppLifecycle — owns seeding, unseeding, and manifest indexing for a RelayNode.
@@ -46,7 +52,16 @@ export class AppLifecycle extends EventEmitter {
           parentKey: entry.parentKey || null,
           mountPath: entry.mountPath || null,
           version: entry.version || null,
-          privacyTier: entry.privacyTier || null
+          privacyTier: entry.privacyTier || null,
+          blind: entry.blind || false,
+          storageClass: entry.storageClass || null,
+          availabilityClass: entry.availabilityClass || null,
+          custodyIntentId: entry.custodyIntentId || null,
+          blindContentId: entry.blindContentId || null,
+          ciphertextRoot: entry.ciphertextRoot || null,
+          contentVersion: entry.contentVersion,
+          retainUntil: entry.retainUntil,
+          shardIds: entry.shardIds || null
         })
         this.emit('reseeded', { appKey: entry.appKey })
       } catch (err) {
@@ -94,6 +109,25 @@ export class AppLifecycle extends EventEmitter {
     if (!isValidHexKey(appKeyHex)) throw new Error('Invalid app key: must be 64 hex characters')
 
     const contentType = normalizeContentType(opts.type, 'app')
+    const blind = opts.blind === true
+    const storageClass = normalizeStorageClass(opts.storageClass, blind ? 'temporary' : 'persistent')
+    const availabilityClass = normalizeAvailabilityClass(opts.availabilityClass, blind ? 'atomic-handoff' : 'always-on')
+    const configuredRetainMs = Number(node.config.custody?.defaultRetainMs)
+    const defaultTemporaryRetainMs = Number.isFinite(configuredRetainMs)
+      ? Math.max(0, configuredRetainMs)
+      : 30 * 24 * 60 * 60 * 1000
+    const retainUntil = Number.isFinite(opts.retainUntil)
+      ? Math.floor(opts.retainUntil)
+      : (storageClass === 'temporary' || availabilityClass === 'atomic-handoff'
+          ? Date.now() + defaultTemporaryRetainMs
+          : null)
+    const normalizedOpts = {
+      ...opts,
+      blind,
+      storageClass,
+      availabilityClass,
+      retainUntil
+    }
     const parentKey = typeof opts.parentKey === 'string' ? opts.parentKey.toLowerCase() : null
     const mountPath = typeof opts.mountPath === 'string' ? opts.mountPath.trim() : null
     if (parentKey && !isValidHexKey(parentKey, 64)) {
@@ -108,9 +142,12 @@ export class AppLifecycle extends EventEmitter {
 
     const privacyTier = normalizePrivacyTier(opts.privacyTier || opts.tier, 'public')
     if (node.policyGuard) {
-      const policyOperation = node.config.strictSeedingPrivacy !== false
-        ? 'replicate-user-data'
-        : (contentType === 'app' ? 'serve-code' : 'replicate-user-data')
+      let policyOperation = 'replicate-user-data'
+      if (blind === true) {
+        policyOperation = 'replicate-encrypted-data'
+      } else if (node.config.strictSeedingPrivacy === false && contentType === 'app') {
+        policyOperation = 'serve-code'
+      }
       const policy = node.policyGuard.check(appKeyHex, privacyTier, policyOperation)
       if (!policy.allowed) {
         throw new Error(`POLICY_VIOLATION: ${policy.reason}`)
@@ -129,7 +166,7 @@ export class AppLifecycle extends EventEmitter {
     }
     this._seedMutex = true
     try {
-      return await this._seedAppInner(appKeyHex, opts, contentType, parentKey, mountPath, privacyTier)
+      return await this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier)
     } finally {
       this._seedMutex = false
     }
@@ -232,6 +269,7 @@ export class AppLifecycle extends EventEmitter {
               // surface this so clients can prefer relays that have the data.
               if (node.appRegistry && typeof node.appRegistry.setAnchored === 'function') {
                 node.appRegistry.setAnchored(appKeyHex, drive.version)
+                await this._recordCustodyReceipt(appKeyHex, opts, drive.version)
                 this.emit('anchored', { appKey: appKeyHex, version: drive.version })
               }
 
@@ -293,6 +331,14 @@ export class AppLifecycle extends EventEmitter {
         author: opts.author || null,
         categories: Array.isArray(opts.categories) ? opts.categories : null,
         blind: opts.blind || false,
+        storageClass: opts.storageClass,
+        availabilityClass: opts.availabilityClass,
+        custodyIntentId: opts.custodyIntentId || null,
+        blindContentId: opts.blindContentId || null,
+        ciphertextRoot: opts.ciphertextRoot || null,
+        contentVersion: Number.isFinite(opts.contentVersion) ? opts.contentVersion : null,
+        retainUntil: Number.isFinite(opts.retainUntil) ? opts.retainUntil : null,
+        shardIds: Array.isArray(opts.shardIds) ? opts.shardIds : null,
         publisherPubkey,
         revocable,
         unseedFreezeMs,
@@ -352,6 +398,14 @@ export class AppLifecycle extends EventEmitter {
         appId,
         version,
         privacyTier: manifest.privacyTier || manifest.privacy?.tier || manifest.privacy?.mode || undefined,
+        storageClass: normalizeStorageClass(
+          manifest.storageClass || manifest.hiverelay?.storageClass,
+          existing?.storageClass || (existing?.blind ? 'temporary' : 'persistent')
+        ),
+        availabilityClass: normalizeAvailabilityClass(
+          manifest.availabilityClass || manifest.hiverelay?.availabilityClass,
+          existing?.availabilityClass || (existing?.blind ? 'atomic-handoff' : 'always-on')
+        ),
         name: manifest.name || appId,
         description: manifest.description || '',
         author: manifest.author || null,
@@ -460,6 +514,7 @@ export class AppLifecycle extends EventEmitter {
 
       if (drive.version > 0) {
         node.appRegistry.setAnchored(appKeyHex, drive.version)
+        await this._recordCustodyReceipt(appKeyHex, entry, drive.version)
         this.emit('anchored', { appKey: appKeyHex, version: drive.version, source: 'repair' })
         return true
       }
@@ -515,6 +570,33 @@ export class AppLifecycle extends EventEmitter {
 
     const stillUnanchored = checked - repaired
     return { checked, repaired, stillUnanchored }
+  }
+
+  async _recordCustodyReceipt (appKeyHex, opts = {}, contentVersion = 0) {
+    const node = this.node
+    if (!opts.blind || !opts.custodyIntentId || !node.seedingRegistry || !node.swarm?.keyPair) return null
+    try {
+      const receipt = await node.seedingRegistry.recordCustodyReceipt({
+        intentId: opts.custodyIntentId,
+        addressKey: appKeyHex,
+        blindContentId: opts.blindContentId,
+        ciphertextRoot: opts.ciphertextRoot,
+        contentVersion: Number.isFinite(opts.contentVersion) ? opts.contentVersion : contentVersion,
+        relayRegion: node.config.region || 'unknown',
+        shardIds: Array.isArray(opts.shardIds) ? opts.shardIds : [],
+        anchored: true,
+        retainUntil: opts.retainUntil || (Date.now() + 30 * 24 * 60 * 60 * 1000)
+      }, node.swarm.keyPair)
+      this.emit('custody-receipt', { appKey: appKeyHex, intentId: opts.custodyIntentId, receipt })
+      return receipt
+    } catch (err) {
+      this.emit('custody-receipt-error', {
+        appKey: appKeyHex,
+        intentId: opts.custodyIntentId,
+        error: err.message || String(err)
+      })
+      return null
+    }
   }
 
   async unseedApp (appKeyHex) {

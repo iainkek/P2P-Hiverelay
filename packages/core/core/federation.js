@@ -367,6 +367,9 @@ export class Federation extends EventEmitter {
         publisherPubkey: app.publisherPubkey || app.author || null,
         contentType: app.type || 'app',
         privacyTier: app.privacyTier || 'public',
+        blind: app.blind === true,
+        storageClass: app.storageClass || null,
+        availabilityClass: app.availabilityClass || null,
         replicationFactor: app.replicationFactor || 1,
         parentKey: app.parentKey || null,
         mountPath: app.mountPath || null,
@@ -389,7 +392,10 @@ export class Federation extends EventEmitter {
             type: synthRequest.contentType,
             parentKey: synthRequest.parentKey,
             mountPath: synthRequest.mountPath,
-            privacyTier: synthRequest.privacyTier
+            privacyTier: synthRequest.privacyTier,
+            blind: synthRequest.blind,
+            storageClass: synthRequest.storageClass,
+            availabilityClass: synthRequest.availabilityClass
           })
           this.emit('federation-seeded', { appKey, source: entry.url, mode })
         } catch (err) {

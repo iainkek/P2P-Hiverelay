@@ -4,10 +4,11 @@ import createTestnet from '@hyperswarm/testnet'
 import { RelayNode } from '../packages/core/core/relay-node/index.js'
 import Hyperdrive from 'hyperdrive'
 import b4a from 'b4a'
-import { randomBytes } from 'crypto'
+import { createHash, randomBytes } from 'crypto'
 import { mkdir, rm } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { hashHex } from '../packages/core/core/custody-signing.js'
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -37,11 +38,13 @@ async function fetchText (url) {
 }
 
 async function main () {
+  const blindMode = process.argv.includes('--blind')
   const id = randomBytes(4).toString('hex')
   const baseDir = join(tmpdir(), `hiverelay-observe-${id}`)
   const basePort = 19400 + Math.floor(Math.random() * 500)
   const testnet = await createTestnet(3)
   const relays = []
+  const custodyEvents = []
   let publisher = null
 
   await mkdir(baseDir, { recursive: true })
@@ -72,27 +75,71 @@ async function main () {
         shutdownTimeoutMs: 5000
       })
       await relay.start()
+      relay.appLifecycle.on('custody-receipt', event => {
+        custodyEvents.push({ relay: i, type: 'custody-receipt', intentId: event.intentId })
+      })
+      relay.appLifecycle.on('custody-receipt-error', event => {
+        custodyEvents.push({ relay: i, type: 'custody-receipt-error', error: event.error, intentId: event.intentId })
+      })
       relays.push(relay)
     }
 
     const drive = new Hyperdrive(publisher.store)
     await drive.ready()
-    await drive.put('/hello.txt', b4a.from('Hello from HiveRelay observer testnet!'))
-    await drive.put('/test.json', b4a.from(JSON.stringify({ id, kind: 'observer-testnet' })))
-    await drive.put('/docs/readme.md', b4a.from('# Observer Test\n\nThis file should survive publisher shutdown.\n'))
+    let ciphertextHash = null
+    if (blindMode) {
+      const ciphertext = randomBytes(4096)
+      ciphertextHash = createHash('sha256').update(ciphertext).digest('hex')
+      await drive.put('/sealed/blob.bin', ciphertext)
+      await drive.put('/sealed/manifest.json', b4a.from(JSON.stringify({
+        version: 1,
+        kind: 'blind-observer-testnet',
+        ciphertextRoot: ciphertextHash,
+        note: 'Synthetic encrypted payload; relay must treat it as opaque bytes.'
+      }, null, 2)))
+    } else {
+      await drive.put('/hello.txt', b4a.from('Hello from HiveRelay observer testnet!'))
+      await drive.put('/test.json', b4a.from(JSON.stringify({ id, kind: 'observer-testnet' })))
+      await drive.put('/docs/readme.md', b4a.from('# Observer Test\n\nThis file should survive publisher shutdown.\n'))
+    }
 
     publisher.swarm.join(drive.discoveryKey, { server: true, client: true })
     await publisher.swarm.flush()
 
     const appKey = b4a.toString(drive.key, 'hex')
     const discoveryKey = b4a.toString(drive.discoveryKey, 'hex')
+    const publisherKeyPair = publisher.swarm.keyPair
+    const retainUntil = Date.now() + 30 * 24 * 60 * 60 * 1000
+    const blindContentId = blindMode ? hashHex({ appKey, ciphertextHash, id }) : null
+    let custodyIntent = null
+    if (blindMode) {
+      custodyIntent = await relays[0].seedingRegistry.publishCustodyIntent({
+        addressKey: appKey,
+        blindContentId,
+        ciphertextRoot: ciphertextHash,
+        contentVersion: 1,
+        requiredReplicas: relays.length,
+        deadline: Date.now() + 60_000,
+        retainUntil,
+        shardPolicy: 'all'
+      }, publisherKeyPair)
+    }
 
     for (let i = 0; i < relays.length; i++) {
       await relays[i].seedApp(appKey, {
         type: 'drive',
-        name: 'Observer Test Drive',
-        categories: ['testnet', 'files'],
-        privacyTier: 'public'
+        name: blindMode ? 'Observer Private Payload' : 'Observer Test Drive',
+        categories: blindMode ? ['testnet', 'blind'] : ['testnet', 'files'],
+        privacyTier: blindMode ? 'p2p-only' : 'public',
+        blind: blindMode,
+        storageClass: blindMode ? 'temporary' : 'persistent',
+        availabilityClass: blindMode ? 'atomic-handoff' : 'always-on',
+        custodyIntentId: custodyIntent?.intentId || null,
+        blindContentId,
+        ciphertextRoot: ciphertextHash,
+        contentVersion: blindMode ? 1 : null,
+        retainUntil,
+        shardIds: blindMode ? [i] : null
       })
     }
 
@@ -101,15 +148,70 @@ async function main () {
     }, 45_000)
 
     const beforePublisherStop = await fetchText(
-      `http://127.0.0.1:${basePort}/v1/hyper/${appKey}/hello.txt`
+      blindMode
+        ? `http://127.0.0.1:${basePort}/v1/hyper/${appKey}/sealed/manifest.json`
+        : `http://127.0.0.1:${basePort}/v1/hyper/${appKey}/hello.txt`
     )
 
     await publisher.stop()
     publisher = null
 
     const afterPublisherStop = await fetchText(
-      `http://127.0.0.1:${basePort + 1}/v1/hyper/${appKey}/docs/readme.md`
+      blindMode
+        ? `http://127.0.0.1:${basePort + 1}/v1/hyper/${appKey}/sealed/blob.bin`
+        : `http://127.0.0.1:${basePort + 1}/v1/hyper/${appKey}/docs/readme.md`
     )
+
+    let retainedCiphertext = null
+    let custodyStatus = null
+    if (blindMode) {
+      const relayEntry = relays[1].seededApps.get(appKey)
+      const retained = relayEntry ? await relayEntry.drive.get('/sealed/blob.bin') : null
+      const retainedHash = retained ? createHash('sha256').update(retained).digest('hex') : null
+      retainedCiphertext = {
+        bytes: retained ? retained.byteLength : 0,
+        expectedSha256: ciphertextHash,
+        retainedSha256: retainedHash,
+        matches: retainedHash === ciphertextHash
+      }
+
+      try {
+        await waitFor('local custody receipts', async () => {
+          return relays.every(relay => relay.seedingRegistry.getCustodyStatus(custodyIntent.intentId).receiptCount >= 1)
+        }, 15_000)
+      } catch (err) {
+        err.message += ' ' + JSON.stringify({
+          custodyEvents,
+          localReceiptCounts: relays.map(relay => relay.seedingRegistry.getCustodyStatus(custodyIntent.intentId).receiptCount)
+        })
+        throw err
+      }
+
+      custodyStatus = await waitFor('custody quorum receipts', async () => {
+        const status = relays[0].seedingRegistry.getCustodyStatus(custodyIntent.intentId)
+        return status.receiptCount >= relays.length ? status : null
+      }, 60_000)
+
+      await relays[0].seedingRegistry.publishCustodyCommit({
+        intentId: custodyIntent.intentId
+      }, publisherKeyPair)
+
+      await relays[0].seedingRegistry.publishSourceRetired({
+        intentId: custodyIntent.intentId
+      }, publisherKeyPair)
+
+      await relays[0].seedingRegistry.recordCustodyProof({
+        intentId: custodyIntent.intentId,
+        relayPubkey: b4a.toString(relays[1].swarm.keyPair.publicKey, 'hex'),
+        challengeNonce: hashHex({ id, challenge: 'blind-observer' }),
+        shardIds: [1],
+        blockIndices: [0],
+        passed: retainedHash === ciphertextHash,
+        latencyMs: 1
+      }, publisherKeyPair)
+
+      custodyStatus = relays[0].seedingRegistry.getCustodyStatus(custodyIntent.intentId)
+    }
 
     const catalogRes = await fetch(`http://127.0.0.1:${basePort}/catalog.json?pageSize=20`, {
       signal: AbortSignal.timeout(10_000)
@@ -131,6 +233,8 @@ async function main () {
               type: entry.type,
               name: entry.name,
               blind: entry.blind,
+              storageClass: entry.storageClass,
+              availabilityClass: entry.availabilityClass,
               privacyTier: entry.privacyTier,
               anchored: entry.anchored,
               anchoredLength: entry.anchoredLength
@@ -141,6 +245,7 @@ async function main () {
 
     console.log(JSON.stringify({
       ok: true,
+      mode: blindMode ? 'blind' : 'public',
       id,
       baseDir,
       basePort,
@@ -148,6 +253,19 @@ async function main () {
       discoveryKey,
       beforePublisherStop,
       afterPublisherStop,
+      retainedCiphertext,
+      custodyStatus: custodyStatus
+        ? {
+            intentId: custodyStatus.intentId,
+            receiptCount: custodyStatus.receiptCount,
+            quorumReached: custodyStatus.quorumReached,
+            committed: custodyStatus.committed,
+            sourceRetired: custodyStatus.sourceRetired,
+            proofCount: custodyStatus.proofCount,
+            passingProofs: custodyStatus.passingProofs,
+            relayQuorum: custodyStatus.relayQuorum
+          }
+        : null,
       catalogCounts: catalog.count,
       catalogFirstEntry: catalog.entries?.[0] || null,
       statuses

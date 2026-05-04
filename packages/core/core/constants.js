@@ -74,6 +74,8 @@ const FOUNDATION_TOPIC = _topicOf('hiverelay-foundation-v1')
  */
 const PRIVACY_TIERS = new Set(['public', 'local-first', 'p2p-only'])
 const CONTENT_TYPES = new Set(['app', 'drive', 'dataset', 'media'])
+const STORAGE_CLASSES = new Set(['persistent', 'temporary'])
+const AVAILABILITY_CLASSES = new Set(['always-on', 'best-effort', 'atomic-handoff'])
 
 /**
  * Normalize a privacy tier string.
@@ -101,6 +103,34 @@ function normalizeContentType (type, fallback = 'app') {
   if (type === undefined || type === null || type === '') return fallback
   const normalized = String(type).toLowerCase()
   return CONTENT_TYPES.has(normalized) ? normalized : fallback
+}
+
+/**
+ * Normalize a storage class string.
+ * Returns fallback when missing/invalid.
+ *
+ * @param {*} storageClass
+ * @param {string|null} [fallback='persistent']
+ * @returns {string|null}
+ */
+function normalizeStorageClass (storageClass, fallback = 'persistent') {
+  if (storageClass === undefined || storageClass === null || storageClass === '') return fallback
+  const normalized = String(storageClass).toLowerCase()
+  return STORAGE_CLASSES.has(normalized) ? normalized : fallback
+}
+
+/**
+ * Normalize an availability class string.
+ * Returns fallback when missing/invalid.
+ *
+ * @param {*} availabilityClass
+ * @param {string|null} [fallback='always-on']
+ * @returns {string|null}
+ */
+function normalizeAvailabilityClass (availabilityClass, fallback = 'always-on') {
+  if (availabilityClass === undefined || availabilityClass === null || availabilityClass === '') return fallback
+  const normalized = String(availabilityClass).toLowerCase()
+  return AVAILABILITY_CLASSES.has(normalized) ? normalized : fallback
 }
 
 // ─── Validation ──────────────────────────────────────────────
@@ -155,8 +185,12 @@ export {
   regionTopic,
   PRIVACY_TIERS,
   CONTENT_TYPES,
+  STORAGE_CLASSES,
+  AVAILABILITY_CLASSES,
   normalizePrivacyTier,
   normalizeContentType,
+  normalizeStorageClass,
+  normalizeAvailabilityClass,
   isValidHexKey,
   compareVersions,
   uint64ToBuffer

@@ -39,7 +39,14 @@ import { ServiceRegistry, ServiceProtocol } from '../services/index.js'
 import { PluginLoader } from '../plugin-loader.js'
 import { Router } from '../router/index.js'
 import { AppRegistry } from '../app-registry.js'
-import { RELAY_DISCOVERY_TOPIC, FOUNDATION_TOPIC, isValidHexKey, normalizePrivacyTier } from '../constants.js'
+import {
+  RELAY_DISCOVERY_TOPIC,
+  FOUNDATION_TOPIC,
+  isValidHexKey,
+  normalizeAvailabilityClass,
+  normalizePrivacyTier,
+  normalizeStorageClass
+} from '../constants.js'
 import { SwarmFirewall } from './swarm-firewall.js'
 import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
@@ -68,8 +75,11 @@ const DEFAULT_CONFIG = {
     requireEncryptedPayload: true,
     metadataVisibility: 'redacted',
     redactedCatalog: true,
-    proofTarget: 'ciphertext'
+    proofTarget: 'ciphertext',
+    defaultRetainMs: 30 * 24 * 60 * 60 * 1000
   },
+  custodyExpiryInterval: 60_000,
+  custodyExpiryGraceMs: 0,
   gatewayPublicOnlyPrivacyTier: true,
   requireSignedCatalog: false,
   catalogSignatureMaxAgeMs: 5 * 60 * 1000,
@@ -92,8 +102,8 @@ const DEFAULT_CONFIG = {
   federation: {
     enabled: false,
     followInterval: 5 * 60 * 1000, // 5 min poll for followed catalogs
-    followed: [],   // [{ url, pubkey?, mode: 'follow' }] — pulls catalogs, queues for review
-    mirrored: []    // [{ url, pubkey?, mode: 'mirror' }] — auto-accepts everything (use only for trusted partners)
+    followed: [], // [{ url, pubkey?, mode: 'follow' }] — pulls catalogs, queues for review
+    mirrored: [] // [{ url, pubkey?, mode: 'mirror' }] — auto-accepts everything (use only for trusted partners)
   },
   discovery: {
     dht: true,
@@ -287,6 +297,8 @@ export class RelayNode extends EventEmitter {
     this._lastAnchorCheckAt = null
     this._repairInterval = null
     this._lastRepairAt = null
+    this._custodyExpiryInterval = null
+    this._lastCustodyExpiryAt = null
     this.running = false
   }
 
@@ -828,6 +840,8 @@ export class RelayNode extends EventEmitter {
                   mountPath: app.mountPath || null,
                   privacyTier: app.privacyTier || null,
                   blind: app.blind || false,
+                  storageClass: app.storageClass || null,
+                  availabilityClass: app.availabilityClass || null,
                   author: app.author || null,
                   description: app.description || ''
                 }).then(() => {
@@ -847,7 +861,10 @@ export class RelayNode extends EventEmitter {
                 appKey,
                 publisherPubkey: app.author || app.publisherPubkey || null,
                 contentType: app.type || 'app',
-                privacyTier: app.privacyTier || 'public'
+                privacyTier: app.privacyTier || 'public',
+                blind: app.blind === true,
+                storageClass: app.storageClass || null,
+                availabilityClass: app.availabilityClass || null
               }
               const decision = this._decideAcceptance(synthRequest, acceptMode)
               if (decision === 'reject') {
@@ -864,7 +881,9 @@ export class RelayNode extends EventEmitter {
                   parentKey: app.parentKey || null,
                   mountPath: app.mountPath || null,
                   privacyTier: synthRequest.privacyTier,
-                  blind: app.blind || false,
+                  blind: synthRequest.blind,
+                  storageClass: synthRequest.storageClass,
+                  availabilityClass: synthRequest.availabilityClass,
                   author: synthRequest.publisherPubkey,
                   description: app.description || ''
                 }).then(() => {
@@ -947,6 +966,8 @@ export class RelayNode extends EventEmitter {
           this.seedingRegistry = null
         }
       }
+
+      this._startCustodyExpiryMonitor()
 
       // Load app registry from disk and reseed all persisted apps
       this._reseedFromRegistry().catch((err) => {
@@ -1046,6 +1067,7 @@ export class RelayNode extends EventEmitter {
       if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }
       if (this._anchorCheckInterval) { clearInterval(this._anchorCheckInterval); this._anchorCheckInterval = null }
       if (this._repairInterval) { clearInterval(this._repairInterval); this._repairInterval = null }
+      if (this._custodyExpiryInterval) { clearInterval(this._custodyExpiryInterval); this._custodyExpiryInterval = null }
       if (this.seedingRegistry) { try { await this.seedingRegistry.stop() } catch (_) {} this.seedingRegistry = null }
       if (this.settlementInterval) { clearInterval(this.settlementInterval); this.settlementInterval = null }
       if (this.holesailTransport) { try { await this.holesailTransport.stop() } catch (_) {} this.holesailTransport = null }
@@ -1680,7 +1702,10 @@ export class RelayNode extends EventEmitter {
               type: req.contentType || req.type || 'app',
               parentKey: req.parentKey || null,
               mountPath: req.mountPath || null,
-              privacyTier: req.privacyTier || 'public'
+              privacyTier: req.privacyTier || 'public',
+              blind: req.blind === true,
+              storageClass: req.storageClass || null,
+              availabilityClass: req.availabilityClass || null
             })
             this.emit('reseeded', { appKey: req.appKey, source: 'registry' })
           } catch (err) {
@@ -1720,7 +1745,10 @@ export class RelayNode extends EventEmitter {
             type: req.contentType || req.type || 'app',
             parentKey: req.parentKey || null,
             mountPath: req.mountPath || null,
-            privacyTier: req.privacyTier || 'public'
+            privacyTier: req.privacyTier || 'public',
+            blind: req.blind === true,
+            storageClass: req.storageClass || null,
+            availabilityClass: req.availabilityClass || null
           })
           await this.seedingRegistry.recordAcceptance(
             req.appKey,
@@ -1791,7 +1819,10 @@ export class RelayNode extends EventEmitter {
       type: req.contentType || req.type || 'app',
       parentKey: req.parentKey || null,
       mountPath: req.mountPath || null,
-      privacyTier: req.privacyTier || 'public'
+      privacyTier: req.privacyTier || 'public',
+      blind: req.blind === true,
+      storageClass: req.storageClass || null,
+      availabilityClass: req.availabilityClass || null
     })
     if (this.seedingRegistry) {
       await this.seedingRegistry.recordAcceptance(appKeyHex, myPubkey, region || 'unknown')
@@ -1861,6 +1892,9 @@ export class RelayNode extends EventEmitter {
         revocable: msg.revocable !== false,
         unseedFreezeMs: msg.unseedFreezeMs || 0,
         durability: msg.durability || 0,
+        blind: msg.blind === true,
+        storageClass: msg.storageClass || null,
+        availabilityClass: msg.availabilityClass || null,
         discoveredAt: Date.now(),
         mode: acceptMode,
         source: 'seed-protocol'
@@ -1922,7 +1956,10 @@ export class RelayNode extends EventEmitter {
       publisherPubkey: effectivePublisher || publisherHex,
       revocable: msg.revocable !== false,
       unseedFreezeMs: msg.unseedFreezeMs || 0,
-      durability: msg.durability || 0
+      durability: msg.durability || 0,
+      blind: msg.blind === true,
+      storageClass: msg.storageClass || null,
+      availabilityClass: msg.availabilityClass || null
     }).catch((err) => {
       this.emit('seed-error', { appKey: appKeyHex, error: err })
     })
@@ -2069,6 +2106,83 @@ export class RelayNode extends EventEmitter {
     this.emit('repair-pass', { ...result, at: this._lastRepairAt })
   }
 
+  // ─── Temporary custody expiry loop ────────────────────────────────
+  //
+  // The availability plane and atomic custody plane have opposite defaults:
+  // apps/services should be kept online, while blind handoff payloads should
+  // self-remove after their signed retain-until window. This loop enforces the
+  // local storage side of that promise. It does not claim forensic disk erasure;
+  // it removes active swarm serving, closes the drive, and drops registry state.
+  _startCustodyExpiryMonitor () {
+    if (this._custodyExpiryInterval) {
+      clearInterval(this._custodyExpiryInterval)
+      this._custodyExpiryInterval = null
+    }
+    if (this.config.custody?.enabled === false) return
+
+    const intervalMs = Math.max(10_000, Number(this.config.custodyExpiryInterval) || 60_000)
+    this._custodyExpiryInterval = setInterval(() => {
+      this._runCustodyExpiryPass().catch((err) => {
+        this.emit('custody-expiry-error', { error: err.message || String(err) })
+      })
+    }, intervalMs)
+    if (this._custodyExpiryInterval.unref) this._custodyExpiryInterval.unref()
+
+    setTimeout(() => {
+      this._runCustodyExpiryPass().catch(() => {})
+    }, 5000)
+  }
+
+  _isTemporaryCustodyEntry (entry) {
+    if (!entry) return false
+    const storageClass = normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent')
+    const availabilityClass = normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on')
+    return storageClass === 'temporary' ||
+      availabilityClass === 'atomic-handoff' ||
+      (entry.blind === true && Number.isFinite(entry.retainUntil))
+  }
+
+  async _runCustodyExpiryPass (now = Date.now()) {
+    if (!this.appRegistry) return { checked: 0, expired: 0, skipped: 0 }
+
+    const graceMs = Math.max(0, Number(this.config.custodyExpiryGraceMs) || 0)
+    const expiredKeys = []
+    let checked = 0
+    let skipped = 0
+
+    for (const [appKey, entry] of this.appRegistry.apps) {
+      if (!this._isTemporaryCustodyEntry(entry)) {
+        skipped++
+        continue
+      }
+      checked++
+      const retainUntil = Number(entry.retainUntil)
+      if (!Number.isFinite(retainUntil) || retainUntil <= 0) {
+        skipped++
+        continue
+      }
+      if ((retainUntil + graceMs) <= now) {
+        expiredKeys.push({ appKey, retainUntil })
+      }
+    }
+
+    let expired = 0
+    for (const { appKey, retainUntil } of expiredKeys) {
+      try {
+        await this.unseedApp(appKey)
+        expired++
+        this.emit('custody-expired', { appKey, retainUntil, at: now })
+      } catch (err) {
+        this.emit('custody-expiry-error', { appKey, error: err.message || String(err) })
+      }
+    }
+
+    this._lastCustodyExpiryAt = now
+    const result = { checked, expired, skipped }
+    this.emit('custody-expiry-pass', { ...result, at: now })
+    return result
+  }
+
   // ─── Cold-start primer ────────────────────────────────────────
   //
   // When a fresh relay (or one with empty/lost registry) boots, it has
@@ -2119,6 +2233,8 @@ export class RelayNode extends EventEmitter {
               mountPath: e.mountPath || null,
               privacyTier: e.privacyTier || null,
               blind: e.blind || false,
+              storageClass: e.storageClass || null,
+              availabilityClass: e.availabilityClass || null,
               author: e.author || null,
               description: e.description || ''
             })
@@ -2211,7 +2327,11 @@ export class RelayNode extends EventEmitter {
       try {
         const length = drive.version || 0
         if (length > 0) {
+          const wasAnchored = entry.anchored === true
           this.appRegistry.setAnchored(appKey, length)
+          if (!wasAnchored && this.appLifecycle && typeof this.appLifecycle._recordCustodyReceipt === 'function') {
+            await this.appLifecycle._recordCustodyReceipt(appKey, entry, length)
+          }
           anchored++
         } else {
           // No blocks — clear anchored if it was set, record the check
@@ -2351,6 +2471,12 @@ export class RelayNode extends EventEmitter {
     if (this._replicationCheckInterval) { clearInterval(this._replicationCheckInterval); this._replicationCheckInterval = null }
     this._replicationHealth.clear()
     this._lastReplicationCheckAt = null
+    if (this._anchorCheckInterval) { clearInterval(this._anchorCheckInterval); this._anchorCheckInterval = null }
+    this._lastAnchorCheckAt = null
+    if (this._repairInterval) { clearInterval(this._repairInterval); this._repairInterval = null }
+    this._lastRepairAt = null
+    if (this._custodyExpiryInterval) { clearInterval(this._custodyExpiryInterval); this._custodyExpiryInterval = null }
+    this._lastCustodyExpiryAt = null
     if (this.holesailTransport) {
       try { await withTimeout(this.holesailTransport.stop(), timeout, 'holesailTransport.stop') } catch (_) {}
       this.holesailTransport = null

@@ -13,3 +13,14 @@ export { HiveRelayClient } from '../client/index.js'
 export { Router } from './router/index.js'
 export { PubSub } from './router/pubsub.js'
 export { WorkerPool } from './router/worker-pool.js'
+export {
+  createCustodyIntent,
+  createCustodyReceipt,
+  createCustodyCommit,
+  createSourceRetired,
+  createCustodyProof,
+  verifyCustodyEntry,
+  computeReceiptRoot,
+  summarizeCustodyStatus,
+  hashHex
+} from './custody-signing.js'

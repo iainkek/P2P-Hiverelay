@@ -657,6 +657,8 @@ async function startTestnet () {
 
 const VALID_PRIVACY_TIERS = new Set(['public', 'local-first', 'p2p-only'])
 const VALID_CONTENT_TYPES = new Set(['app', 'drive', 'dataset', 'media'])
+const VALID_STORAGE_CLASSES = new Set(['persistent', 'temporary'])
+const VALID_AVAILABILITY_CLASSES = new Set(['always-on', 'best-effort', 'atomic-handoff'])
 const GHOSTDRIVE_DEFAULT_CATEGORIES = ['ghost-drive', 'files']
 
 async function seed () {
@@ -824,6 +826,9 @@ Options:
   --author <text>              Catalog author
   --categories <a,b,c>         Catalog categories (default: ghost-drive,files)
   --privacy-tier <tier>        public | local-first | p2p-only (default: public)
+  --blind                      Mark content as blind/opaque relay custody
+  --storage-class <class>      persistent | temporary
+  --availability-class <class> always-on | best-effort | atomic-handoff
   --replicas <n>               Publish target replication factor (default: 3)
   --geo <region>               Publish geo preference (e.g. NA,EU,AS)
   --ttl <days>                 Publish TTL days (default: 30)
@@ -843,6 +848,9 @@ async function seedAppViaApi ({ relay, apiKey, appKey, metadata }) {
   if (metadata.author) body.author = metadata.author
   if (metadata.categories && metadata.categories.length > 0) body.categories = metadata.categories
   if (metadata.privacyTier) body.privacyTier = metadata.privacyTier
+  if (metadata.blind === true) body.blind = true
+  if (metadata.storageClass) body.storageClass = metadata.storageClass
+  if (metadata.availabilityClass) body.availabilityClass = metadata.availabilityClass
   return relayRequestJson(relay, '/seed', {
     method: 'POST',
     body,
@@ -929,6 +937,13 @@ function collectSeedMetadata (argv) {
   if (argv['privacy-tier'] !== undefined) {
     metadata.privacyTier = parsePrivacyTierOrExit(argv['privacy-tier'])
   }
+  if (argv.blind === true) metadata.blind = true
+  if (argv['storage-class'] !== undefined) {
+    metadata.storageClass = parseStorageClassOrExit(argv['storage-class'])
+  }
+  if (argv['availability-class'] !== undefined) {
+    metadata.availabilityClass = parseAvailabilityClassOrExit(argv['availability-class'])
+  }
   return metadata
 }
 
@@ -943,6 +958,9 @@ function collectGhostDriveMetadata (argv, driveKey) {
   if (!metadata.author) metadata.author = 'ghost-drive-user'
   metadata.categories = parseCategories(argv.categories, GHOSTDRIVE_DEFAULT_CATEGORIES)
   if (!metadata.privacyTier) metadata.privacyTier = 'public'
+  if (metadata.blind === true && argv['privacy-tier'] === undefined) metadata.privacyTier = 'p2p-only'
+  if (metadata.blind === true && argv['storage-class'] === undefined) metadata.storageClass = 'temporary'
+  if (metadata.blind === true && argv['availability-class'] === undefined) metadata.availabilityClass = 'atomic-handoff'
   return metadata
 }
 
@@ -959,6 +977,9 @@ function collectRegistryOptions (argv, appKey, metadata = {}) {
   if (metadata.type) body.contentType = metadata.type
   if (metadata.parentKey) body.parentKey = metadata.parentKey
   if (metadata.mountPath) body.mountPath = metadata.mountPath
+  if (metadata.blind === true) body.blind = true
+  if (metadata.storageClass) body.storageClass = metadata.storageClass
+  if (metadata.availabilityClass) body.availabilityClass = metadata.availabilityClass
 
   if (argv.geo !== undefined) {
     const geo = parseCsvValues(argv.geo)
@@ -1066,6 +1087,26 @@ function parseContentTypeOrExit (value) {
   return type
 }
 
+function parseStorageClassOrExit (value) {
+  const storageClass = String(value || '').trim().toLowerCase()
+  if (!VALID_STORAGE_CLASSES.has(storageClass)) {
+    console.error('Invalid storage class: ' + value)
+    console.error('Valid storage classes: persistent, temporary')
+    process.exit(1)
+  }
+  return storageClass
+}
+
+function parseAvailabilityClassOrExit (value) {
+  const availabilityClass = String(value || '').trim().toLowerCase()
+  if (!VALID_AVAILABILITY_CLASSES.has(availabilityClass)) {
+    console.error('Invalid availability class: ' + value)
+    console.error('Valid availability classes: always-on, best-effort, atomic-handoff')
+    process.exit(1)
+  }
+  return availabilityClass
+}
+
 function isValidHexKey (value, length = 64) {
   return typeof value === 'string' && new RegExp(`^[0-9a-fA-F]{${length}}$`).test(value)
 }
@@ -1158,6 +1199,9 @@ Seed / Ghost Drive Options:
   --author <text>               Catalog author
   --categories <a,b,c>          Catalog categories
   --privacy-tier <tier>         public | local-first | p2p-only
+  --blind                       Mark content as blind/opaque relay custody
+  --storage-class <class>       persistent | temporary
+  --availability-class <class>  always-on | best-effort | atomic-handoff
   --publish                     Also publish /registry/publish request
   --replicas <n>                Replication target (default: 3)
   --geo <region>                Geo preference (e.g. NA,EU,AS)

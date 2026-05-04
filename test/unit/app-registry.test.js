@@ -22,7 +22,9 @@ test('AppRegistry: catalog keeps drive entries while deduplicating apps by appId
     type: 'drive',
     appId: 'peer-chat',
     version: '2026.04',
-    name: 'Peer Chat Attachments'
+    name: 'Peer Chat Attachments',
+    storageClass: 'persistent',
+    availabilityClass: 'always-on'
   })
 
   const catalog = registry.catalog()
@@ -33,6 +35,8 @@ test('AppRegistry: catalog keeps drive entries while deduplicating apps by appId
   t.is(apps[0].appKey, 'b'.repeat(64), 'latest app version kept')
   t.is(drives.length, 1, 'drive entry is retained')
   t.is(drives[0].appKey, 'c'.repeat(64), 'drive entry key is preserved')
+  t.is(drives[0].storageClass, 'persistent', 'storage class is exposed')
+  t.is(drives[0].availabilityClass, 'always-on', 'availability class is exposed')
 })
 
 test('AppRegistry: catalogByType and catalogForBroadcast include content metadata', (t) => {
@@ -54,4 +58,64 @@ test('AppRegistry: catalogByType and catalogForBroadcast include content metadat
   t.is(broadcast[0].type, 'drive', 'broadcast includes content type')
   t.is(broadcast[0].parentKey, 'e'.repeat(64), 'broadcast includes parentKey')
   t.is(broadcast[0].mountPath, '/data', 'broadcast includes mountPath')
+})
+
+test('AppRegistry: redacted catalog hides blind/private metadata', (t) => {
+  const registry = new AppRegistry(null)
+  registry.set('f'.repeat(64), {
+    type: 'drive',
+    appId: 'ghost-drive-tax-docs',
+    name: 'Alice Tax Docs',
+    description: 'Sensitive receipts and invoices',
+    author: 'alice',
+    categories: ['ghost-drive', 'tax'],
+    privacyTier: 'p2p-only',
+    blind: true,
+    storageClass: 'temporary',
+    availabilityClass: 'atomic-handoff',
+    parentKey: 'a'.repeat(64),
+    mountPath: '/private',
+    discoveryKey: 'b'.repeat(64)
+  })
+
+  const raw = registry.catalog()[0]
+  t.is(raw.name, 'Alice Tax Docs', 'raw internal catalog preserves operator metadata')
+  t.is(raw.driveKey, 'f'.repeat(64), 'raw internal catalog preserves drive key')
+
+  const redacted = registry.catalog({ redactPrivate: true })[0]
+  t.is(redacted.redacted, true, 'redacted flag is set')
+  t.is(redacted.name, 'Private Content', 'name is redacted')
+  t.is(redacted.description, '', 'description is redacted')
+  t.is(redacted.author, 'redacted', 'author is redacted')
+  t.alike(redacted.categories, ['private'], 'categories are redacted')
+  t.is(redacted.appKey, null, 'address key is hidden')
+  t.is(redacted.driveKey, null, 'drive key is hidden from public catalog field')
+  t.is(redacted.discoveryKey, null, 'discovery key is hidden')
+  t.is(redacted.parentKey, null, 'parent key is hidden')
+  t.is(redacted.mountPath, null, 'mount path is hidden')
+  t.is(redacted.storageClass, 'temporary', 'redacted catalog preserves storage class')
+  t.is(redacted.availabilityClass, 'atomic-handoff', 'redacted catalog preserves availability class')
+
+  const broadcast = registry.catalogForBroadcast()[0]
+  t.is(broadcast.redacted, true, 'broadcast marks blind entries redacted')
+  t.is(broadcast.appId, null, 'broadcast appId is redacted')
+  t.is(broadcast.discoveryKey, null, 'broadcast discovery key is redacted')
+  t.is(broadcast.storageClass, 'temporary', 'broadcast includes storage class')
+  t.is(broadcast.availabilityClass, 'atomic-handoff', 'broadcast includes availability class')
+})
+
+test('AppRegistry: blind entries default to temporary atomic custody', (t) => {
+  const registry = new AppRegistry(null)
+  registry.set('1'.repeat(64), {
+    type: 'drive',
+    blind: true
+  })
+
+  const entry = registry.get('1'.repeat(64))
+  t.is(entry.storageClass, 'temporary', 'blind storage defaults to temporary')
+  t.is(entry.availabilityClass, 'atomic-handoff', 'blind availability defaults to atomic handoff')
+
+  const catalog = registry.catalog()[0]
+  t.is(catalog.storageClass, 'temporary', 'catalog exposes default storage class')
+  t.is(catalog.availabilityClass, 'atomic-handoff', 'catalog exposes default availability class')
 })

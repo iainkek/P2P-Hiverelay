@@ -10,7 +10,24 @@ import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import Protomux from 'protomux'
 import { EventEmitter } from 'events'
-import { isValidHexKey, normalizeContentType, normalizePrivacyTier } from '../constants.js'
+import {
+  isValidHexKey,
+  normalizeAvailabilityClass,
+  normalizeContentType,
+  normalizePrivacyTier,
+  normalizeStorageClass
+} from '../constants.js'
+import {
+  computeReceiptRoot,
+  createCustodyCommit,
+  createCustodyIntent,
+  createCustodyProof,
+  createCustodyReceipt,
+  createSourceRetired,
+  summarizeCustodyStatus,
+  validateCustodyTransition,
+  verifyCustodyEntry
+} from '../custody-signing.js'
 
 // Well-known topic for registry discovery
 const REGISTRY_TOPIC = b4a.alloc(32)
@@ -20,6 +37,7 @@ const MSG_ANNOUNCE_LOG = 0
 const REGISTRY_META_PROTOCOL = 'hiverelay-registry-meta'
 const REGISTRY_META_ID = b4a.from('registry-meta-v1')
 const MAX_DISCOVERY_KEYS = 128
+const MAX_REGISTRY_ENTRY_BYTES = 64 * 1024
 const MAX_ENTRY_FUTURE_SKEW_MS = 10 * 60 * 1000
 const MAX_ENTRY_AGE_MS = 180 * 24 * 60 * 60 * 1000
 
@@ -64,6 +82,12 @@ export class SeedingRegistry extends EventEmitter {
     this._requests = new Map() // appKey -> latest seed-request entry
     this._acceptances = new Map() // appKey -> [{ relayPubkey, region, timestamp }]
     this._cancellations = new Map() // appKey:publisherPubkey -> cancellation timestamp
+    this._custodyIntents = new Map() // intentId -> custody-intent
+    this._custodyReceipts = new Map() // intentId -> Map(relayPubkey -> custody-receipt)
+    this._custodyCommits = new Map() // intentId -> custody-commit
+    this._sourceRetirements = new Map() // intentId -> source-retired
+    this._custodyProofs = new Map() // intentId -> custody-proof[]
+    this._custodyStatusCache = new Map()
 
     this._indexedOffsets = new Map() // logId -> indexed block count
     this._peerLogMeta = new Map() // logKeyHex -> { log, onAppend }
@@ -263,6 +287,15 @@ export class SeedingRegistry extends EventEmitter {
       try {
         const block = await log.get(i)
         if (!block) continue
+        if (block.byteLength > MAX_REGISTRY_ENTRY_BYTES) {
+          this.emit('entry-rejected', {
+            reason: 'registry-entry-too-large',
+            logId: id,
+            index: i,
+            bytes: block.byteLength
+          })
+          continue
+        }
         const entry = JSON.parse(b4a.toString(block))
         this._applyEntry(entry, { logId: id, peerPubkey: source?.peerPubkey || null })
       } catch (err) {
@@ -286,6 +319,50 @@ export class SeedingRegistry extends EventEmitter {
     if (!entry || typeof entry !== 'object') return null
     if (!this._isPlausibleTimestamp(entry.timestamp)) return null
 
+    if (
+      entry.type === 'custody-intent' ||
+      entry.type === 'custody-receipt' ||
+      entry.type === 'custody-commit' ||
+      entry.type === 'source-retired' ||
+      entry.type === 'custody-proof'
+    ) {
+      const verified = verifyCustodyEntry(entry)
+      if (!verified.valid) {
+        this.emit('custody-entry-rejected', {
+          type: entry.type,
+          intentId: entry.intentId || null,
+          reason: verified.reason
+        })
+        return null
+      }
+
+      const custodyEntry = verified.entry
+      if (source.peerPubkey) {
+        const peer = source.peerPubkey.toLowerCase()
+        if (custodyEntry.type === 'custody-receipt' && custodyEntry.relayPubkey !== peer) return null
+        if (custodyEntry.type === 'custody-proof' && custodyEntry.observerPubkey !== peer) return null
+      }
+
+      // Receipts can be validated as soon as their intent is known. Commits
+      // and source-retirement checkpoints may arrive before all peer receipt
+      // logs have synced, so we index their valid signatures and only mark
+      // them effective inside getCustodyStatus() once quorum data is present.
+      if (custodyEntry.type === 'custody-receipt') {
+        const status = this.getCustodyStatus(custodyEntry.intentId)
+        const transition = validateCustodyTransition(custodyEntry, status)
+        if (!transition.valid) {
+          this.emit('custody-entry-rejected', {
+            type: custodyEntry.type,
+            intentId: custodyEntry.intentId,
+            reason: transition.reason
+          })
+          return null
+        }
+      }
+
+      return custodyEntry
+    }
+
     const appKey = typeof entry.appKey === 'string' ? entry.appKey.toLowerCase() : null
     if (!appKey || !isValidHexKey(appKey, 64)) return null
 
@@ -297,16 +374,18 @@ export class SeedingRegistry extends EventEmitter {
 
       const discoveryKeys = Array.isArray(entry.discoveryKeys)
         ? entry.discoveryKeys
-            .filter(dk => typeof dk === 'string' && isValidHexKey(dk, 64))
-            .slice(0, MAX_DISCOVERY_KEYS)
-            .map(dk => dk.toLowerCase())
+          .filter(dk => typeof dk === 'string' && isValidHexKey(dk, 64))
+          .slice(0, MAX_DISCOVERY_KEYS)
+          .map(dk => dk.toLowerCase())
         : []
 
       return {
         ...entry,
         appKey,
         publisherPubkey,
-        discoveryKeys
+        discoveryKeys,
+        storageClass: normalizeStorageClass(entry.storageClass, entry.blind ? 'temporary' : 'persistent'),
+        availabilityClass: normalizeAvailabilityClass(entry.availabilityClass, entry.blind ? 'atomic-handoff' : 'always-on')
       }
     }
 
@@ -392,6 +471,63 @@ export class SeedingRegistry extends EventEmitter {
       ) {
         this._requests.delete(entry.appKey)
       }
+      return
+    }
+
+    if (entry.type === 'custody-intent') {
+      const current = this._custodyIntents.get(entry.intentId)
+      if (!current || current.timestamp <= entry.timestamp) {
+        this._custodyIntents.set(entry.intentId, entry)
+        this._invalidateCustodyStatus(entry.intentId)
+      }
+      return
+    }
+
+    if (entry.type === 'custody-receipt') {
+      if (!this._custodyReceipts.has(entry.intentId)) {
+        this._custodyReceipts.set(entry.intentId, new Map())
+      }
+      const receipts = this._custodyReceipts.get(entry.intentId)
+      const current = receipts.get(entry.relayPubkey)
+      if (!current || current.timestamp <= entry.timestamp) {
+        receipts.set(entry.relayPubkey, entry)
+        this._invalidateCustodyStatus(entry.intentId)
+      }
+      return
+    }
+
+    if (entry.type === 'custody-commit') {
+      const current = this._custodyCommits.get(entry.intentId)
+      if (!current || current.timestamp <= entry.timestamp) {
+        this._custodyCommits.set(entry.intentId, entry)
+        this._invalidateCustodyStatus(entry.intentId)
+      }
+      return
+    }
+
+    if (entry.type === 'source-retired') {
+      const current = this._sourceRetirements.get(entry.intentId)
+      if (!current || current.timestamp <= entry.timestamp) {
+        this._sourceRetirements.set(entry.intentId, entry)
+        this._invalidateCustodyStatus(entry.intentId)
+      }
+      return
+    }
+
+    if (entry.type === 'custody-proof') {
+      if (!this._custodyProofs.has(entry.intentId)) {
+        this._custodyProofs.set(entry.intentId, [])
+      }
+      const list = this._custodyProofs.get(entry.intentId)
+      const key = `${entry.observerPubkey}:${entry.relayPubkey}:${entry.challengeNonce}`
+      const idx = list.findIndex(p => `${p.observerPubkey}:${p.relayPubkey}:${p.challengeNonce}` === key)
+      if (idx === -1) {
+        list.push(entry)
+        this._invalidateCustodyStatus(entry.intentId)
+      } else if (list[idx].timestamp <= entry.timestamp) {
+        list[idx] = entry
+        this._invalidateCustodyStatus(entry.intentId)
+      }
     }
   }
 
@@ -401,6 +537,9 @@ export class SeedingRegistry extends EventEmitter {
   async publishRequest (request) {
     const privacyTier = normalizePrivacyTier(request.privacyTier, 'public')
     const contentType = normalizeContentType(request.contentType || request.type, 'app')
+    const blind = request.blind === true
+    const storageClass = normalizeStorageClass(request.storageClass, blind ? 'temporary' : 'persistent')
+    const availabilityClass = normalizeAvailabilityClass(request.availabilityClass, blind ? 'atomic-handoff' : 'always-on')
     const parentKey = typeof request.parentKey === 'string' && isValidHexKey(request.parentKey, 64)
       ? request.parentKey
       : null
@@ -421,6 +560,9 @@ export class SeedingRegistry extends EventEmitter {
       bountyRate: request.bountyRate || 0,
       ttlSeconds: request.ttlSeconds || 30 * 24 * 3600, // 30 days default
       privacyTier,
+      blind,
+      storageClass,
+      availabilityClass,
       publisherPubkey: b4a.toString(request.publisherPubkey, 'hex')
     }
 
@@ -445,6 +587,76 @@ export class SeedingRegistry extends EventEmitter {
     await this.localLog.append(b4a.from(JSON.stringify(entry)))
     this._applyEntry(entry)
     this.emit('acceptance-recorded', entry)
+    return entry
+  }
+
+  async publishCustodyIntent (intent, publisherKeyPair) {
+    const entry = intent.signature
+      ? this._verifiedCustodyEntry(intent)
+      : createCustodyIntent(intent, publisherKeyPair)
+    return this._appendCustodyEntry(entry, 'custody-intent-published')
+  }
+
+  async recordCustodyReceipt (receipt, relayKeyPair) {
+    const entry = receipt.signature
+      ? this._verifiedCustodyEntry(receipt)
+      : createCustodyReceipt(receipt, relayKeyPair)
+    return this._appendCustodyEntry(entry, 'custody-receipt-recorded')
+  }
+
+  async publishCustodyCommit (commit, publisherKeyPair) {
+    const intent = this._custodyIntents.get(commit.intentId)
+    const receipts = this.getCustodyReceipts(commit.intentId)
+    const entry = commit.signature
+      ? this._verifiedCustodyEntry(commit)
+      : createCustodyCommit({
+        ...commit,
+        blindContentId: commit.blindContentId || intent?.blindContentId,
+        ciphertextRoot: commit.ciphertextRoot || intent?.ciphertextRoot,
+        contentVersion: commit.contentVersion ?? intent?.contentVersion,
+        relayQuorum: commit.relayQuorum || receipts.map(r => r.relayPubkey).sort(),
+        receiptRoot: commit.receiptRoot || computeReceiptRoot(receipts),
+        receipts
+      }, publisherKeyPair)
+    return this._appendCustodyEntry(entry, 'custody-commit-published')
+  }
+
+  async publishSourceRetired (retirement, publisherKeyPair) {
+    const intent = this._custodyIntents.get(retirement.intentId)
+    const entry = retirement.signature
+      ? this._verifiedCustodyEntry(retirement)
+      : createSourceRetired({
+        ...retirement,
+        blindContentId: retirement.blindContentId || intent?.blindContentId,
+        retiredAtVersion: retirement.retiredAtVersion ?? intent?.contentVersion
+      }, publisherKeyPair)
+    return this._appendCustodyEntry(entry, 'source-retired-published')
+  }
+
+  async recordCustodyProof (proof, observerKeyPair) {
+    const intent = this._custodyIntents.get(proof.intentId)
+    const entry = proof.signature
+      ? this._verifiedCustodyEntry(proof)
+      : createCustodyProof({
+        ...proof,
+        blindContentId: proof.blindContentId || intent?.blindContentId
+      }, observerKeyPair)
+    return this._appendCustodyEntry(entry, 'custody-proof-recorded')
+  }
+
+  _verifiedCustodyEntry (entry) {
+    const verified = verifyCustodyEntry(entry)
+    if (!verified.valid) throw new Error(`INVALID_CUSTODY_ENTRY: ${verified.reason}`)
+    return verified.entry
+  }
+
+  async _appendCustodyEntry (entry, eventName) {
+    const status = this.getCustodyStatus(entry.intentId)
+    const transition = validateCustodyTransition(entry, status)
+    if (!transition.valid) throw new Error(`INVALID_CUSTODY_TRANSITION: ${transition.reason}`)
+    await this.localLog.append(b4a.from(JSON.stringify(entry)))
+    this._applyEntry(entry)
+    this.emit(eventName, entry)
     return entry
   }
 
@@ -501,6 +713,52 @@ export class SeedingRegistry extends EventEmitter {
     return this._acceptances.get(appKeyHex) || []
   }
 
+  getCustodyIntent (intentId) {
+    return this._custodyIntents.get(intentId) || null
+  }
+
+  getCustodyReceipts (intentId) {
+    return Array.from(this._custodyReceipts.get(intentId)?.values() || [])
+  }
+
+  getCustodyProofs (intentId) {
+    return [...(this._custodyProofs.get(intentId) || [])]
+  }
+
+  getCustodyStatus (intentId) {
+    const cached = this._custodyStatusCache.get(intentId)
+    if (cached) return cached
+    const intent = this._custodyIntents.get(intentId) || null
+    const receipts = this.getCustodyReceipts(intentId)
+    const rawCommit = this._custodyCommits.get(intentId) || null
+    const sourceRetired = this._sourceRetirements.get(intentId) || null
+    const proofs = this.getCustodyProofs(intentId)
+    const commitCheck = rawCommit
+      ? validateCustodyTransition(rawCommit, { intent, receipts })
+      : { valid: false, reason: 'no commit' }
+    const commit = commitCheck.valid ? rawCommit : null
+    const retirementCheck = sourceRetired
+      ? validateCustodyTransition(sourceRetired, { intent, receipts, commit })
+      : { valid: false, reason: 'no source retirement' }
+    const effectiveRetirement = retirementCheck.valid ? sourceRetired : null
+    const status = {
+      ...summarizeCustodyStatus(intent, receipts, commit, effectiveRetirement, proofs),
+      intent,
+      receipts,
+      commit,
+      commitPendingReason: rawCommit && !commit ? commitCheck.reason : null,
+      sourceRetirement: effectiveRetirement,
+      sourceRetirementPendingReason: sourceRetired && !effectiveRetirement ? retirementCheck.reason : null,
+      proofs
+    }
+    this._custodyStatusCache.set(intentId, status)
+    return status
+  }
+
+  _invalidateCustodyStatus (intentId) {
+    if (intentId) this._custodyStatusCache.delete(intentId)
+  }
+
   get key () {
     return this.localLog ? this.localLog.key : null
   }
@@ -534,6 +792,7 @@ export class SeedingRegistry extends EventEmitter {
     this.peerLogs.clear()
     this._peerLogMeta.clear()
     this._indexedOffsets.clear()
+    this._custodyStatusCache.clear()
     this.emit('stopped')
   }
 }

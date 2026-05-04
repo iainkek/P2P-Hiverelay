@@ -179,22 +179,15 @@ export class GatewayServer extends EventEmitter {
     const typeFilter = normalizeContentType(url.searchParams.get('type'), null)
 
     const registry = this.node.appRegistry
-    const catalog = registry ? registry.catalog() : { apps: [], drives: [], resources: [], datasets: [], media: [] }
+    const catalog = registry
+      ? registry.catalog({
+        redactPrivate: this.node.config?.custody?.redactedCatalog !== false
+      })
+      : []
 
-    let items = []
-    if (typeFilter === 'app') items = catalog.apps || []
-    else if (typeFilter === 'drive') items = catalog.drives || []
-    else if (typeFilter === 'dataset') items = catalog.datasets || []
-    else if (typeFilter === 'media') items = catalog.media || []
-    else {
-      items = [
-        ...(catalog.apps || []),
-        ...(catalog.drives || []),
-        ...(catalog.resources || []),
-        ...(catalog.datasets || []),
-        ...(catalog.media || [])
-      ]
-    }
+    const items = typeFilter
+      ? catalog.filter(item => item.type === typeFilter)
+      : catalog
 
     const start = (page - 1) * pageSize
     const paginated = items.slice(start, start + pageSize)

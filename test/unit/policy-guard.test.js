@@ -45,6 +45,13 @@ test('PolicyGuard - p2p-only tier + replicate-user-data → suspended', (t) => {
   t.is(result.suspended, true)
 })
 
+test('PolicyGuard - p2p-only tier + replicate-encrypted-data → allowed', (t) => {
+  const guard = new PolicyGuard()
+  const result = guard.check('aabb', 'p2p-only', 'replicate-encrypted-data')
+  t.ok(result.allowed)
+  t.absent(result.suspended)
+})
+
 test('PolicyGuard - public tier + store-on-relay → allowed', (t) => {
   const guard = new PolicyGuard()
   const result = guard.check('aabb', 'public', 'store-on-relay')

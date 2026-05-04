@@ -148,7 +148,10 @@ test('api-auth: POST /seed forwards metadata fields with auth', async (t) => {
     description: 'Pinned drive for catalog testing',
     author: 'integration-test',
     categories: ['ghost-drive', 'files'],
-    privacyTier: 'public'
+    privacyTier: 'public',
+    blind: true,
+    storageClass: 'temporary',
+    availabilityClass: 'atomic-handoff'
   }, {
     Authorization: 'Bearer ' + API_KEY
   })
@@ -167,6 +170,9 @@ test('api-auth: POST /seed forwards metadata fields with auth', async (t) => {
   t.is(lastCall.opts.author, 'integration-test', 'author forwarded')
   t.alike(lastCall.opts.categories, ['ghost-drive', 'files'], 'categories forwarded')
   t.is(lastCall.opts.privacyTier, 'public', 'privacy tier forwarded')
+  t.is(lastCall.opts.blind, true, 'blind flag forwarded')
+  t.is(lastCall.opts.storageClass, 'temporary', 'storage class forwarded')
+  t.is(lastCall.opts.availabilityClass, 'atomic-handoff', 'availability class forwarded')
 })
 
 test('api-auth: GET /catalog.json supports type filtering and typed buckets', async (t) => {
@@ -181,23 +187,19 @@ test('api-auth: GET /catalog.json supports type filtering and typed buckets', as
 })
 
 test('api-auth: GET /api/drives returns only seeded drives', async (t) => {
-  const now = Date.now()
-  node.seededApps.clear()
-  node.seededApps.set('a'.repeat(64), {
+  node._catalogEntries = [{
+    appKey: 'a'.repeat(64),
     type: 'app',
     appId: 'peer-chat',
-    startedAt: now - 10_000,
-    bytesServed: 100
-  })
-  node.seededApps.set('b'.repeat(64), {
+    categories: ['messaging']
+  }, {
+    appKey: 'b'.repeat(64),
     type: 'drive',
     appId: 'ghost-drive-demo',
     parentKey: null,
     mountPath: null,
-    startedAt: now - 8_000,
-    bytesServed: 200,
     categories: ['ghost-drive']
-  })
+  }]
 
   const res = await request(port, 'GET', '/api/drives')
   t.is(res.statusCode, 200, 'status is 200')
