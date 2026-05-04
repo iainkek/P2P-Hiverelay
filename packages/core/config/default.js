@@ -76,6 +76,8 @@ export default {
   pairing: {
     enabled: false
   },
+  serviceDefaultPeerRole: 'authenticated-user',
+  serviceAdminAllowlist: [],
 
   // Regions
   regions: [], // Empty = accept from all regions

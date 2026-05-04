@@ -74,6 +74,10 @@ const DEFAULT_CONFIG = {
   // when callers haven't migrated. Default mode is decided in `_resolveAcceptMode`.
   acceptMode: undefined,
   acceptAllowlist: [], // array of publisher pubkeys (hex) — only used when acceptMode === 'allowlist'
+  // P2P service auth defaults. Noise-session peers are treated as authenticated
+  // users by default; operators can promote selected pubkeys to relay-admin.
+  serviceDefaultPeerRole: 'authenticated-user',
+  serviceAdminAllowlist: [],
   // Federation: opt-in cross-relay catalog sharing. No automatic sync.
   // Operators explicitly follow / mirror / unfollow other relays at runtime.
   federation: {
@@ -636,7 +640,9 @@ export class RelayNode extends EventEmitter {
       //   plugins: ['storage', 'identity', 'ai', 'zk', 'sla', 'schema', 'arbitration']
       if (this.config.enableServices !== false && this.config.plugins) {
         this.serviceRegistry = new ServiceRegistry()
-        this.serviceProtocol = new ServiceProtocol(this.serviceRegistry)
+        this.serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
+          defaultPeerRole: this.config.serviceDefaultPeerRole || 'authenticated-user'
+        })
         this.pluginLoader = new PluginLoader()
 
         const providers = await this.pluginLoader.load(this.config.plugins, {
@@ -1353,6 +1359,8 @@ export class RelayNode extends EventEmitter {
       try {
         if (remotePubKeyHex) {
           this.serviceProtocol.attach(conn, remotePubKeyHex)
+          const role = this._resolveServicePeerRole(remotePubKeyHex)
+          if (role) this.serviceProtocol.setPeerRole(remotePubKeyHex, role)
         }
       } catch (err) {
         this.emit('protocol-error', { protocol: 'services', error: err })
@@ -1394,6 +1402,18 @@ export class RelayNode extends EventEmitter {
   // ../accept-mode.js so BareRelay can share it.
   _resolveAcceptMode () {
     return resolveAcceptMode(this.config)
+  }
+
+  _resolveServicePeerRole (remotePubKeyHex) {
+    if (!remotePubKeyHex) return null
+    const normalized = remotePubKeyHex.toLowerCase()
+
+    const adminAllowlist = Array.isArray(this.config.serviceAdminAllowlist)
+      ? this.config.serviceAdminAllowlist
+      : []
+
+    if (adminAllowlist.some(pk => typeof pk === 'string' && pk.toLowerCase() === normalized)) return 'relay-admin'
+    return null
   }
 
   /**
@@ -1800,6 +1820,74 @@ export class RelayNode extends EventEmitter {
       return
     }
 
+    const acceptMode = this._resolveAcceptMode()
+    const decision = this._decideAcceptance(msg, acceptMode)
+    if (decision === 'reject') {
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'acceptMode:' + acceptMode })
+      return
+    }
+
+    if (decision === 'queue') {
+      const inserted = this._addPendingRequest(appKeyHex, {
+        appKey: appKeyHex,
+        publisherPubkey: msg.publisherPubkey
+          ? (typeof msg.publisherPubkey === 'string' ? msg.publisherPubkey : b4a.toString(msg.publisherPubkey, 'hex'))
+          : null,
+        discoveryKeys: Array.isArray(msg.discoveryKeys)
+          ? msg.discoveryKeys.map((dk) => (typeof dk === 'string' ? dk : b4a.toString(dk, 'hex')))
+          : [],
+        replicationFactor: msg.replicationFactor || 0,
+        maxStorageBytes: msg.maxStorageBytes || 0,
+        ttlSeconds: msg.ttlSeconds || 0,
+        bountyRate: msg.bountyRate || 0,
+        publisherSignature: msg.publisherSignature
+          ? (typeof msg.publisherSignature === 'string' ? msg.publisherSignature : b4a.toString(msg.publisherSignature, 'hex'))
+          : null,
+        delegationCert: msg.delegationCert || null,
+        revocable: msg.revocable !== false,
+        unseedFreezeMs: msg.unseedFreezeMs || 0,
+        durability: msg.durability || 0,
+        discoveredAt: Date.now(),
+        mode: acceptMode,
+        source: 'seed-protocol'
+      })
+      if (inserted) {
+        this.emit('seed-pending', {
+          appKey: appKeyHex,
+          publisher: msg.publisherPubkey
+            ? (typeof msg.publisherPubkey === 'string' ? msg.publisherPubkey : b4a.toString(msg.publisherPubkey, 'hex'))
+            : null
+        })
+      }
+      return
+    }
+
+    let effectivePublisher = msg.publisherPubkey
+      ? (typeof msg.publisherPubkey === 'string' ? msg.publisherPubkey : b4a.toString(msg.publisherPubkey, 'hex'))
+      : null
+    if (msg.delegationCert) {
+      const delegationCheck = this._checkDelegation({
+        ...msg,
+        appKey: appKeyHex,
+        discoveryKeys: Array.isArray(msg.discoveryKeys)
+          ? msg.discoveryKeys.map((dk) => (typeof dk === 'string' ? dk : b4a.toString(dk, 'hex')))
+          : [],
+        publisherSignature: msg.publisherSignature
+          ? (typeof msg.publisherSignature === 'string' ? msg.publisherSignature : b4a.toString(msg.publisherSignature, 'hex'))
+          : null
+      })
+      if (!delegationCheck.ok) {
+        this.emit('delegation-rejected', {
+          appKey: appKeyHex,
+          publisher: effectivePublisher,
+          reason: delegationCheck.reason
+        })
+        this.emit('seed-rejected', { appKey: appKeyHex, reason: 'delegation:' + delegationCheck.reason })
+        return
+      }
+      effectivePublisher = delegationCheck.primaryPubkey
+    }
+
     // Accept and start seeding
     this._seedProtocol.acceptSeedRequest(
       msg.appKey,
@@ -1813,9 +1901,11 @@ export class RelayNode extends EventEmitter {
     // signed into the seed request payload, so the publisher cannot lie about
     // them at unseed time. AppLifecycle records them on the registry entry
     // and verifyUnseedRequest enforces them.
-    const publisherHex = msg.publisherPubkey ? b4a.toString(msg.publisherPubkey, 'hex') : null
+    const publisherHex = msg.publisherPubkey
+      ? (typeof msg.publisherPubkey === 'string' ? msg.publisherPubkey : b4a.toString(msg.publisherPubkey, 'hex'))
+      : null
     this.seedApp(appKeyHex, {
-      publisherPubkey: publisherHex,
+      publisherPubkey: effectivePublisher || publisherHex,
       revocable: msg.revocable !== false,
       unseedFreezeMs: msg.unseedFreezeMs || 0,
       durability: msg.durability || 0
@@ -2133,9 +2223,40 @@ export class RelayNode extends EventEmitter {
 
   async _attemptReplicationRepair (request, status) {
     if (!this.config.enableSeeding || !this.seeder || !this.seedingRegistry || !this.swarm) return false
-    if (this.config.registryAutoAccept === false) return false
     const reqTier = normalizePrivacyTier(request.privacyTier, 'public')
     if (this.config.strictSeedingPrivacy !== false && reqTier !== 'public') return false
+
+    const acceptMode = this._resolveAcceptMode()
+    let effectivePublisher = typeof request.publisherPubkey === 'string' ? request.publisherPubkey : null
+    if (request.delegationCert) {
+      const delegationCheck = this._checkDelegation(request)
+      if (!delegationCheck.ok) {
+        this.emit('delegation-rejected', {
+          appKey: request.appKey,
+          publisher: effectivePublisher,
+          reason: delegationCheck.reason
+        })
+        return false
+      }
+      effectivePublisher = delegationCheck.primaryPubkey
+    }
+
+    const decision = this._decideAcceptance({
+      ...request,
+      publisherPubkey: effectivePublisher
+    }, acceptMode)
+    if (decision === 'reject') return false
+    if (decision === 'queue') {
+      this._addPendingRequest(request.appKey, {
+        ...request,
+        publisherPubkey: effectivePublisher,
+        currentRelays: status.current,
+        discoveredAt: Date.now(),
+        mode: acceptMode,
+        source: 'replication-repair'
+      })
+      return false
+    }
 
     const myPubkey = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
     const alreadyAccepted = status.relays.some(r => r.relayPubkey === myPubkey)
@@ -2147,7 +2268,7 @@ export class RelayNode extends EventEmitter {
 
     try {
       await this.seedApp(request.appKey, {
-        publisherPubkey: typeof request.publisherPubkey === 'string' ? request.publisherPubkey : null,
+        publisherPubkey: effectivePublisher,
         type: request.contentType || request.type || 'app',
         parentKey: request.parentKey || null,
         mountPath: request.mountPath || null,

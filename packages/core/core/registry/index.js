@@ -19,6 +19,9 @@ sodium.crypto_generichash(REGISTRY_TOPIC, b4a.from('hiverelay-seeding-registry-v
 const MSG_ANNOUNCE_LOG = 0
 const REGISTRY_META_PROTOCOL = 'hiverelay-registry-meta'
 const REGISTRY_META_ID = b4a.from('registry-meta-v1')
+const MAX_DISCOVERY_KEYS = 128
+const MAX_ENTRY_FUTURE_SKEW_MS = 10 * 60 * 1000
+const MAX_ENTRY_AGE_MS = 180 * 24 * 60 * 60 * 1000
 
 const META_ENCODING = {
   preencode (state, msg) {
@@ -67,6 +70,12 @@ export class SeedingRegistry extends EventEmitter {
     this._metaChannels = new WeakMap() // conn -> { channel, msgHandler }
     this._onSwarmConnection = null
     this._onLocalAppend = null
+    this._maxPeerLogs = Number.isFinite(opts.maxPeerLogs) && opts.maxPeerLogs > 0
+      ? Math.floor(opts.maxPeerLogs)
+      : 256
+    this._maxLogsPerPeer = Number.isFinite(opts.maxLogsPerPeer) && opts.maxLogsPerPeer > 0
+      ? Math.floor(opts.maxLogsPerPeer)
+      : 4
   }
 
   async start () {
@@ -147,9 +156,27 @@ export class SeedingRegistry extends EventEmitter {
     if (!msg.logKey || typeof msg.logKey !== 'string') return
     if (!isValidHexKey(msg.logKey, 64)) return
 
-    const peerPubkey = msg.peerPubkey || (
-      info?.publicKey ? b4a.toString(info.publicKey, 'hex') : null
-    )
+    const transportPeerPubkey = info?.publicKey ? b4a.toString(info.publicKey, 'hex') : null
+    const declaredPeerPubkey = typeof msg.peerPubkey === 'string' ? msg.peerPubkey.toLowerCase() : null
+
+    if (declaredPeerPubkey && transportPeerPubkey && declaredPeerPubkey !== transportPeerPubkey) {
+      this.emit('peer-log-rejected', {
+        logKey: msg.logKey,
+        peerPubkey: declaredPeerPubkey,
+        reason: 'declared peer pubkey mismatch'
+      })
+      return
+    }
+
+    const peerPubkey = transportPeerPubkey || declaredPeerPubkey
+    if (!peerPubkey || !isValidHexKey(peerPubkey, 64)) {
+      this.emit('peer-log-rejected', {
+        logKey: msg.logKey,
+        peerPubkey,
+        reason: 'missing or invalid peer pubkey'
+      })
+      return
+    }
 
     this._registerPeerLog(msg.logKey, peerPubkey, conn).catch((err) => {
       this.emit('peer-log-error', {
@@ -162,6 +189,8 @@ export class SeedingRegistry extends EventEmitter {
 
   async _registerPeerLog (logKeyHex, peerPubkey, conn) {
     if (!this.localLog) return
+    logKeyHex = typeof logKeyHex === 'string' ? logKeyHex.toLowerCase() : logKeyHex
+    peerPubkey = typeof peerPubkey === 'string' ? peerPubkey.toLowerCase() : peerPubkey
 
     const localLogKeyHex = b4a.toString(this.localLog.key, 'hex')
     if (logKeyHex === localLogKeyHex) return
@@ -173,14 +202,36 @@ export class SeedingRegistry extends EventEmitter {
       return
     }
 
+    if (this._peerLogMeta.size >= this._maxPeerLogs) {
+      this.emit('peer-log-rejected', {
+        logKey: logKeyHex,
+        peerPubkey,
+        reason: 'max peer logs reached'
+      })
+      return
+    }
+
+    let peerLogCount = 0
+    for (const meta of this._peerLogMeta.values()) {
+      if (meta.peerPubkey === peerPubkey) peerLogCount++
+    }
+    if (peerLogCount >= this._maxLogsPerPeer) {
+      this.emit('peer-log-rejected', {
+        logKey: logKeyHex,
+        peerPubkey,
+        reason: 'peer log quota reached'
+      })
+      return
+    }
+
     const log = this.store.get(b4a.from(logKeyHex, 'hex'))
     await log.ready()
     log.replicate(conn)
 
-    await this._indexLog(log, logKeyHex)
+    await this._indexLog(log, logKeyHex, peerPubkey)
 
     const onAppend = () => {
-      this._indexLog(log, logKeyHex).catch((err) => {
+      this._indexLog(log, logKeyHex, peerPubkey).catch((err) => {
         this.emit('index-error', {
           context: 'peer-append',
           logKey: logKeyHex,
@@ -201,16 +252,19 @@ export class SeedingRegistry extends EventEmitter {
     })
   }
 
-  async _indexLog (log, logId = null) {
+  async _indexLog (log, logId = null, sourcePeerPubkey = null) {
     const id = logId || b4a.toString(log.key, 'hex')
     let offset = this._indexedOffsets.get(id) || 0
+    const source = sourcePeerPubkey
+      ? { peerPubkey: sourcePeerPubkey }
+      : (this._peerLogMeta.get(id) || null)
 
     for (let i = offset; i < log.length; i++) {
       try {
         const block = await log.get(i)
         if (!block) continue
         const entry = JSON.parse(b4a.toString(block))
-        this._applyEntry(entry)
+        this._applyEntry(entry, { logId: id, peerPubkey: source?.peerPubkey || null })
       } catch (err) {
         this.emit('index-error', { context: 'indexLog', logId: id, index: i, error: err.message || String(err) })
       } finally {
@@ -220,7 +274,83 @@ export class SeedingRegistry extends EventEmitter {
     }
   }
 
-  _applyEntry (entry) {
+  _isPlausibleTimestamp (timestamp) {
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return false
+    const now = Date.now()
+    if (timestamp > (now + MAX_ENTRY_FUTURE_SKEW_MS)) return false
+    if (timestamp < (now - MAX_ENTRY_AGE_MS)) return false
+    return true
+  }
+
+  _normalizeIndexedEntry (entry, source = {}) {
+    if (!entry || typeof entry !== 'object') return null
+    if (!this._isPlausibleTimestamp(entry.timestamp)) return null
+
+    const appKey = typeof entry.appKey === 'string' ? entry.appKey.toLowerCase() : null
+    if (!appKey || !isValidHexKey(appKey, 64)) return null
+
+    if (entry.type === 'seed-request') {
+      const publisherPubkey = typeof entry.publisherPubkey === 'string'
+        ? entry.publisherPubkey.toLowerCase()
+        : null
+      if (!publisherPubkey || !isValidHexKey(publisherPubkey, 64)) return null
+
+      const discoveryKeys = Array.isArray(entry.discoveryKeys)
+        ? entry.discoveryKeys
+            .filter(dk => typeof dk === 'string' && isValidHexKey(dk, 64))
+            .slice(0, MAX_DISCOVERY_KEYS)
+            .map(dk => dk.toLowerCase())
+        : []
+
+      return {
+        ...entry,
+        appKey,
+        publisherPubkey,
+        discoveryKeys
+      }
+    }
+
+    if (entry.type === 'seed-accept') {
+      const relayPubkey = typeof entry.relayPubkey === 'string'
+        ? entry.relayPubkey.toLowerCase()
+        : null
+      if (!relayPubkey || !isValidHexKey(relayPubkey, 64)) return null
+      if (source.peerPubkey && relayPubkey !== source.peerPubkey.toLowerCase()) return null
+
+      return {
+        ...entry,
+        appKey,
+        relayPubkey
+      }
+    }
+
+    if (entry.type === 'seed-cancel') {
+      const publisherPubkey = typeof entry.publisherPubkey === 'string'
+        ? entry.publisherPubkey.toLowerCase()
+        : null
+      if (!publisherPubkey || !isValidHexKey(publisherPubkey, 64)) return null
+
+      return {
+        ...entry,
+        appKey,
+        publisherPubkey
+      }
+    }
+
+    return null
+  }
+
+  _applyEntry (entry, source = {}) {
+    const normalized = this._normalizeIndexedEntry(entry, source)
+    if (!normalized) {
+      this.emit('entry-rejected', {
+        reason: 'invalid-registry-entry',
+        logId: source.logId || null
+      })
+      return
+    }
+
+    entry = normalized
     if (entry.type === 'seed-request') {
       const cancelKey = entry.appKey + ':' + entry.publisherPubkey
       const canceledAt = this._cancellations.get(cancelKey)

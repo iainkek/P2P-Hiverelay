@@ -280,6 +280,7 @@ export class ServiceProtocol extends EventEmitter {
 
     // Clean up rate limiter state for this peer
     this._peerRateState.delete(remotePubkey)
+    this._peerRoles.delete(remotePubkey)
 
     // Reject any pending requests for this peer
     for (const [id, pending] of this._pendingRequests) {

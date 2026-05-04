@@ -72,6 +72,35 @@ test('RelayNode - _onConnection attaches distributed-drive peer bridge', async (
   node.store.replicate = origReplicate
 })
 
+test('RelayNode - _onConnection assigns relay-admin service role from allowlist', (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const remotePub = randomBytes(32)
+  const remotePubHex = remotePub.toString('hex')
+  const fakeConn = new EventEmitter()
+  fakeConn.remotePublicKey = remotePub
+  fakeConn.destroy = () => {}
+
+  const assigned = []
+  node.config.serviceAdminAllowlist = [remotePubHex]
+  node.serviceProtocol = {
+    attach () {},
+    setPeerRole (pubkey, role) {
+      assigned.push({ pubkey, role })
+    }
+  }
+
+  const origReplicate = node.store.replicate
+  node.store.replicate = () => {}
+
+  node._onConnection(fakeConn, { publicKey: remotePub })
+
+  t.is(assigned.length, 1, 'service role assigned once')
+  t.is(assigned[0].pubkey, remotePubHex, 'role assigned to remote pubkey')
+  t.is(assigned[0].role, 'relay-admin', 'allowlisted peer promoted to relay-admin')
+
+  node.store.replicate = origReplicate
+})
+
 test('RelayNode - emits started event with publicKey', async (t) => {
   t.plan(1)
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
@@ -135,6 +164,74 @@ test('RelayNode - replication health monitor attempts local repair', async (t) =
   t.is(seeded.length, 1, 'under-replicated app seeded locally')
   t.is(accepted.length, 1, 'acceptance recorded after repair')
   t.ok(node._replicationHealth.has(appKey), 'replication health entry recorded')
+})
+
+test('RelayNode - seed protocol request queues in review mode', (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  const appKeyBuf = randomBytes(32)
+  const publisherBuf = randomBytes(32)
+  const appKeyHex = appKeyBuf.toString('hex')
+
+  node.seeder = { totalBytesStored: 0 }
+  node.config.maxStorageBytes = 1024 * 1024
+  node.config.acceptMode = 'review'
+  node._seedProtocol = {
+    acceptSeedRequest () {
+      t.fail('should not accept request in review mode')
+    }
+  }
+
+  node.seedApp = async () => {
+    t.fail('should not auto-seed request in review mode')
+  }
+
+  node._onSeedRequest({
+    appKey: appKeyBuf,
+    publisherPubkey: publisherBuf,
+    discoveryKeys: [],
+    replicationFactor: 2,
+    maxStorageBytes: 0,
+    ttlSeconds: 3600,
+    bountyRate: 0,
+    revocable: true,
+    unseedFreezeMs: 0,
+    durability: 0
+  })
+
+  t.ok(node._pendingRequests.has(appKeyHex), 'request is queued for operator review')
+  t.is(node._pendingRequests.get(appKeyHex).source, 'seed-protocol', 'queue entry tracks source')
+})
+
+test('RelayNode - replication repair respects closed accept mode', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false, enableServices: false })
+
+  node.swarm = { keyPair: { publicKey: randomBytes(32) } }
+  node.seeder = { totalBytesStored: 0 }
+  node.seedingRegistry = { async recordAcceptance () {} }
+  node.config.enableSeeding = true
+  node.config.strictSeedingPrivacy = true
+  node.config.acceptMode = 'closed'
+
+  let attemptedSeed = 0
+  node.seedApp = async () => {
+    attemptedSeed++
+  }
+
+  const ok = await node._attemptReplicationRepair({
+    appKey: 'a'.repeat(64),
+    replicationFactor: 2,
+    maxStorageBytes: 0,
+    publisherPubkey: 'b'.repeat(64),
+    privacyTier: 'public'
+  }, {
+    relays: [],
+    current: 0,
+    target: 2,
+    missing: 2
+  })
+
+  t.is(ok, false, 'repair aborted by closed accept mode')
+  t.is(attemptedSeed, 0, 'no local seed attempt made')
 })
 
 test('RelayNode - seedApp enforces strict replicate-user-data policy by default', async (t) => {
