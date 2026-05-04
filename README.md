@@ -4,7 +4,9 @@
 
 Drop-in, always-on relay infrastructure for **any** Hyperswarm-based app. Your data stays end-to-end encrypted; the relay literally can't read a byte. Works with anything built on Hyperswarm, Hyperdrive, Hyperbee, Pear/Bare, or raw DHT — not Pear-specific, not browser-specific, not opinionated about your stack. Plug it in and your users stop seeing "offline".
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.7.3**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.0**
+
+> **v0.8.0** — Atomic Blind Custody is now a first-class protocol with cryptographic quorum receipts, source-authority retirement, witness tombstones for post-expiry detection, and two new Protomux channels for fully P2P trust pipeline. See the [whitepaper](./docs/ATOMIC-BLIND-CUSTODY.md) and the [release notes](./docs/RELEASE-NOTES-0.8.0.md).
 
 > The relay layer of the Hive substrate — blind, always-on, paid in Lightning sats. The consumer-facing Umbrel App Store version is branded **Blindspark**. The protocol and SDK retain the HiveRelay name.
 
@@ -408,6 +410,13 @@ PRs:
 ---
 
 ## Documentation
+
+### v0.8.0 release
+- **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper
+- **[WHATS-IN-THE-RELAY.md](docs/WHATS-IN-THE-RELAY.md)** — guided tour of every component the relay picks up at v0.8.0
+- **[RELEASE-NOTES-0.8.0.md](docs/RELEASE-NOTES-0.8.0.md)** — what's new + migration guide
+- **[atomic-network-design.md](docs/atomic-network-design.md)** — full design doc, threat model, protocol spec
+- **[ATOMIC-CUSTODY-SIMULATION.md](docs/ATOMIC-CUSTODY-SIMULATION.md)** — simulation methodology and findings
 
 ### Strategic & security
 - **[MANIFESTO.md](docs/MANIFESTO.md)** — non-negotiable architectural values

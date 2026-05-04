@@ -20,6 +20,11 @@ that closes the post-expiry serving leak surfaced by the simulation.
 If you operate a relay or build on the client SDK, read the **Migration**
 section below before upgrading.
 
+For the full protocol specification, see the
+[Atomic Blind Custody whitepaper](./ATOMIC-BLIND-CUSTODY.md).
+For a tour of every component the relay picks up at v0.8.0, see
+[What's in the Relay](./WHATS-IN-THE-RELAY.md).
+
 ---
 
 ## Headline features
