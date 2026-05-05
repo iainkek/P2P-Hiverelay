@@ -15,15 +15,31 @@ UTAH_IP="${UTAH_IP:-144.172.101.215}"
 UTAH_US_IP="${UTAH_US_IP:-144.172.91.26}"
 SINGAPORE_IP="${SINGAPORE_IP:-104.194.153.179}"
 
+# Per-relay API keys (override the env-var fallback so each relay gets its own
+# strong key). Set via env var to rotate without editing this script.
+UTAH_API_KEY="${UTAH_API_KEY:-}"
+UTAH_US_API_KEY="${UTAH_US_API_KEY:-}"
+SINGAPORE_API_KEY="${SINGAPORE_API_KEY:-}"
+
+# Per-relay operator identifiers (for AutoHeal v2 sybil resistance).
+UTAH_OPERATOR="${UTAH_OPERATOR:-hive-foundation-utah}"
+UTAH_US_OPERATOR="${UTAH_US_OPERATOR:-hive-foundation-utah-us}"
+SINGAPORE_OPERATOR="${SINGAPORE_OPERATOR:-hive-foundation-singapore}"
+
 deploy_server() {
     local IP=$1
     local NAME=$2
     local REGION=$3
     local MAX_MEM=$4  # systemd MemoryMax (e.g., 384M, 1G)
     local HEAP=$5     # Node --max-old-space-size in MB
+    local OPERATOR=${6:-hive-foundation}  # operator identifier for AutoHeal v2 sybil resistance
+    local API_KEY_OVERRIDE=$7  # optional per-relay API key override
+
+    # Resolve effective API key (per-relay override beats env var)
+    local EFFECTIVE_KEY="${API_KEY_OVERRIDE:-${API_KEY}}"
 
     echo "═══════════════════════════════════════════════════"
-    echo "  Deploying to $NAME ($IP) [region=$REGION, mem=$MAX_MEM, heap=${HEAP}M]"
+    echo "  Deploying to $NAME ($IP) [region=$REGION, operator=$OPERATOR, mem=$MAX_MEM, heap=${HEAP}M]"
     echo "═══════════════════════════════════════════════════"
 
     ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new root@"$IP" << REMOTE_SCRIPT
@@ -75,7 +91,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/hiverelay
-ExecStart=/usr/bin/node --max-old-space-size=HEAP_PLACEHOLDER packages/core/cli/index.js start --mode public --region REGION_PLACEHOLDER
+ExecStart=/usr/bin/node --max-old-space-size=HEAP_PLACEHOLDER packages/core/cli/index.js start --mode public --region REGION_PLACEHOLDER --operator OPERATOR_PLACEHOLDER --auto-heal
 Restart=always
 RestartSec=15
 KillSignal=SIGTERM
@@ -99,7 +115,8 @@ SYSTEMD_UNIT
         # Replace placeholders
         sed -i "s/HEAP_PLACEHOLDER/${HEAP}/" /etc/systemd/system/hiverelay.service
         sed -i "s/REGION_PLACEHOLDER/${REGION}/" /etc/systemd/system/hiverelay.service
-        sed -i "s/API_KEY_PLACEHOLDER/${API_KEY}/" /etc/systemd/system/hiverelay.service
+        sed -i "s/OPERATOR_PLACEHOLDER/${OPERATOR}/" /etc/systemd/system/hiverelay.service
+        sed -i "s/API_KEY_PLACEHOLDER/${EFFECTIVE_KEY}/" /etc/systemd/system/hiverelay.service
         sed -i "s/MEM_PLACEHOLDER/${MAX_MEM}/" /etc/systemd/system/hiverelay.service
         sed -i "s/MEMHIGH_PLACEHOLDER/${MAX_MEM%M}/" /etc/systemd/system/hiverelay.service
 
@@ -138,18 +155,18 @@ echo
 
 case $TARGET in
     utah)
-        deploy_server "$UTAH_IP" "Utah" "NA" "384M" 256
+        deploy_server "$UTAH_IP" "Utah" "NA" "384M" 256 "$UTAH_OPERATOR" "$UTAH_API_KEY"
         ;;
     utah-us)
-        deploy_server "$UTAH_US_IP" "Utah-US" "NA" "1G" 512
+        deploy_server "$UTAH_US_IP" "Utah-US" "NA" "1G" 512 "$UTAH_US_OPERATOR" "$UTAH_US_API_KEY"
         ;;
     singapore)
-        deploy_server "$SINGAPORE_IP" "Singapore" "AS" "512M" 384
+        deploy_server "$SINGAPORE_IP" "Singapore" "AS" "512M" 384 "$SINGAPORE_OPERATOR" "$SINGAPORE_API_KEY"
         ;;
     all)
-        deploy_server "$UTAH_IP" "Utah" "NA" "384M" 256
-        deploy_server "$UTAH_US_IP" "Utah-US" "NA" "1G" 512
-        deploy_server "$SINGAPORE_IP" "Singapore" "AS" "512M" 384
+        deploy_server "$UTAH_IP" "Utah" "NA" "384M" 256 "$UTAH_OPERATOR" "$UTAH_API_KEY"
+        deploy_server "$UTAH_US_IP" "Utah-US" "NA" "1G" 512 "$UTAH_US_OPERATOR" "$UTAH_US_API_KEY"
+        deploy_server "$SINGAPORE_IP" "Singapore" "AS" "512M" 384 "$SINGAPORE_OPERATOR" "$SINGAPORE_API_KEY"
         ;;
     *)
         echo "Usage: $0 [utah|utah-us|singapore|all]"

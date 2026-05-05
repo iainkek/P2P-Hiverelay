@@ -283,6 +283,14 @@ async function start () {
   if (args['distributed-drive'] === false) cliOverrides.enableDistributedDriveBridge = false
   if (args.port) cliOverrides.apiPort = parseInt(args.port)
   if (args.region) cliOverrides.regions = [].concat(args.region)
+  if (typeof args.operator === 'string' && args.operator.trim()) {
+    cliOverrides.operator = args.operator.trim()
+  }
+  // --auto-heal — opt into the diversity-enforced replica recruitment scheduler.
+  // See docs/WHATS-IN-THE-RELAY.md §3 and the Atomic Blind Custody whitepaper.
+  if (args['auto-heal'] === true || args.autoheal === true) {
+    cliOverrides.autoHeal = { ...(cliOverrides.autoHeal || {}), enabled: true }
+  }
   if (args.tor) {
     if (!cliOverrides.transports) cliOverrides.transports = {}
     cliOverrides.transports.tor = true
@@ -323,6 +331,9 @@ async function start () {
     console.log(`  DistDrive:  ${config.enableDistributedDriveBridge ? 'enabled' : 'disabled'}`)
     console.log(`  API:        ${config.enableAPI ? 'http://127.0.0.1:' + config.apiPort : 'disabled'}`)
     console.log(`  Regions:    ${config.regions && config.regions.length ? config.regions.join(', ') : 'all'}`)
+    console.log(`  Operator:   ${config.operator || '(unset — falls back to pubkey-as-operator)'}`)
+    console.log(`  AutoHeal:   ${config.autoHeal?.enabled ? 'enabled' : 'disabled'}`)
+    console.log(`  Custody:    ${config.custody?.enabled !== false ? `enabled (${config.custody?.defaultMode || 'blind'})` : 'disabled'}`)
     if (config.transports && config.transports.tor) {
       console.log(`  Tor:        enabled (SOCKS ${config.tor ? config.tor.socksPort || 9050 : 9050})`)
     }
