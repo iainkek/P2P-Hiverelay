@@ -154,9 +154,20 @@ export class RelayAPI extends EventEmitter {
       console.warn(msg)
     }
 
-    return new Promise((resolve, reject) => {
-      this.server.on('error', reject)
-      this.server.listen(this.port, this.host, () => {
+    // Retry on EADDRINUSE — when self-heal restarts the node, the previous
+    // server.close() resolves but the OS socket may still be in TIME_WAIT.
+    // Retry with exponential backoff so a fast restart doesn't fail outright.
+    const maxRetries = 5
+    const baseDelay = 1000
+    let attempt = 0
+
+    const tryListen = () => new Promise((resolve, reject) => {
+      const onError = (err) => {
+        this.server.removeListener('listening', onListening)
+        reject(err)
+      }
+      const onListening = () => {
+        this.server.removeListener('error', onError)
         // Start WebSocket live feed for dashboard clients
         this._dashboardFeed = new DashboardFeed({
           server: this.server,
@@ -168,8 +179,28 @@ export class RelayAPI extends EventEmitter {
 
         this.emit('started', { port: this.port })
         resolve()
-      })
+      }
+      this.server.once('error', onError)
+      this.server.once('listening', onListening)
+      this.server.listen(this.port, this.host)
     })
+
+    while (true) {
+      try {
+        await tryListen()
+        return
+      } catch (err) {
+        if (err.code !== 'EADDRINUSE' || attempt >= maxRetries) throw err
+        attempt++
+        const delay = baseDelay * Math.pow(2, attempt - 1) // 1s, 2s, 4s, 8s, 16s
+        if (this.node && typeof this.node.emit === 'function') {
+          this.node.emit('api-bind-retry', { port: this.port, attempt, maxRetries, delay })
+        }
+        // Re-create the server because the previous one is in a failed state
+        await new Promise(resolve => setTimeout(resolve, delay))
+        this.server = createServer((req, res) => this._handle(req, res))
+      }
+    }
   }
 
   _checkRateLimit (ip) {

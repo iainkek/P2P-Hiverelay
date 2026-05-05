@@ -2230,8 +2230,10 @@ export class RelayNode extends EventEmitter {
       clearInterval(this._repairInterval)
       this._repairInterval = null
     }
-    // Default 10 min. Lower bound 60s to avoid hammering the swarm.
-    const intervalMs = Math.max(60_000, Number(this.config.repairInterval) || 600_000)
+    // Default 5 min. Lower bound 60s to avoid hammering the swarm. The
+    // eager-replicate retry loop in app-lifecycle covers the first ~2
+    // min after seedApp; this monitor takes over for the long tail.
+    const intervalMs = Math.max(60_000, Number(this.config.repairInterval) || 300_000)
     this._repairInterval = setInterval(() => {
       this._runRepairPass().catch((err) => {
         this.emit('repair-error', { error: err.message || String(err) })

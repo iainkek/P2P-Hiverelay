@@ -16,3 +16,4 @@ ghost-seed-demo.mjs
 *.jpeg
 *.png
 packages/core/node_modules
+tmp-audit2/

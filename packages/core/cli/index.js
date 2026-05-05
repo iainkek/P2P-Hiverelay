@@ -17,7 +17,7 @@ import minimist from 'minimist'
 import goodbye from 'graceful-goodbye'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
-import { loadConfig, saveConfig, ensureDirs } from '../config/loader.js'
+import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH } from '../config/loader.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
 import { join, dirname } from 'path'
@@ -33,8 +33,14 @@ const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-
 const VERSION = pkg.version
 const SKILL_SRC = join(__dirname, '..', 'skills', 'SKILL.md')
 
-const args = minimist(process.argv.slice(2))
+const args = minimist(process.argv.slice(2), { boolean: ['version', 'auto-heal', 'autoheal'] })
 const command = args._[0]
+
+// Handle --version / -v before anything else (no deps, no banner spam).
+if (args.version || args.v === true) {
+  console.log(pkg.version)
+  process.exit(0)
+}
 
 const log = createLogger({ name: 'hiverelay-cli' })
 
@@ -134,6 +140,7 @@ const COMMANDS = {
   catalog,
   federation,
   status,
+  doctor,
   help
 }
 
@@ -693,9 +700,11 @@ async function seed () {
       metadata: seedMetadata
     })
 
-    console.log(`  Seeded: ${appKey.slice(0, 16)}...`)
+    console.log(`  ✓ Registered for local seeding: ${appKey.slice(0, 16)}...`)
     if (seedResult.alreadySeeded) console.log('  Note: already seeded on this relay.')
     if (seedResult.discoveryKey) console.log(`  Discovery key: ${seedResult.discoveryKey}`)
+    console.log('  ⏳ Replication runs in the background (typically ~5-30s if peers are online).')
+    console.log("     Use 'p2p-hiverelay status' to see anchor state, or watch /api/health-detail.")
 
     if (shouldPublishRegistry(args)) {
       const publishBody = collectRegistryOptions(args, appKey, seedMetadata)
@@ -1152,6 +1161,127 @@ async function status () {
   }
 }
 
+// ─── doctor ─────────────────────────────────────────────────────────
+//
+// Diagnostic command. Reads ~/.hiverelay/config.json + the running
+// relay's public catalog, compares against what v0.8.x expects, and
+// reports drift. With --fix, writes missing keys to config.json.
+//
+// Catches the class of problem where you've upgraded the npm package
+// but your launchd plist / systemd unit / config still reflects an
+// older version's defaults.
+
+async function doctor () {
+  const port = args.port || 9100
+  const apply = args.fix === true || args.apply === true
+
+  console.log()
+  console.log('  ' + paint(C.cyan, '◆ HiveRelay doctor'))
+  console.log()
+
+  // ─── 1. Load on-disk config ───
+  let fileConfig = {}
+  const configPath = CONFIG_PATH
+  if (existsSync(configPath)) {
+    try { fileConfig = JSON.parse(readFileSync(configPath, 'utf8')) } catch {}
+  }
+
+  // ─── 2. Try to reach a running relay ───
+  let runtime = null
+  let runtimeCatalog = null
+  let unreachable = false
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`)
+    if (res.ok) runtime = await res.json()
+  } catch {
+    unreachable = true
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/catalog.json`)
+    if (res.ok) runtimeCatalog = await res.json()
+  } catch {}
+
+  const row = (icon, label, value, hint = '') => {
+    const c = icon === '✓' ? C.green : icon === '⚠' ? C.yellow : icon === '✗' ? C.red : C.dim
+    const out = '  ' + paint(c, icon) + ' ' + label.padEnd(28) + (value ? paint(C.white, value) : '')
+    console.log(hint ? out + paint(C.dim, '   // ' + hint) : out)
+  }
+
+  // ─── 3. Report runtime state ───
+  console.log(paint(C.cyan, '  Runtime'))
+  if (unreachable) {
+    row('✗', 'Relay reachable', `http://127.0.0.1:${port}`, 'is the relay running?')
+  } else {
+    row('✓', 'Relay reachable', `http://127.0.0.1:${port}`)
+    if (runtime) row('✓', 'Health', runtime.ok ? 'ok' : 'degraded')
+    if (runtimeCatalog) {
+      const region = runtimeCatalog.region
+      const operator = runtimeCatalog.operator
+      const pubkey = runtimeCatalog.relayKey
+      row(pubkey ? '✓' : '✗', 'Public key', pubkey ? pubkey.slice(0, 16) + '…' : '(missing)')
+      row(region ? '✓' : '⚠', 'Region declared', region || '(null)', region ? '' : 'set with --region or config.regions')
+      row(operator ? '✓' : '⚠', 'Operator declared', operator || '(null)', operator ? '' : 'set with --operator or config.operator — sybil resistance falls back to pubkey-as-operator without it')
+    }
+  }
+
+  // ─── 4. Report config-file state ───
+  console.log()
+  console.log(paint(C.cyan, '  Config file'))
+  row(configPath ? '✓' : '✗', 'Config path', configPath || '(unknown)')
+  row(Object.keys(fileConfig).length ? '✓' : '⚠', 'Config exists', Object.keys(fileConfig).length ? `${Object.keys(fileConfig).length} keys` : '(empty)')
+
+  const recommended = []
+  if (!fileConfig.regions || (Array.isArray(fileConfig.regions) && !fileConfig.regions.length)) {
+    recommended.push({ key: 'regions', value: ['NA'], reason: 'Region drives AutoHeal diversity scoring on peer relays' })
+  }
+  if (!fileConfig.operator) {
+    const hostname = (await import('os')).hostname() || 'relay'
+    recommended.push({ key: 'operator', value: 'hive-foundation-' + hostname.replace(/[^a-z0-9-]/gi, '-').toLowerCase(), reason: 'Operator drives per-operator fairshare cap (sybil resistance)' })
+  }
+  if (!fileConfig.autoHeal || fileConfig.autoHeal.enabled !== true) {
+    recommended.push({ key: 'autoHeal.enabled', value: true, reason: 'Diversity-enforced replica recruitment with cryptographic peer verification' })
+  }
+
+  // ─── 5. Drift report ───
+  console.log()
+  console.log(paint(C.cyan, '  Recommendations'))
+  if (recommended.length === 0) {
+    row('✓', 'No drift detected', '', 'config and runtime align with v0.8.x defaults')
+  } else {
+    for (const r of recommended) {
+      row('⚠', r.key, JSON.stringify(r.value), r.reason)
+    }
+  }
+
+  // ─── 6. Apply fixes if requested ───
+  if (apply && recommended.length > 0) {
+    const next = JSON.parse(JSON.stringify(fileConfig))
+    for (const r of recommended) {
+      if (r.key === 'regions') next.regions = r.value
+      else if (r.key === 'operator') next.operator = r.value
+      else if (r.key === 'autoHeal.enabled') {
+        next.autoHeal = { ...(next.autoHeal || {}), enabled: r.value }
+      }
+    }
+    try {
+      const { writeFileSync } = await import('fs')
+      mkdirSync(dirname(configPath), { recursive: true })
+      writeFileSync(configPath, JSON.stringify(next, null, 2) + '\n')
+      console.log()
+      console.log('  ' + paint(C.green, '✓') + ' wrote ' + paint(C.cyan, configPath))
+      console.log('  ' + paint(C.dim, '// restart the relay for changes to take effect'))
+    } catch (err) {
+      console.log()
+      console.log('  ' + paint(C.red, '✗') + ' could not write ' + configPath + ': ' + err.message)
+    }
+  } else if (recommended.length > 0) {
+    console.log()
+    console.log('  ' + paint(C.dim, '// run with --fix to write the recommendations to ') + paint(C.cyan, configPath || '~/.hiverelay/config.json'))
+  }
+
+  console.log()
+}
+
 // ─── help ───────────────────────────────────────────────────────────
 
 function help () {
@@ -1169,6 +1299,7 @@ Usage:
   p2p-hiverelay catalog ...         Operator catalog control (mode/allowlist/approve/reject/remove/pending)
   p2p-hiverelay federation ...      Cross-relay federation (list/follow/mirror/unfollow/republish/unrepublish)
   p2p-hiverelay status              Show node status (queries running node)
+  p2p-hiverelay doctor [--fix]      Diagnose config + runtime drift; optionally auto-fix
   p2p-hiverelay help                Show this help
 
 Init Options:

@@ -154,10 +154,23 @@ export class AppLifecycle extends EventEmitter {
       }
     }
 
-    // Already seeding this exact key — no-op
+    // Already seeding this exact key — no-op.
+    //
+    // Subtlety: AppRegistry.load() populates this.apps with placeholder
+    // entries whose discoveryKey is null (set later during reseeding).
+    // If we hit one of those, we MUST fall through to actually seed.
+    // Treating a null-discoveryKey placeholder as "already seeded" was
+    // the recurring null-pointer crash in v0.3.0–v0.8.2 — fixed here for
+    // good.
     if (this.seededApps.has(appKeyHex)) {
       const existing = this.seededApps.get(appKeyHex)
-      return { discoveryKey: b4a.toString(existing.discoveryKey, 'hex'), alreadySeeded: true }
+      if (existing && existing.discoveryKey) {
+        const dkHex = typeof existing.discoveryKey === 'string'
+          ? existing.discoveryKey
+          : b4a.toString(existing.discoveryKey, 'hex')
+        return { discoveryKey: dkHex, alreadySeeded: true }
+      }
+      // else: placeholder entry from load() — fall through to seed properly.
     }
 
     // Acquire seed mutex to prevent concurrent eviction races
@@ -175,10 +188,17 @@ export class AppLifecycle extends EventEmitter {
   async _seedAppInner (appKeyHex, opts, contentType, parentKey, mountPath, privacyTier) {
     const node = this.node
 
-    // Re-check after acquiring mutex — another call may have seeded it
+    // Re-check after acquiring mutex — another call may have seeded it.
+    // Same null-discoveryKey guard as the pre-mutex check above.
     if (this.seededApps.has(appKeyHex)) {
       const existing = this.seededApps.get(appKeyHex)
-      return { discoveryKey: b4a.toString(existing.discoveryKey, 'hex'), alreadySeeded: true }
+      if (existing && existing.discoveryKey) {
+        const dkHex = typeof existing.discoveryKey === 'string'
+          ? existing.discoveryKey
+          : b4a.toString(existing.discoveryKey, 'hex')
+        return { discoveryKey: dkHex, alreadySeeded: true }
+      }
+      // else: placeholder entry from load() — fall through.
     }
 
     // Evict oldest app if storage capacity would be exceeded
@@ -225,10 +245,14 @@ export class AppLifecycle extends EventEmitter {
       node.swarm.join(discoveryKey, { server: true, client: true })
       node.swarm.flush().then(() => { if (done) done() }).catch(() => { if (done) done() })
 
-      // Eagerly replicate drive content with retry loop
+      // Eagerly replicate drive content with retry loop. After this exhausts,
+      // the periodic repair monitor (default every 10 min) keeps trying —
+      // this loop is for fast initial replication, not the only path.
       const eagerReplicate = async () => {
         const MAX_RETRIES = 6
-        const RETRY_DELAYS = [5000, 10000, 15000, 30000, 60000, 120000]
+        // Tightened tail — 120s was wasteful when the repair monitor takes
+        // over anyway. Total wall time: ~2 min instead of ~4 min.
+        const RETRY_DELAYS = [5000, 10000, 15000, 30000, 30000, 30000]
 
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
           // Bail out if the drive was closed (e.g. by unseedApp)
@@ -285,11 +309,18 @@ export class AppLifecycle extends EventEmitter {
             await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt]))
           }
         }
-        // Exhausted retries — record that we tried, mark not anchored.
+        // Exhausted eager retries — record the check, mark not anchored.
+        // The periodic repair monitor will keep trying; this is NOT a
+        // permanent failure, just the end of the fast-path attempt.
         if (node.appRegistry && typeof node.appRegistry.recordAnchorCheck === 'function') {
           node.appRegistry.recordAnchorCheck(appKeyHex)
         }
-        this.emit('reseed-error', { appKey: appKeyHex, error: 'max retries exceeded' })
+        this.emit('reseed-error', {
+          appKey: appKeyHex,
+          error: 'eager-replicate-exhausted',
+          recoverable: true,
+          hint: 'periodic repair monitor will keep retrying every 10 min'
+        })
       }
       eagerReplicate().catch(() => {})
 

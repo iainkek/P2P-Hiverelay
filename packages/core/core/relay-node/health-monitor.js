@@ -3,7 +3,10 @@ import { statfs } from 'fs/promises'
 
 const DEFAULT_OPTS = {
   checkInterval: 30_000,
-  maxHeapPct: 95,
+  // V8 routinely runs near 95% heap before GC fires — alerting at 95% creates
+  // false-positive CRITICAL events. We bump to 98% AND require RSS pressure
+  // simultaneously (see _check below) so only real memory pressure triggers.
+  maxHeapPct: 98,
   maxRssMB: 512,
   staleConnectionThreshold: 5 * 60 * 1000,
   zeroConnectionsThreshold: 10 * 60 * 1000,
@@ -76,10 +79,14 @@ export class HealthMonitor extends EventEmitter {
     }
 
     // --- Memory pressure ---
+    // Require BOTH high heap AND high RSS to trigger. Either alone is a
+    // false-positive: V8 commonly hovers near 95% heap pre-GC, and high
+    // RSS without heap pressure usually means cached file pages (kernel
+    // can drop them under real pressure). True OOM-trajectory needs both.
     const mem = process.memoryUsage()
     const heapPct = (mem.heapUsed / mem.heapTotal) * 100
     const rssMB = mem.rss / (1024 * 1024)
-    const memoryPressure = heapPct > this.opts.maxHeapPct || rssMB > this.opts.maxRssMB
+    const memoryPressure = heapPct > this.opts.maxHeapPct && rssMB > this.opts.maxRssMB
 
     if (memoryPressure) {
       this._consecutiveMemoryWarnings++
