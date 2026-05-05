@@ -164,6 +164,120 @@ test('SeedingRegistry: custody commit becomes effective after out-of-order recei
   t.is(status.committed, true, 'previously indexed commit becomes effective')
 })
 
+test('SeedingRegistry: source retirement is immutable once recorded', async (t) => {
+  const { registry } = registryFixture()
+  const publisher = keyPair()
+  const relay = keyPair()
+  const nextAuthority = keyPair()
+  const now = Date.now()
+  const blindContentId = hashHex('immutable-retirement-blind')
+  const ciphertextRoot = hashHex('immutable-retirement-ciphertext')
+
+  const intent = await registry.publishCustodyIntent({
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    requiredReplicas: 1,
+    deadline: now + 60_000,
+    retainUntil: now + 120_000
+  }, publisher)
+  await registry.recordCustodyReceipt({
+    intentId: intent.intentId,
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    retainUntil: intent.retainUntil
+  }, relay)
+  await registry.publishCustodyCommit({ intentId: intent.intentId }, publisher)
+
+  const first = await registry.publishSourceRetired({ intentId: intent.intentId }, publisher)
+  const second = await registry.publishSourceRetired({
+    intentId: intent.intentId,
+    nextAuthority: b4a.toString(nextAuthority.publicKey, 'hex')
+  }, publisher)
+
+  const status = registry.getCustodyStatus(intent.intentId)
+  t.is(status.sourceRetirement.signature, first.signature, 'first retirement remains effective')
+  t.not(status.sourceRetirement.signature, second.signature, 'later retirement cannot rewrite authority')
+  t.is(status.sourceRetirement.nextAuthority, null, 'nextAuthority cannot be changed after retirement')
+})
+
+test('SeedingRegistry: witness tombstones require matching post-expiry non-serving proof', async (t) => {
+  const { registry } = registryFixture()
+  const publisher = keyPair()
+  const relay = keyPair()
+  const witness = keyPair()
+  const now = Date.now()
+  const addressKey = hashHex('witness-registry-address')
+  const blindContentId = hashHex('witness-registry-blind')
+  const ciphertextRoot = hashHex('witness-registry-ciphertext')
+
+  const intent = await registry.publishCustodyIntent({
+    addressKey,
+    blindContentId,
+    ciphertextRoot,
+    contentVersion: 1,
+    requiredReplicas: 1,
+    deadline: now + 60_000,
+    retainUntil: now + 120_000
+  }, publisher)
+
+  try {
+    await registry.recordCustodyExpiryWitness({
+      intentId: intent.intentId,
+      timestamp: now + 130_000,
+      relayPubkey: b4a.toString(relay.publicKey, 'hex'),
+      nonServingProofHash: hashHex('missing-proof'),
+      catalogPresent: false,
+      gatewayServing: false,
+      activeSwarmObserved: false
+    }, witness)
+    t.fail('witness without matching non-serving proof should fail')
+  } catch (err) {
+    t.ok(err.message.includes('matching non-serving proof'), 'witness without matching proof is rejected')
+  }
+
+  const nonServing = await registry.recordCustodyNonServingProof(createCustodyNonServingProof({
+    intentId: intent.intentId,
+    addressKey,
+    blindContentId,
+    retainUntil: intent.retainUntil,
+    notServing: true,
+    catalogPresent: false,
+    activeSwarmServing: false
+  }, relay, { timestamp: now + 130_000 }))
+
+  try {
+    await registry.recordCustodyExpiryWitness({
+      intentId: intent.intentId,
+      timestamp: now + 131_000,
+      relayPubkey: b4a.toString(relay.publicKey, 'hex'),
+      nonServingProofHash: hashHex(nonServing),
+      catalogPresent: false,
+      gatewayServing: true,
+      activeSwarmObserved: false
+    }, witness)
+    t.fail('witness that observed gateway serving should fail')
+  } catch (err) {
+    t.ok(err.message.includes('active serving'), 'witness observing active serving is rejected')
+  }
+
+  const tombstone = await registry.recordCustodyExpiryWitness({
+    intentId: intent.intentId,
+    timestamp: now + 132_000,
+    relayPubkey: b4a.toString(relay.publicKey, 'hex'),
+    nonServingProofHash: hashHex(nonServing),
+    catalogPresent: false,
+    gatewayServing: false,
+    activeSwarmObserved: false
+  }, witness)
+
+  const status = registry.getCustodyStatus(intent.intentId)
+  t.ok(tombstone.signature, 'valid witness tombstone signed')
+  t.is(status.expiryWitnessCount, 1, 'raw witness indexed')
+  t.is(status.validExpiryWitnessCount, 1, 'valid witness counted')
+})
+
 test('SeedingRegistry: custodySnapshot rolls up aggregate state for dashboards', async (t) => {
   const { registry } = registryFixture()
   const publisher = keyPair()

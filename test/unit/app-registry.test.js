@@ -98,6 +98,7 @@ test('AppRegistry: redacted catalog hides blind/private metadata', (t) => {
 
   const broadcast = registry.catalogForBroadcast()[0]
   t.is(broadcast.redacted, true, 'broadcast marks blind entries redacted')
+  t.is(broadcast.appKey, null, 'broadcast hides address key for blind entries')
   t.is(broadcast.appId, null, 'broadcast appId is redacted')
   t.is(broadcast.discoveryKey, null, 'broadcast discovery key is redacted')
   t.is(broadcast.storageClass, 'temporary', 'broadcast includes storage class')

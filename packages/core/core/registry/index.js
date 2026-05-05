@@ -514,7 +514,7 @@ export class SeedingRegistry extends EventEmitter {
 
     if (entry.type === 'source-retired') {
       const current = this._sourceRetirements.get(entry.intentId)
-      if (!current || current.timestamp <= entry.timestamp) {
+      if (!current) {
         this._sourceRetirements.set(entry.intentId, entry)
         this._invalidateCustodyStatus(entry.intentId)
       }
@@ -906,6 +906,7 @@ export class SeedingRegistry extends EventEmitter {
     const sourceRetired = this._sourceRetirements.get(intentId) || null
     const proofs = this.getCustodyProofs(intentId)
     const nonServingProofs = this.getCustodyNonServingProofs(intentId)
+    const expiryWitnesses = this.getCustodyExpiryWitnesses(intentId)
     const commitCheck = rawCommit
       ? validateCustodyTransition(rawCommit, { intent, receipts })
       : { valid: false, reason: 'no commit' }
@@ -915,7 +916,7 @@ export class SeedingRegistry extends EventEmitter {
       : { valid: false, reason: 'no source retirement' }
     const effectiveRetirement = retirementCheck.valid ? sourceRetired : null
     const status = {
-      ...summarizeCustodyStatus(intent, receipts, commit, effectiveRetirement, proofs, nonServingProofs),
+      ...summarizeCustodyStatus(intent, receipts, commit, effectiveRetirement, proofs, nonServingProofs, expiryWitnesses),
       intent,
       receipts,
       commit,
@@ -923,7 +924,8 @@ export class SeedingRegistry extends EventEmitter {
       sourceRetirement: effectiveRetirement,
       sourceRetirementPendingReason: sourceRetired && !effectiveRetirement ? retirementCheck.reason : null,
       proofs,
-      nonServingProofs
+      nonServingProofs,
+      expiryWitnesses
     }
     this._custodyStatusCache.set(intentId, status)
     return status
@@ -971,9 +973,8 @@ export class SeedingRegistry extends EventEmitter {
       totalProofs += status.proofCount
       totalNonServingProofs += status.nonServingProofCount
 
-      const witnesses = this._custodyExpiryWitnesses.get(intentId) || []
-      if (witnesses.length > 0) withWitnessTombstone++
-      totalWitnessTombstones += witnesses.length
+      if (status.validExpiryWitnessCount > 0) withWitnessTombstone++
+      totalWitnessTombstones += status.validExpiryWitnessCount
     }
     return {
       intents,

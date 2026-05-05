@@ -164,7 +164,7 @@ test('e2e blind custody: intent → quorum → commit → retired → proof → 
   // ─── Step 5: Observer signs custody-proof ───
   await relays[0].seedingRegistry.recordCustodyProof({
     intentId: intent.intentId,
-    relayPubkey: b4a.toString(relays[1].swarm.keyPair.publicKey, 'hex'),
+    relayPubkey: b4a.toString(relays[0].swarm.keyPair.publicKey, 'hex'),
     challengeNonce: hashHex({ id, challenge: 'e2e' }),
     shardIds: [1],
     blockIndices: [0],
@@ -196,7 +196,7 @@ test('e2e blind custody: intent → quorum → commit → retired → proof → 
   const tombstone = await relays[0].seedingRegistry.recordCustodyExpiryWitness({
     intentId: intent.intentId,
     blindContentId,
-    relayPubkey: b4a.toString(relays[1].swarm.keyPair.publicKey, 'hex'),
+    relayPubkey: b4a.toString(relays[0].swarm.keyPair.publicKey, 'hex'),
     nonServingProofHash: hashHex(nonServingProof),
     catalogPresent: false,
     gatewayServing: false,

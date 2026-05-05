@@ -11,6 +11,7 @@ import {
   createCustodyReceipt,
   createSourceRetired,
   hashHex,
+  validateCustodyTransition,
   verifyCustodyEntry
 } from 'p2p-hiverelay/core/custody-signing.js'
 
@@ -288,6 +289,57 @@ test('custody signing: tampered witness tombstone is rejected', (t) => {
   const tampered = { ...tombstone, catalogPresent: true }
   const verified = verifyCustodyEntry(tampered, { now })
   t.is(verified.valid, false, 'tampered witness rejected')
+})
+
+test('custody signing: witness tombstone transition requires post-expiry non-serving proof', (t) => {
+  const publisher = keyPair()
+  const relay = keyPair()
+  const witness = keyPair()
+  const now = Date.now()
+  const blindContentId = hashHex('witness-transition-blind')
+  const addressKey = hashHex('witness-transition-address')
+  const intent = createCustodyIntent({
+    addressKey,
+    blindContentId,
+    ciphertextRoot: hashHex('witness-transition-ciphertext'),
+    contentVersion: 1,
+    requiredReplicas: 1,
+    deadline: now + 60_000,
+    retainUntil: now + 120_000
+  }, publisher, { timestamp: now })
+  const nonServingProof = createCustodyNonServingProof({
+    intentId: intent.intentId,
+    addressKey,
+    blindContentId,
+    retainUntil: intent.retainUntil,
+    notServing: true,
+    catalogPresent: false,
+    activeSwarmServing: false
+  }, relay, { timestamp: now + 130_000 })
+  const validWitness = createCustodyExpiryWitness({
+    intentId: intent.intentId,
+    blindContentId,
+    relayPubkey: b4a.toString(relay.publicKey, 'hex'),
+    nonServingProofHash: hashHex(nonServingProof),
+    catalogPresent: false,
+    gatewayServing: false,
+    activeSwarmObserved: false
+  }, witness, { timestamp: now + 131_000 })
+
+  const valid = validateCustodyTransition(validWitness, { intent, nonServingProofs: [nonServingProof] })
+  t.is(valid.valid, true, 'valid witness with matching non-serving proof is accepted')
+
+  const beforeExpiry = { ...validWitness, timestamp: now + 60_000 }
+  const early = validateCustodyTransition(beforeExpiry, { intent, nonServingProofs: [nonServingProof] })
+  t.is(early.valid, false, 'witness before retainUntil is rejected')
+
+  const serving = { ...validWitness, gatewayServing: true }
+  const observedServing = validateCustodyTransition(serving, { intent, nonServingProofs: [nonServingProof] })
+  t.is(observedServing.valid, false, 'witness that observed serving is rejected')
+
+  const wrongHash = { ...validWitness, nonServingProofHash: hashHex('wrong-proof') }
+  const mismatch = validateCustodyTransition(wrongHash, { intent, nonServingProofs: [nonServingProof] })
+  t.is(mismatch.valid, false, 'witness must bind to a known non-serving proof')
 })
 
 test('custody signing: receiptRoot is unique per quorum (different signatures → different roots)', (t) => {

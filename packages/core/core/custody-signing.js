@@ -455,12 +455,29 @@ export function validateCustodyTransition (entry, status = {}) {
     if (entry.catalogPresent || entry.activeSwarmServing) return { valid: false, reason: 'relay still reports active serving state' }
   }
 
+  if (entry.type === 'custody-expiry-witness') {
+    if (!intent) return { valid: false, reason: 'custody intent required before witness tombstone' }
+    if (entry.blindContentId !== intent.blindContentId) return { valid: false, reason: 'blindContentId mismatch' }
+    if (entry.timestamp < intent.retainUntil) return { valid: false, reason: 'witness before retainUntil' }
+    if (entry.catalogPresent || entry.gatewayServing || entry.activeSwarmObserved) {
+      return { valid: false, reason: 'witness observed active serving state' }
+    }
+    const nonServingProofs = Array.isArray(status.nonServingProofs) ? status.nonServingProofs : []
+    const matchesProof = nonServingProofs.some(proof => {
+      if (!proof || proof.relayPubkey !== entry.relayPubkey) return false
+      if (proof.notServing !== true) return false
+      return hashHex(proof) === entry.nonServingProofHash
+    })
+    if (!matchesProof) return { valid: false, reason: 'matching non-serving proof required before witness tombstone' }
+  }
+
   return { valid: true }
 }
 
-export function summarizeCustodyStatus (intent, receipts = [], commit = null, retirement = null, proofs = [], nonServingProofs = []) {
+export function summarizeCustodyStatus (intent, receipts = [], commit = null, retirement = null, proofs = [], nonServingProofs = [], expiryWitnesses = []) {
   const requiredReplicas = intent?.requiredReplicas || 0
   const validReceipts = receipts.filter(r => r.anchored === true)
+  const validExpiryWitnesses = expiryWitnesses.filter(w => validateCustodyTransition(w, { intent, nonServingProofs }).valid)
   return {
     intentId: intent?.intentId || null,
     blindContentId: intent?.blindContentId || null,
@@ -475,7 +492,10 @@ export function summarizeCustodyStatus (intent, receipts = [], commit = null, re
     proofCount: proofs.length,
     passingProofs: proofs.filter(p => p.passed === true).length,
     nonServingProofCount: nonServingProofs.length,
-    nonServingRelays: nonServingProofs.filter(p => p.notServing === true).map(p => p.relayPubkey).sort()
+    nonServingRelays: nonServingProofs.filter(p => p.notServing === true).map(p => p.relayPubkey).sort(),
+    expiryWitnessCount: expiryWitnesses.length,
+    validExpiryWitnessCount: validExpiryWitnesses.length,
+    expiryWitnessRelays: validExpiryWitnesses.map(w => w.relayPubkey).sort()
   }
 }
 

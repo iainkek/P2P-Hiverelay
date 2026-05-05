@@ -2220,7 +2220,10 @@ export class RelayAPI extends EventEmitter {
       proofCount: status.proofCount || 0,
       passingProofs: status.passingProofs || 0,
       nonServingProofCount: status.nonServingProofCount || 0,
-      nonServingRelays: Array.isArray(status.nonServingRelays) ? status.nonServingRelays : []
+      nonServingRelays: Array.isArray(status.nonServingRelays) ? status.nonServingRelays : [],
+      expiryWitnessCount: status.expiryWitnessCount || 0,
+      validExpiryWitnessCount: status.validExpiryWitnessCount || 0,
+      expiryWitnessRelays: Array.isArray(status.expiryWitnessRelays) ? status.expiryWitnessRelays : []
     }
   }
 

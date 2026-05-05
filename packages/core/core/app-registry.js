@@ -378,7 +378,7 @@ export class AppRegistry extends EventEmitter {
     for (const [appKey, entry] of this.apps) {
       const redacted = this._shouldRedactEntry(entry, { redactPrivate: true })
       apps.push({
-        appKey,
+        appKey: redacted ? null : appKey,
         appId: redacted ? null : (entry.appId || null),
         type: normalizeContentType(entry.type, 'app'),
         parentKey: redacted ? null : (entry.parentKey || null),
@@ -394,6 +394,7 @@ export class AppRegistry extends EventEmitter {
         seededAt: entry.startedAt || entry.seededAt || now,
         redacted,
         metadataVisibility: redacted ? 'redacted' : 'public',
+        blindContentId: redacted ? (entry.blindContentId || null) : null,
         // Anchor signal — tells peer relays whether we actually have
         // blocks. Receiving relay uses this to trigger targeted repair
         // when they have the drive unanchored and we have it anchored.
