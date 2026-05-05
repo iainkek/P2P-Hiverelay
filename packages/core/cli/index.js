@@ -90,6 +90,7 @@ function isRecoverableDHTError (err) {
   return (
     code === 'REQUEST_TIMEOUT' ||
     code === 'REQUEST_CANCELLED' ||
+    code === 'REQUEST_DESTROYED' ||
     code === 'NO_NODES_AVAILABLE' ||
     code === 'TOO_MANY_PROBES' ||
     code === 'CONNECTION_RESET'
