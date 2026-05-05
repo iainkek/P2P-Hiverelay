@@ -75,8 +75,8 @@ HiveRelay should expose two related but different product planes.
 
 | Plane | Storage Class | Availability Class | Best For | Default Behavior |
 |---|---|---|---|---|
-| Persistent Availability Plane | `persistent` | `always-on` | Pear apps, Ghost Drive public drives, routing services, package mirrors | Cataloged, repaired, supervised, and kept online |
-| Atomic Blind Custody Plane | `temporary` | `atomic-handoff` | Encrypted file/data handoff, blind dead drops, privacy-preserving transfers | Redacted, TTL-bounded, proofed, and removed from active serving after `retainUntil` |
+| Persistent Availability Plane | `persistent` | `always-on` | GitHub-style project mirrors, ticket/work-queue apps, browser app bundles, routing services, package mirrors | Cataloged, repaired, supervised, and kept online |
+| Atomic Blind Custody Plane | `temporary` | `atomic-handoff` | Encrypted file/data handoff, blind dead drops, sealed ticket attachments, privacy-preserving transfers | Redacted, TTL-bounded, proofed, and removed from active serving after `retainUntil` |
 
 This split is important. Apps and services want durable relay availability. Atomic blind file movement wants temporary custody, privacy, and auditable removal from the active serving set.
 
@@ -516,7 +516,7 @@ This makes "blind peers that hold encrypted data, pass it on, and self-remove" r
 
 | Mode | What Relay Stores | Best For | Privacy Strength |
 |---|---|---|---|
-| Blind mirror | Full encrypted drive/core blocks | Ghost Drive, public-key encrypted backups, app data mirrors | Good |
+| Blind mirror | Full encrypted drive/core blocks | Browser app bundles, public-key encrypted backups, app data mirrors | Good |
 | Blind shards | Erasure-coded encrypted shards | Sensitive private data, multi-relay custody, private data rooms | Strongest |
 
 Blind mirror is easier and can reuse Hyperdrive replication quickly. Blind shards are the long-term privacy primitive because no single relay has the full encrypted object, and even a leaked `dataKey` may require shard quorum to reconstruct old content.
@@ -829,13 +829,12 @@ Most relay systems stop at availability. HiveRelay can own a sharper primitive:
 
 That gives HiveRelay a value prop for:
 
-- Ghost Drive style always-online files.
-- Private data rooms.
-- App updates and package mirrors.
-- Compliance-oriented custody logs.
-- Marketplace/incentive settlement.
-- Disaster recovery for Pear apps.
-- Multi-region content guarantees.
+- GitHub-like project apps that keep repos, releases, issues, and artifacts online without a central SaaS backend.
+- Ticketing and work-queue apps that need shared state, attachments, and routing services to remain reachable across teams.
+- Browser-accessible P2P apps that publish static bundles and data feeds over the relay gateway while preserving Hypercore verification.
+- Private data rooms and sealed export bundles that need temporary blind custody instead of permanent public pinning.
+- Compliance-oriented custody logs for who accepted encrypted data, when, and under what retention window.
+- Disaster recovery for Pear apps, package mirrors, and multi-region content guarantees.
 - Privacy-preserving dead drops and escrowed data handoffs.
 
 ## Recommended Product Name

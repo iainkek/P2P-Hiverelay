@@ -1,26 +1,29 @@
 # HiveRelay
 
-**General-purpose blind P2P relays — for any P2P app to stay online forever.**
+**Verifiable trust infrastructure for P2P apps. Always-on. Cryptographically gated. Privacy-preserving.**
 
-Drop-in, always-on relay infrastructure for **any** Hyperswarm-based app. Your data stays end-to-end encrypted; the relay literally can't read a byte. Works with anything built on Hyperswarm, Hyperdrive, Hyperbee, Pear/Bare, or raw DHT — not Pear-specific, not browser-specific, not opinionated about your stack. Plug it in and your users stop seeing "offline".
+A relay network where availability is provable, not promised. Your P2P app stays online forever; your encrypted handoffs come with quorum receipts; expiry is enforced by the network and witnessed by independent attesters; and no relay ever sees your plaintext.
 
 **Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.0**
 
-> **v0.8.0** — Atomic Blind Custody is now a first-class protocol with cryptographic quorum receipts, source-authority retirement, witness tombstones for post-expiry detection, and two new Protomux channels for fully P2P trust pipeline. See the [whitepaper](./docs/ATOMIC-BLIND-CUSTODY.md) and the [release notes](./docs/RELEASE-NOTES-0.8.0.md).
+> **What changed in v0.8.0.** Atomic Blind Custody is now a first-class signed protocol. AutoHeal recruits archive replicas with cryptographic peer verification. Two new Protomux channels (`hiverelay-anchor`, `hiverelay-custody`) close the HTTPS dependency. Witness Tombstones close the post-expiry serving leak. Read the [whitepaper](./docs/ATOMIC-BLIND-CUSTODY.md), the [components tour](./docs/WHATS-IN-THE-RELAY.md), or the [release notes](./docs/RELEASE-NOTES-0.8.0.md).
 
-> The relay layer of the Hive substrate — blind, always-on, paid in Lightning sats. The consumer-facing Umbrel App Store version is branded **Blindspark**. The protocol and SDK retain the HiveRelay name.
+> The relay layer of the Hive substrate. Consumer-facing Umbrel build is branded **Blindspark**. The protocol and SDK retain the HiveRelay name.
 
 ---
 
-## The Problem
+## What HiveRelay does
 
-You build a P2P app on Hyperswarm. It works beautifully — until you close your laptop. Then your users see "offline" and your app is dead. Mobile users behind carrier NATs can't connect at all. Browser users can't use UDP. There is no durable availability layer and no shared discovery surface.
+P2P apps built on Hyperswarm work beautifully — until the developer closes their laptop. Users see "offline." Mobile users behind carrier NATs can't connect. Browser users can't use UDP. There is no durable availability layer and no shared discovery surface.
 
-## The Fix
+HiveRelay solves all of that, then keeps going.
 
-HiveRelay gives your app always-on availability, NAT traversal, browser access, app discovery, and blind atomic custody for temporary encrypted handoff — without running your own servers.
+A relay node is a Hyperswarm peer that joins the same DHT, speaks the same protocols, and replicates the same Hypercores — plus four things no other relay does:
 
-The default product is intentionally focused: **persistent P2P availability plus blind atomic custody**. AI, ZK, SLA, arbitration, payments, and special transports are optional plugin/profile layers, not the core relay promise.
+1. **Cryptographically verified replica durability** — peers count toward archive replication only when they produce a fresh signed Ed25519 anchor proof. AutoHeal recruits diverse replicas across regions and operators automatically.
+2. **Atomic Blind Custody** — encrypted content handoff with quorum receipts, source-authority retirement, possession proofs, and witness tombstones for post-expiry attestation. Relays never see plaintext or decryption keys.
+3. **Real-time P2P trust pipeline** — custody and proof traffic flow over Protomux channels on the existing Hyperswarm connection. Works on pure-DHT and NAT'd fleets without HTTPS.
+4. **Live telemetry** — WebSocket dashboard feed surfaces per-drive diversity, custody pipeline health, and immediate event push for every state change.
 
 ```js
 import { HiveRelayClient } from 'p2p-hiverelay-client'
@@ -32,139 +35,99 @@ const drive = await app.publish('./my-app')
 // Close your laptop. Your app stays online via the relay network.
 ```
 
-Works in **Pear/Bare runtime** natively:
-
-```js
-import Hyperswarm from 'hyperswarm'
-import Corestore from 'corestore'
-import { HiveRelayClient } from 'p2p-hiverelay-client'
-
-const store = new Corestore(Pear.config.storage)
-const app = new HiveRelayClient({ swarm: new Hyperswarm(), store })
-await app.start()
-```
-
-> See **[docs/PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md)** for full Pear/Bare usage.
-> See **[examples/pear-app/](examples/pear-app/)** and **[examples/node-app/](examples/node-app/)** for working starter projects.
+Works in **Pear/Bare runtime** natively. See [docs/PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md) for full usage.
 
 ---
 
-## What's new since v0.4.2
+## The two storage planes
 
-### v0.6.0 (in pipeline — `feat/umbrel-app` branch)
-- **Umbrel App Store package** — one-click install for Umbrel users; consumer brand: Blindspark
-- **5-step setup wizard** — auto-detects LNbits, encrypts the admin key at rest, sane defaults
-- **Comprehensive threat-model security work** — quorum-diverse reads, automatic fork detection during replication, signed observer attestations on fork proofs, capability-doc signing, audit trail for security overrides
-- **`@hive/verifier` package** — standalone reference verifier for cross-client verification
-- **Per-endpoint rate limiting** on sensitive paths
-- **Strategic docs**: `THREAT-MODEL.md`, `SECURITY-STRATEGY.md`, `OPERATOR-INCENTIVES-Y1.md`, `M2-ROADMAP.md`
+HiveRelay 0.8.0 distinguishes two storage classes with different semantics. A single relay can run both.
 
-### v0.5.1
-- **Capability advertisement** at `/.well-known/hiverelay.json` — machine-readable relay metadata
-- **Machine-readable error prefixes** — clients can branch on failure type
-- **Author seeding manifests** — Ed25519-signed "fetch my drives from these relays"
+### Persistent Availability Plane
 
-### v0.5.0
-- **Monorepo split** into `packages/{core, services, client}` workspaces
-- **First-class Pear/Bare runtime support** — both runtimes interoperate
-- **Per-relay accept-modes** (`open` / `review` / `allowlist` / `closed`) replacing auto-sync
-- **Federation primitive** — explicit cross-relay catalog sharing
-- **DHT-over-WebSocket transport** for browser clients
-- **Multi-device pairing** via 6-digit zero-knowledge code
-- **Delegation certs with revocation**
+For Pear apps, public drives, package mirrors, routing services. Marked `durability: 1` (archive tier).
+
+- **AutoHeal** background scheduler keeps replicas across ≥4 regions and ≥5 operators.
+- Cryptographic peer verification — peers without fresh anchor proofs don't count toward diversity.
+- `replicaBuffer` of +2 over the SLO floor absorbs transient offline dips.
+- Per-operator fairshare cap prevents sybil clusters from dominating any drive.
+- Catalogs are public; clients discover content via DHT plus the federation gossip layer.
+
+### Atomic Blind Custody Plane
+
+For encrypted file handoffs, blind dead drops, time-bounded transfers. Marked `storageClass: 'temporary'`.
+
+- Relays process ciphertext only — never plaintext, never decryption keys.
+- Validator hard-blocks ten plaintext field names so leakage is structurally impossible.
+- Six signed message types: intent → receipt → commit → source-retired → proof → non-serving-proof, with witness tombstones layered on top.
+- `retainUntil` is enforced state — the expiry monitor unseeds at the deadline and the relay signs a non-serving-proof.
+- Independent witnesses probe relays after expiry and sign tombstones — drops undetected post-expiry serving from ~82% to <1%.
+
+For the full protocol, see the [Atomic Blind Custody whitepaper](docs/ATOMIC-BLIND-CUSTODY.md).
 
 ---
 
-## What Your App Gets
+## Five things you can build
 
-### Blind Peering — The Killer Feature
-
-Relays store and replicate your data **encrypted**. They can't read it. They just keep it online.
+### 1. Encrypted file handoff with a TTL that the network enforces
 
 ```js
-const drive = await client.publish('./my-app', {
-  encryptionKey: myKey  // 32-byte key — relay stores ciphertext only
-})
-```
+const intent = await client.publishCustodyIntent(relayUrl, {
+  blindContentId: hashHex(yourPayload),
+  ciphertextRoot: yourCiphertextRoot,
+  requiredReplicas: 3,
+  deadline: Date.now() + 60_000,
+  retainUntil: Date.now() + 24 * 60 * 60_000  // 24 hours
+}, { apiKey })
 
-- Relay stores opaque encrypted blocks — it literally cannot decrypt your data
-- HTTP gateway returns 403 for blind apps ("P2P access only")
-- Your app appears in the catalog for discovery (name + key), but content requires the encryption key
-- Peers connect directly via Hyperswarm with the key to read
-- Circuit relay bridges encrypted streams without decryption — relay sees only bytes
-
-This is what production P2P apps need: **always-on persistence without trusting the relay operator.** Your medical records app, your wallet, your private messaging — stays online 24/7 across multiple regions, and no relay operator can read a single byte.
-
-### Diverse-Quorum Reads (v0.6.0)
-
-Your client doesn't trust a single relay. It picks a quorum of geographically + organizationally diverse relays, queries them in parallel, and detects when any disagree.
-
-```js
-await client.refreshCapabilityCache(relayUrls)
-const quorum = client.selectQuorum({ size: 5, minRegions: 3 })
-const result = await client.queryQuorumWithComparison('/api/info', quorum, {
-  compareFields: ['length', 'version'],
-  driveKey
-})
-if (result.divergent.length > 0) {
-  // Fork detected — drive auto-quarantined; operator must resolve
+// Wait for quorum, then commit + retire authority.
+let status
+while (!(status = await client.getCustodyStatus(relayUrl, intent.intentId)).quorumReached) {
+  await sleep(2000)
 }
+await client.publishCustodyCommit(relayUrl, intent.intentId, {}, { apiKey })
+await client.publishSourceRetired(relayUrl, intent.intentId, {}, { apiKey })
+
+// 24h later, retainUntil elapses, relays unseed, witnesses sign tombstones.
 ```
 
-### Automatic Fork Detection (v0.6.0)
-
-When `client.open(driveKey)` succeeds, the client auto-attaches Hypercore listeners that detect equivocation during replication. Forked drives are quarantined; opening one again throws `DRIVE_QUARANTINED` until the operator explicitly resolves.
-
-### Capability-Doc Signed by Relay Identity (v0.6.0)
-
-`/.well-known/hiverelay.json` is now signed by the relay's identity Ed25519 key. The client auto-verifies on fetch. A reverse proxy or MITM that tampers with the doc is detected.
+### 2. Verifiable archive durability
 
 ```js
-const caps = await client.fetchCapabilities('https://relay.example.com:9100', {
-  expectedPubkey: '<known-relay-pubkey>'  // out-of-band trust pinning
-})
+await client.seed(driveKey, { durability: 1, revocable: false })
+// AutoHeal across the network ensures ≥7 replicas, ≥4 regions, ≥5 operators.
+// Each replica's "I have it" claim is gated on a fresh Ed25519 anchor proof.
 ```
 
-### Always-On Availability
-Publish once, relay nodes across multiple continents serve it 24/7. You go to sleep, your users don't notice. If a relay goes down, others still serve your data.
+### 3. Cryptographic dead drops
 
-### Every User Can Connect
-The ~5% of connections that fail hole-punching get bridged through encrypted circuit relays automatically.
+Two parties, one signed handoff record, no trust in any single relay.
 
-### Developer Kill Switch
-Changed your mind? Ship a bad version? Unseed your app from the entire network with one signed call:
+### 4. Multi-region read-replica distribution with provable freshness
 
 ```js
-await app.unseed(driveKey)  // Ed25519 signed — relays verify you're the publisher
+const peers = await client.getRelays()
+const fresh = peers.filter(p => p.hasFreshAnchorProof)
+// Read from any of them — they all cryptographically demonstrated current state.
 ```
 
-### Author Seeding Manifests (v0.5.1)
+### 5. Per-app SLA enforcement via live dashboard feed
 
-Authors publish a signed list of "fetch my drives from these relays":
+Subscribe to `/ws` and drive UX off the actual durability state.
 
-```js
-const manifest = client.createSeedingManifest({
-  relays: [
-    { url: 'hyperswarm://abc...', role: 'primary' },
-    { url: 'wss://relay.example.com/dht', role: 'backup' }
-  ],
-  drives: [{ driveKey: '...', channel: 'production' }]
-})
-await client.publishSeedingManifest('https://relay.example.com:9100', manifest)
-```
+---
 
-Anyone can fetch (and verify the signature on) the manifest at `/api/authors/<pubkey>/seeding.json`.
+## Privacy model
 
-### Dual Transport: P2P + HTTP
-Same app, same data, accessible two ways:
+Apps declare their own privacy tier. The relay enforces what it sees based on this:
 
-| Scenario | P2P (Hyperswarm) | HTTP (Gateway) |
-|----------|-------------------|----------------|
-| Pear desktop app | Direct P2P | Also browsable via gateway |
-| Browser / web app (no UDP) | DHT-over-WebSocket transport | Works via gateway |
-| Mobile on carrier NAT | Circuit relay bridges it | Works via HTTP |
-| curl / scripts / CI | Complex | Simple REST calls |
-| Privacy-sensitive (blind mode) | Full P2P with encryption key | Gateway returns 403 |
+| Tier | Relay sees | Where data lives | Example |
+|---|---|---|---|
+| `public` | Everything (drive content, metadata) | DHT-replicated, gateway-served | Open-source app, public dataset |
+| `local-first` | Discovery key only; data exchanged peer-to-peer | Local + opportunistic relay cache | Personal notes, journal |
+| `p2p-only` (blind) | Opaque ciphertext bytes | Encrypted on relay disk; gateway returns 403 | Wallets, medical, private messaging |
+
+The `p2p-only` tier is the killer feature for production privacy-preserving apps. Combined with atomic blind custody, the relay can prove it stored your encrypted content and stopped storing it at expiry — without ever decrypting it.
 
 ---
 
@@ -177,89 +140,89 @@ npm install p2p-hiverelay-client
 ### Content API
 
 | Method | Description |
-|--------|-------------|
-| `app.publish(dir)` | Publish a directory to a Hyperdrive |
-| `app.open(key, opts)` | Open and replicate a remote drive (refuses quarantined drives unless `opts.force`) |
-| `app.get(key, path)` | Read a file from a drive |
-| `app.put(key, path, content)` | Write a file to a drive |
-| `app.list(key, dir)` | List directory contents |
+|---|---|
+| `app.publish(dir, opts)` | Publish a directory to a Hyperdrive (`encryptionKey` for blind mode) |
+| `app.open(key, opts)` | Open and replicate a remote drive |
+| `app.get(key, path)` / `.put` / `.list` | Drive content access |
+| `app.seed(driveKey, opts)` | Mark a drive for relay replication (`durability: 1` for archive tier) |
+| `app.unseed(driveKey)` | Signed kill switch |
 | `app.closeDrive(key)` | Close a drive |
-| `app.unseed(key)` | Kill switch — remotely unseed (signed) |
 
-### Quorum + verification API (v0.6.0)
-
-| Method | Description |
-|--------|-------------|
-| `app.refreshCapabilityCache(urls)` | Fetch + cache capability docs from N relays |
-| `app.selectQuorum(opts)` | Pick diverse / foundation / pinned / wide quorum |
-| `app.queryQuorum(path, quorum)` | Hit all quorum relays in parallel |
-| `app.queryQuorumWithComparison(path, quorum, opts)` | + auto-detect divergence |
-| `app.isDriveQuarantined(driveKey)` | Check fork-detector quarantine state |
-| `app.publishForkProof(proof, urls)` | Broadcast signed equivocation evidence |
-| `app.pinRelay(url, pubkey)` / `unpinRelay()` | Out-of-band trust pinning |
-
-### Capabilities + manifests API (v0.5.1)
+### Custody API (v0.8.0)
 
 | Method | Description |
-|--------|-------------|
+|---|---|
+| `app.publishCustodyIntent(url, intent, opts)` | Sign and publish a custody intent |
+| `app.publishCustodyCommit(url, intentId, commit, opts)` | Sign commit when quorum reached |
+| `app.publishSourceRetired(url, intentId, ret, opts)` | Retire source authority |
+| `app.recordCustodyProof(url, proof, opts)` | Record a possession-challenge result |
+| `app.recordCustodyNonServingProof(url, intentId, proof, opts)` | Relay's post-expiry attestation |
+| `app.recordCustodyExpiryWitness(url, intentId, witness, opts)` | Independent witness tombstone |
+| `app.getCustodyStatus(url, intentId)` | Read-only quorum + commit status |
+
+### Quorum + verification API
+
+| Method | Description |
+|---|---|
+| `app.refreshCapabilityCache(urls)` | Fetch + cache capability docs |
+| `app.selectQuorum(opts)` | Pick diverse / pinned / wide quorum |
+| `app.queryQuorumWithComparison(path, quorum, opts)` | Parallel query + auto fork detection |
 | `app.fetchCapabilities(url, opts)` | Get a relay's signed capability doc |
-| `app.createSeedingManifest({relays, drives})` | Sign a seeding manifest |
-| `app.publishSeedingManifest(url, manifest)` | Publish to a relay's cache |
-| `app.fetchSeedingManifest(url, pubkey)` | Discover an author's preferred relays |
+| `app.publishSeedingManifest(url, manifest)` | Publish author's preferred-relay manifest |
 
 ---
 
 ## For Operators
 
-You have hardware — a VPS, a Mac Mini, a Raspberry Pi, an Umbrel. HiveRelay turns it into income.
+You have hardware — a VPS, a Mac Mini, a Raspberry Pi, an Umbrel. HiveRelay turns it into part of a verifiable trust network.
 
-### One-click install on Umbrel (v0.6.0, pending App Store review)
-
-The consumer-facing Umbrel app is branded **Blindspark**. Install from the Umbrel App Store, walk through the 5-step setup wizard (~10 minutes), start earning Lightning sats.
-
-→ See [`umbrel-app/README.md`](umbrel-app/README.md) and [`umbrel-app/SUBMISSION-CHECKLIST.md`](umbrel-app/SUBMISSION-CHECKLIST.md).
-
-### Direct install (any platform)
+### Direct install
 
 ```bash
 npm install -g p2p-hiverelay
 p2p-hiverelay setup        # Interactive wizard
 # or:
-p2p-hiverelay start --region NA --max-storage 50GB --holesail
+p2p-hiverelay start --region NA --operator your-org-name --max-storage 50GB
 ```
+
+The new `--operator` flag is **important** for v0.8.0. Without a stable operator identifier, AutoHeal treats each pubkey as its own operator and the per-operator fairshare cap doesn't activate. Set it to your org / deployment name (`"acme-corp"`, `"foundation-prod"`, etc.).
+
+### One-click install on Umbrel
+
+The consumer-facing build is branded **Blindspark**. Install from the Umbrel App Store, run the setup wizard, start participating.
 
 ### Live Management TUI
 
 ```bash
-p2p-hiverelay tui          # Connect to running node
+p2p-hiverelay tui
 ```
 
-Interactive control of the relay core plus any explicitly enabled service plugins, resources, transports, accept-mode, federation, and network settings.
+Interactive control of everything — accept-mode, federation, custody settings, AutoHeal thresholds, network discovery.
 
 ### Operating Modes
 
 | Mode | Description |
-|------|-------------|
-| **Relay Core** | Default focused kernel: availability, registry, gateway, custody, no service plugins |
-| **Custody Relay** | Blind atomic custody profile for encrypted temporary handoff |
-| **Service Operator** | Opt-in service plugin host on top of the relay core |
-| **Experimental Lab** | AI/ZK/SLA/arbitration plugin playground, not a production default |
-| **HomeHive** | Home/personal relay — 32 connections, 25 Mbps, LAN-priority, device pairing |
-| **Seed Only** | App seeding only — relay disabled |
-| **Relay Only** | Circuit relay only — seeding disabled |
-| **Stealth** | Minimal footprint, designed for Tor-only operation |
-| **Gateway** | HTTP gateway focus — 512 connections, 500 Mbps |
+|---|---|
+| **Relay Core** | Default focused kernel: availability + atomic custody, no service plugins |
+| **Custody Relay** | Atomic blind custody profile for encrypted temporary handoff |
+| **Service Operator** | Service plugin host on top of relay core |
+| **Witness** | Lightweight expiry-witness role — no storage, just attestation |
+| **HomeHive** | Home/personal relay — 32 connections, 25 Mbps, LAN-priority |
+| **Seed Only** | App seeding only — no circuit relay |
+| **Relay Only** | Circuit relay only — no seeding |
+| **Stealth** | Minimal footprint, designed for Tor-only |
+| **Gateway** | HTTP gateway focus — high connection limits |
 
-### Accept-Mode (v0.5.0)
+### Accept-Mode
 
-Operators choose how inbound seed requests are handled:
+| Mode | Behavior |
+|---|---|
+| `review` (default) | Operator approves every inbound seed request |
+| `allowlist` | Auto-accept publishers in the trusted list |
+| `open` | Auto-accept everything signed (pair with payment-required) |
+| `closed` | Relay-only mode, no inbound seed requests |
 
-- **`review`** (default) — operator approves every request
-- **`allowlist`** — auto-accept publishers in the trusted list
-- **`open`** — auto-accept everything signed (pair with payment-required)
-- **`closed`** — relay-only mode, no inbound seed requests
-
-### Federation (v0.5.0)
+### Federation
 
 ```bash
 hiverelay federation follow https://relay.example.com
@@ -268,73 +231,59 @@ hiverelay federation mirror https://my-other-relay.example.com
 
 Followed catalogs go through your accept-mode gate. Mirrored peers bypass the gate (use sparingly — only for "your own other node" or trusted partners).
 
-### Optional Economics
+### Live Dashboard
 
-Payments and service-market economics are optional plugin/marketplace layers. Core adoption should not require Lightning, a token, AI hardware, SLA collateral, or arbitration. For the archived operator-economics exploration, see [`docs/OPERATOR-INCENTIVES-Y1.md`](docs/OPERATOR-INCENTIVES-Y1.md) and [`artifacts/plugin-handoffs/`](artifacts/plugin-handoffs/).
+Every relay exposes a WebSocket feed at `/ws` that broadcasts:
+- Per-drive AutoHeal diversity scorecard (replicas, regions, operators, threshold status)
+- Aggregate custody snapshot (intents, quorums met, commits, witness tombstones, commit rate)
+- Real-time event push on recruit, proof-fail, throttle, and every custody pipeline transition
 
----
-
-## Security
-
-Comprehensive security treatment in:
-
-- **[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md)** — three-category state model (authored / observed / derived), defense mechanisms, named attacks
-- **[`docs/SECURITY-STRATEGY.md`](docs/SECURITY-STRATEGY.md)** — 32 attack vectors mapped to mitigations with status (🟢 in place / 🟡 in progress / 🟠 M2 / 🔴 open)
-- **[`docs/OPERATOR-INCENTIVES-Y1.md`](docs/OPERATOR-INCENTIVES-Y1.md)** — answer to the "who pays operators in year 1 without a token" problem
-- **[`docs/M2-ROADMAP.md`](docs/M2-ROADMAP.md)** — explicitly-scoped M2 deliverables (Operator Score, Sybil defense, sigstore signing, etc.)
-
-### Security highlights (v0.6.0)
-
-- ✅ **Capability docs cryptographically signed** by relay identity — tampering caught
-- ✅ **LNbits admin key encrypted at rest** with AES-256-GCM, key from `$APP_SEED`
-- ✅ **Diverse-quorum reads** with automatic divergence detection
-- ✅ **Auto fork detection** during Hypercore replication; quarantines forked drives
-- ✅ **Signed fork proofs** with observer attestation + freshness window
-- ✅ **Per-endpoint rate limits** on sensitive paths (5/min on LNbits-key endpoint)
-- ✅ **Audit trail** for `force:true` quarantine bypasses
-- ✅ **Pubkey pinning** registry for out-of-band trust
-- ⚠️ **M2 work remaining**: Operator Score, Sybil defense gates, reproducible builds, P2P-Auth v1 spec (see SECURITY-STRATEGY.md)
+Dashboards subscribe and reflect actual state, not polled state.
 
 ---
 
 ## Architecture
 
 ```
-Developer App
-    |
-    +-- publish('./my-app')  -->  Hyperdrive (encrypted or plain)
-    |                                |
-    |                         Hyperswarm DHT
-    |                    /     /     |     \     \
-    |              JP    AU    AR    PT     LK     UAE     (foundation network)
-    |              Relay Relay Relay Relay  Relay  Relay
-    |                |     |     |    |      |       |
-    |                +-----+- mutual federation -----+
-    |                              |
-    |                    Plus the wider operator network
-    |                    (Umbrel home relays earning sats)
-    |
-    +-- client.queryQuorumWithComparison(...)  <--  diverse-quorum reads
-    |                                                + auto fork detection
-    |
-    +-- client.unseed(key)     -->  Signed kill switch -> all relays
-    |
-    +-- HTTP gateway          -->  relay:9100/v1/hyper/{key}/path
+                Pear App / Client SDK
+                         |
+                Hyperswarm DHT (discovery)
+                         |
+              +----------+----------+
+              |                     |
+         Relay A                Relay B
+              |                     |
+         +----+----+           +----+----+
+         | Seeder  |           | Seeder  |
+         | Circuit |           | Circuit |
+         | Custody |           | Custody |
+         | Witness |           | Witness |
+         | AutoHeal|           | AutoHeal|
+         +----+----+           +----+----+
+              |                     |
+              +- mutual federation -+
+                         |
+              +----------+----------+
+              |                     |
+        Hyperdrive             Registry log
+        replication            (custody entries)
+                         |
+              +----------+----------+
+              |                     |
+        Persistent             Atomic Blind
+        Availability           Custody
+        Plane                  Plane
 ```
 
-- **Client SDK** — runs in Node.js or Pear/Bare runtime
-- **Relay nodes** — Node.js (VPS, home hardware, Raspberry Pi, Umbrel)
-- **Home relays** — Holesail transport for NAT traversal, no public IP needed
-- **Foundation network** — 6 founder-owned properties across 6 continents (operator-of-last-resort)
-- **Federation gossip** — fork proofs propagate within ~5 min of a federation poll cycle
+Seven Protomux channels run over each Hyperswarm connection: `hiverelay-seed`, `hiverelay-proof`, `hiverelay-circuit`, `hiverelay-services`, `hiverelay-registry-meta`, `hiverelay-anchor` (new in 0.8.0), `hiverelay-custody` (new in 0.8.0). Plus Hypercore replication for the registry log itself.
 
 ---
 
-## Quick Start
+## Quick start
 
 > **Requirements**: Node.js 20+
 
-### For Developers
+### For developers
 
 ```bash
 npm install p2p-hiverelay-client
@@ -346,10 +295,10 @@ const app = new HiveRelayClient('./my-storage')
 await app.start()
 
 const drive = await app.publish('./my-app')
-await app.seed(drive.key)
+await app.seed(drive.key, { durability: 1, revocable: false })
 ```
 
-### For Operators
+### For operators
 
 ```bash
 npm install -g p2p-hiverelay
@@ -362,13 +311,12 @@ Or via Docker:
 docker run -d --name hiverelay \
   -v hiverelay-data:/data \
   -v hiverelay-config:/config \
+  -e HIVERELAY_OPERATOR=your-org-name \
   -p 9100:9100 \
   ghcr.io/bigdestiny2/p2p-hiverelay:latest
 ```
 
-Or via Umbrel App Store (v0.6.0): search "Blindspark" — coming after submission.
-
-### Local Testnet
+### Local testnet
 
 ```bash
 npx p2p-hiverelay testnet --nodes 5
@@ -376,60 +324,38 @@ npx p2p-hiverelay testnet --nodes 5
 
 ---
 
-## Test Coverage
+## Test coverage
 
-**781 unit tests passing, 0 failures.** Significant coverage growth since v0.4.2 (~425 baseline) driven by recovering hidden tests + extensive new feature coverage.
+The v0.8.0 trust-stack bundle (custody-signing, registry-custody, anchor-channel, custody-channel, auto-heal, ws-feed-payload, client-custody, seed-revocability, seeding-registry-hardening) runs **91 unit tests** plus a 19-assertion **end-to-end integration test** that spins up three real relays on a Hyperswarm testnet and runs the full custody pipeline.
 
-| Suite | Approximate count |
-|-------|---|
-| Core relay logic | ~250 |
-| Client SDK | ~120 |
-| Security primitives (quorum, fork detection, signing) | ~110 |
-| Federation + accept-mode | ~80 |
-| Wizard + Umbrel app integration | ~40 |
-| Identity + delegation | ~50 |
-| Services layer | ~80 |
-| Transports + payments | ~50 |
-
----
-
-## Branches in this repo
-
-| Branch | Purpose |
-|---|---|
-| `main` | Currently `v0.4.2` — what's deployed to live relays |
-| `release/v0.5.0` | Architectural refactor + Pear runtime + federation |
-| `release/v0.5.1` | Capability advertisement + error prefixes + author seeding manifests |
-| `feat/umbrel-app` | v0.6.0 pipeline — Umbrel App Store package + comprehensive threat-model security work |
-
-PRs:
-- [#3 — v0.5.0](https://github.com/bigdestiny2/P2P-Hiverelay/pull/3)
-- [#4 — v0.5.1](https://github.com/bigdestiny2/P2P-Hiverelay/pull/4)
-- [#5 — v0.6.0 pipeline](https://github.com/bigdestiny2/P2P-Hiverelay/pull/5)
+Two simulation harnesses cover behaviors unit tests can't reach:
+- `scripts/simulate-blind-atomic-custody.js` — Monte Carlo across 7 protocol scenarios, 5,000 trials each. Surfaced the witness tombstone primitive as the highest-leverage post-expiry attestation.
+- `scripts/simulate-auto-heal-bridge.js` — drives real AutoHeal against an in-memory simulated network with 7 deterministic scenarios (cold-start, sybil, liar, churn at 4 rates, stampede, partition heal, scaling).
 
 ---
 
 ## Documentation
 
 ### v0.8.0 release
-- **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper
+- **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper (threat model, state machine, security analysis, simulation evidence, comparison to Filecoin/Sia/Storj/IPFS)
 - **[WHATS-IN-THE-RELAY.md](docs/WHATS-IN-THE-RELAY.md)** — guided tour of every component the relay picks up at v0.8.0
-- **[RELEASE-NOTES-0.8.0.md](docs/RELEASE-NOTES-0.8.0.md)** — what's new + migration guide
-- **[atomic-network-design.md](docs/atomic-network-design.md)** — full design doc, threat model, protocol spec
+- **[TUTORIAL-CUSTODY-QUICKSTART.md](docs/TUTORIAL-CUSTODY-QUICKSTART.md)** — build an encrypted custody handoff in 10 minutes
+- **[RELEASE-NOTES-0.8.0.md](docs/RELEASE-NOTES-0.8.0.md)** — what's new + migration guide for operators upgrading from 0.7.x
+- **[HIVERELAY_OVERVIEW.md](docs/HIVERELAY_OVERVIEW.md)** — single-page mental model
+- **[atomic-network-design.md](docs/atomic-network-design.md)** — extended design doc with rollout matrix and protocol shape
 - **[ATOMIC-CUSTODY-SIMULATION.md](docs/ATOMIC-CUSTODY-SIMULATION.md)** — simulation methodology and findings
+- **[M2-ROADMAP.md](docs/M2-ROADMAP.md)** — what's next (post-v0.8.0)
 
 ### Strategic & security
 - **[MANIFESTO.md](docs/MANIFESTO.md)** — non-negotiable architectural values
 - **[Hive_Engineering_Brief.md](docs/Hive_Engineering_Brief.md)** — architecture + business decisions
 - **[THREAT-MODEL.md](docs/THREAT-MODEL.md)** — security thesis
 - **[SECURITY-STRATEGY.md](docs/SECURITY-STRATEGY.md)** — attack-vector mitigation tracker
-- **[OPERATOR-INCENTIVES-Y1.md](docs/OPERATOR-INCENTIVES-Y1.md)** — year-one economic model
-- **[M2-ROADMAP.md](docs/M2-ROADMAP.md)** — what's next
+- **[CRYPTO-GUARANTEES.md](docs/CRYPTO-GUARANTEES.md)** — cryptographic primitives audit
 
 ### Operator & developer
 - **[v0.5.1-CAPABILITIES.md](docs/v0.5.1-CAPABILITIES.md)** — capability doc + error prefixes + manifests spec
 - **[PEAR-INTEGRATION.md](docs/PEAR-INTEGRATION.md)** — Pear/Bare usage guide
-- **[CRYPTO-GUARANTEES.md](docs/CRYPTO-GUARANTEES.md)** — cryptographic primitives audit
 - **[HOMEHIVE.md](docs/HOMEHIVE.md)** — private mode for home/family
 - **[ECONOMICS.md](docs/ECONOMICS.md)** — economics design
 
@@ -444,11 +370,15 @@ PRs:
 - **GitHub**: [github.com/bigdestiny2/P2P-Hiverelay](https://github.com/bigdestiny2/P2P-Hiverelay)
 - **npm (core)**: [p2p-hiverelay](https://www.npmjs.com/package/p2p-hiverelay)
 - **npm (client)**: [p2p-hiverelay-client](https://www.npmjs.com/package/p2p-hiverelay-client)
-- **npm (verifier, v0.6.0)**: [p2p-hiverelay-verifier](https://www.npmjs.com/package/p2p-hiverelay-verifier)
+- **npm (verifier)**: [p2p-hiverelay-verifier](https://www.npmjs.com/package/p2p-hiverelay-verifier)
 - **Docker image**: `ghcr.io/bigdestiny2/p2p-hiverelay:latest`
 - **Live Dashboard**: `http://{relay}:9100/dashboard`
 - **Catalog**: `http://{relay}:9100/catalog.json`
 
 ---
 
-No blockchain. No token. No gatekeepers. Just infrastructure that keeps your apps online — paid in Lightning sats, owned by no one.
+## License
+
+Apache 2.0 — full text in [LICENSE](LICENSE).
+
+The protocol, SDK, and reference implementation are open. Alternative implementations are welcome and encouraged — the protocol is independent of any specific implementation.

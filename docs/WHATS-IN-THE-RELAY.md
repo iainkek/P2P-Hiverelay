@@ -18,7 +18,7 @@ The relay now speaks a six-message custody protocol — intent → receipt
 → commit → source-retired → proof → non-serving-proof — implemented in
 `packages/core/core/custody-signing.js`. Every custody-relevant event is
 a signed Ed25519 envelope appended to the registry's append-only
-Hypercore log, replicated network-wide. Privacy invariants are enforced
+Hypercore log, replicated across connected registry peers. Privacy invariants are enforced
 at the validator level: ten plaintext field names (`dataKey`,
 `decryptionKey`, `plaintext`, `fileName`, etc.) are hard-blocked at
 sign time. The relay can never accidentally pass through a key or a
@@ -33,9 +33,10 @@ receipts accumulate, the publisher signs a commit. The commit's
 `receiptRoot` is a deterministic order-invariant hash over the relay
 quorum's receipts; observers verify quorum without consensus on receipt
 arrival order. The publisher then signs a source-retired entry,
-relinquishing authority over future state. From that moment on,
-clients refuse to accept further state-change signatures from the
-retired authority key.
+relinquishing authority over future state. The registry treats the
+first valid source-retirement checkpoint as immutable; clients and apps
+can enforce that checkpoint by refusing later state-change signatures
+from the retired authority key.
 
 In practice this means an app can hand off encrypted content to a
 quorum of relays with cryptographic proof of who took custody when,
@@ -44,15 +45,16 @@ and at no point does any relay see plaintext or decryption keys.
 
 ## 2. Witness Tombstone role
 
-Storage replication alone cannot detect a relay that secretly continues
-serving content past `retainUntil`. Simulation showed this leak
-running 27%–82% across configurations. The Witness Tombstone role
-closes it: independent witnesses probe a relay's catalog, gateway, and
-swarm after expiry, then sign a `custody-expiry-witness` entry over
-what they observed. Witnesses do not store content — they only attest
-to relay state. A 5-of-7 witness quorum drops undetected continued
-serving from approximately 82% to less than 1%, with no availability
-cost.
+Storage replication alone cannot detect a relay that continues serving
+content past `retainUntil`. Simulation showed this leak running
+27%–82% across configurations. The Witness Tombstone role makes that
+behavior observable: independent witnesses probe a relay's catalog,
+gateway, and swarm after expiry, then sign a `custody-expiry-witness`
+entry over what they observed. Witnesses do not store content — they
+only attest to relay state. The latest sweep recommends a 7-of-7
+single-round witness profile for the practical default; in the model it
+kept availability around 99.70% while reducing undetected continued
+serving to roughly 0.04%.
 
 This introduces a third role to the network — alongside publisher and
 custody relay — that lets lightweight operators participate in the
@@ -73,14 +75,15 @@ wire traffic), and decides based on a three-path gate: the relay
 recruits if it closes a region gap, closes an operator gap, or fills
 the buffer slots when both diversity dimensions are already met.
 
-The novelty is that AutoHeal counts only cryptographically verified
-peers. A peer claiming `anchored: true` in its catalog is not enough;
+The novelty is that AutoHeal counts only proof-gated peers. A peer
+claiming `anchored: true` in its catalog is not enough;
 the peer must produce a fresh signed Ed25519 anchor proof from its
 `/api/anchors/<appKey>/proof` endpoint within the freshness window
-(default 1 hour). This raises the bar from "they say they have it"
-to "we cryptographically confirmed they had it within the last hour."
-Without the proof, a peer doesn't count toward replica diversity
-regardless of what its catalog claims.
+(default 1 hour). This raises the bar from unsigned catalog gossip to a
+fresh relay-identity attestation over local anchored state. It is still
+not a full random block-possession challenge; that remains the next
+hardening layer for AutoHeal. Without the proof, a peer doesn't count
+toward replica diversity regardless of what its catalog claims.
 
 A `replicaBuffer` of +2 over `minReplicas` lets AutoHeal recruit past
 the SLO floor so transient offline dips don't immediately violate the
@@ -119,7 +122,8 @@ relays work. The trust pipeline is fully P2P at the protocol layer.
 
 Custody entries — intents, receipts, commits, retirements, proofs,
 non-serving-proofs, witness tombstones — are durable because they're
-appended to the registry's Hypercore log and replicated network-wide.
+appended to the registry's Hypercore log and replicated across connected
+registry peers.
 But Hypercore replication carries seconds-to-minutes latency. For
 interactive flows ("I just signed a receipt; please count my vote
 toward quorum NOW"), the relay also pushes new custody entries over a
@@ -144,17 +148,33 @@ The relay now distinguishes two storage classes with different
 semantics:
 
 The **Persistent Availability Plane** (`storageClass: 'persistent'`,
-`availabilityClass: 'always-on'`) handles Pear apps, public drives,
-package mirrors, routing services. AutoHeal recruits replicas, the
-relay catalogs the entries publicly, content is cataloged and repaired.
-This is the right path for content that should stay online indefinitely.
+`availabilityClass: 'always-on'`) handles app bundles, GitHub-style
+project mirrors, ticket/work-queue apps, browser-accessible packages,
+public datasets, routing services, and package mirrors. AutoHeal
+recruits replicas, the relay catalogs the entries publicly, content is
+cataloged and repaired. This is the right path for content and services
+that should stay online indefinitely.
 
 The **Atomic Blind Custody Plane** (`storageClass: 'temporary'`,
 `availabilityClass: 'atomic-handoff'`) handles encrypted file handoffs,
-blind dead drops, time-bounded transfers. Entries are TTL-bounded by
-`retainUntil`, the catalog redacts metadata, the relay processes
-ciphertext only, and after expiry the entry is removed from active
-serving and the relay can sign a non-serving-proof.
+blind dead drops, sealed ticket attachments, one-time export bundles,
+and time-bounded transfers. Entries are TTL-bounded by `retainUntil`,
+the catalog redacts metadata, the relay processes ciphertext only, and
+after expiry the entry is removed from active serving and the relay can
+sign a non-serving-proof.
+
+Concrete examples:
+
+- A GitHub-like project app keeps repositories, releases, issue data,
+  and package artifacts available while maintainers are offline.
+- A ticketing app keeps shared queues and attachment bundles reachable
+  across teams without a central SaaS server.
+- A browser app publishes its static bundle and data feeds through the
+  relay network so users can open it from ordinary HTTPS while P2P peers
+  still verify the underlying Hypercore content.
+- A dead-drop app uses blind custody for sealed ciphertext that should
+  move through relays temporarily, then disappear from the active serving
+  plane after the retention window.
 
 A relay can run both planes simultaneously. The two planes share the
 same Hyperswarm connection, the same registry log, the same Protomux
@@ -171,12 +191,12 @@ removed from the local app registry, dropped from active swarm
 serving, and the gateway returns "Drive not seeded on this relay" for
 them. The relay emits a `custody-expired` event for each one.
 
-After unsealing, the relay can produce a signed `custody-non-serving-proof`
+After unseeding, the relay can produce a signed `custody-non-serving-proof`
 for the intent — its own attestation that catalog and swarm-serving
 state changed at expiry. Independent witnesses can then probe and sign
 their own tombstones.
 
-Operationally this is the mechanical guarantee that backs `retainUntil`.
+Operationally this is the mechanical enforcement path that backs `retainUntil`.
 An app sets a 24-hour retention window; the relay's monitor sees the
 window elapse, unseeds, and emits the proof. The retention isn't a
 configuration suggestion — it's enforced state.
@@ -358,7 +378,8 @@ Both planes are covered by unit, integration, and simulation tests.
 Both planes are usable from the client SDK.
 
 The relay is no longer a "P2P pinning service that says it has your
-content." It is a verifiable trust layer that can prove who took
-custody, when, for how long, that they cryptographically demonstrated
-custody at challenge time, and that they stopped serving when their
-retention window ended — all without ever decrypting the content.
+content." It is a verifiable trust layer that can prove who signed each
+custody transition, when a relay attested anchored state, when a source
+retired authority, and when relays plus witnesses attested observed
+non-serving state after expiry — all without ever decrypting the
+content.

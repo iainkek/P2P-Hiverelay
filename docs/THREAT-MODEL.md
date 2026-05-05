@@ -215,16 +215,22 @@ framing loses to any adversary who knows the literature.
 | Replica diversity at infrastructure | `packages/core/core/federation.js` (per-relay catalog mirroring) | ✅ shipped (primitive); ⚠️ not yet wired into client quorum selection |
 | Quorum selection UX | `packages/client/index.js` (`HiveRelayClient`) | ✅ shipped v0.6.0 (`selectQuorum`, `queryQuorumWithComparison`) |
 | Fork-detection during local replication | `client.open()` attaches listeners to `drive.core.on('truncate' / 'verification-error')`; auto-reports to `ForkDetector` | ✅ shipped v0.6.0 (catches local fork-detected events, NOT silent multi-replica equivocation) |
-| Fork-proof gossip across federation | not implemented | ❌ to build in M2 |
+| Fork-proof gossip across federation | `packages/core/core/federation.js` (pulls `/api/forks/proofs` per cycle) | ✅ shipped v0.6.0 |
 | Capability-doc signature | server signs with relay identity key; client verifies on fetch | ✅ shipped v0.6.0 |
 | LNbits admin key encryption at rest | AES-256-GCM, key from `$APP_SEED` | ✅ shipped v0.6.0 |
 | Quarantine bypass audit trail | `forkDetector.recordBypass` + persisted `bypassLog` | ✅ shipped v0.6.0 |
-| Cross-client verification | one client (`@hive/client`) — needs `@hive/verifier` | ❌ to build in v0.6.0 |
-| Deterministic aggregation rules | required for Operator Score | ❌ to spec in M2 |
-| Capability advertisement | `/.well-known/hiverelay.json` (v0.5.1) | ✅ shipped — surfaces region/operator metadata for diverse quorum selection |
-| Sybil defense layers (3-tier) | brief §6.4 spec, no code | ❌ to build in M2 alongside founder bootstrap |
-| Operator Score | brief §6.5 spec, no code | ❌ to build in M2 |
+| Cross-client verification | `p2p-hiverelay-verifier` standalone reference verifier package | ✅ shipped v0.6.0 |
+| Atomic blind custody — quorum receipts + commit + source-retired | `packages/core/core/custody-signing.js` + registry integration | ✅ shipped v0.8.0 |
+| Witness Tombstone — independent post-expiry attestation | `custody-expiry-witness` message type + REST + channel | ✅ shipped v0.8.0 |
+| Cryptographic peer verification for replica durability | `packages/core/core/anchor-proof-verifier.js` + `auto-heal.js` proof bridge | ✅ shipped v0.8.0 |
+| Pure-P2P trust pipeline (no HTTPS dep) | `hiverelay-anchor` + `hiverelay-custody` Protomux channels | ✅ shipped v0.8.0 |
+| Per-operator sybil bound | AutoHeal fairshare cap (`ceil(target / minOperators)`) | ✅ shipped v0.8.0 |
+| Capability advertisement | `/.well-known/hiverelay.json` (v0.5.1, extended in v0.8.0 with operator field) | ✅ shipped |
+| Operator Score module | brief §6.5 spec, partial inputs collected | ⚠️ partial — operator field wired through diversity scoring; full module pending |
+| Sybil defense additional layers (ASN/Nostr/LN/bonds) | brief §6.4 spec | ❌ to build (see [M2-ROADMAP.md](M2-ROADMAP.md)) |
+| Cryptographic geographic attestation | brief §6.5 spec, no code | ❌ to build (see [M2-ROADMAP.md](M2-ROADMAP.md)) |
 | Reputation system | `packages/core/incentive/reputation/` | ⚠️ basic, needs deterministic-aggregation rewrite |
+| TEE/HSM-attested deletion | future optional mode | ❌ scoped, pending platform selection |
 
 ## Action items
 
@@ -234,11 +240,14 @@ roadmap milestone and owner:
 | # | Action | Milestone | Owner | Status |
 |---|---|---|---|---|
 | 1 | Rewrite security section around 3 state categories | Now (this doc) | docs | ✅ done |
-| 2 | Spec deterministic aggregation rules for Operator Score | M2 | spec council | ⏳ scheduled |
-| 3 | Reference CLI for cross-client verification | v0.6.0 | engineering | ⏳ in flight |
-| 4 | Quorum selection UX so apps pick diverse relays by default | v0.6.0 | engineering | ⏳ in flight |
+| 2 | Spec deterministic aggregation rules for Operator Score | M2 | spec council | ⏳ scheduled (see [M2-ROADMAP.md](M2-ROADMAP.md)) |
+| 3 | Reference CLI for cross-client verification | v0.6.0 | engineering | ✅ shipped (`p2p-hiverelay-verifier`) |
+| 4 | Quorum selection UX so apps pick diverse relays by default | v0.6.0 | engineering | ✅ shipped (`selectQuorum`, `queryQuorumWithComparison`) |
 | 5 | Operator incentives clarity before token talk | Now (`OPERATOR-INCENTIVES-Y1.md`) | strategy | ✅ done |
 | 6 | Document named attacks explicitly (see table above) | Now (this doc) | docs | ✅ done |
+| 7 | Cryptographic custody primitive with quorum receipts | v0.8.0 | engineering | ✅ shipped (see [whitepaper](ATOMIC-BLIND-CUSTODY.md)) |
+| 8 | Independent post-expiry attestation (Witness Tombstone) | v0.8.0 | engineering | ✅ shipped |
+| 9 | Pure-P2P trust pipeline (no HTTPS dep) | v0.8.0 | engineering | ✅ shipped |
 
 ## Companion documents
 
