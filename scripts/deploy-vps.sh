@@ -75,7 +75,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/hiverelay
-ExecStart=/usr/bin/node --max-old-space-size=HEAP_PLACEHOLDER cli/index.js start --mode public --region REGION_PLACEHOLDER
+ExecStart=/usr/bin/node --max-old-space-size=HEAP_PLACEHOLDER packages/core/cli/index.js start --mode public --region REGION_PLACEHOLDER
 Restart=always
 RestartSec=15
 KillSignal=SIGTERM
