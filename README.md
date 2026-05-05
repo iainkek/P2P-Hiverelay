@@ -4,9 +4,11 @@
 
 A relay network where availability is provable, not promised. Your P2P app stays online forever; your encrypted handoffs come with quorum receipts; expiry is enforced by the network and witnessed by independent attesters; and no relay ever sees your plaintext.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.0**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.8.1**
 
-> **What changed in v0.8.0.** Atomic Blind Custody is now a first-class signed protocol. AutoHeal recruits archive replicas with cryptographic peer verification. Two new Protomux channels (`hiverelay-anchor`, `hiverelay-custody`) close the HTTPS dependency. Witness Tombstones close the post-expiry serving leak. Read the [whitepaper](./docs/ATOMIC-BLIND-CUSTODY.md), the [components tour](./docs/WHATS-IN-THE-RELAY.md), or the [release notes](./docs/RELEASE-NOTES-0.8.0.md).
+> **v0.8.1** — Custody hardening: witness tombstones now require a matching non-serving-proof, source retirement is irreversible, redacted catalog no longer leaks `appKey`. See the [v0.8.1 release notes](./docs/RELEASE-NOTES-0.8.1.md).
+>
+> **v0.8.0** — Atomic Blind Custody is now a first-class signed protocol. AutoHeal recruits archive replicas with cryptographic peer verification. Two new Protomux channels (`hiverelay-anchor`, `hiverelay-custody`) close the HTTPS dependency. Witness Tombstones close the post-expiry serving leak. Read the [whitepaper](./docs/ATOMIC-BLIND-CUSTODY.md), the [components tour](./docs/WHATS-IN-THE-RELAY.md), or the [v0.8.0 release notes](./docs/RELEASE-NOTES-0.8.0.md).
 
 > The relay layer of the Hive substrate. Consumer-facing Umbrel build is branded **Blindspark**. The protocol and SDK retain the HiveRelay name.
 
@@ -340,6 +342,7 @@ Two simulation harnesses cover behaviors unit tests can't reach:
 - **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper (threat model, state machine, security analysis, simulation evidence, comparison to Filecoin/Sia/Storj/IPFS)
 - **[WHATS-IN-THE-RELAY.md](docs/WHATS-IN-THE-RELAY.md)** — guided tour of every component the relay picks up at v0.8.0
 - **[TUTORIAL-CUSTODY-QUICKSTART.md](docs/TUTORIAL-CUSTODY-QUICKSTART.md)** — build an encrypted custody handoff in 10 minutes
+- **[RELEASE-NOTES-0.8.1.md](docs/RELEASE-NOTES-0.8.1.md)** — custody hardening patch (witness validation, source retirement immutability, appKey redaction)
 - **[RELEASE-NOTES-0.8.0.md](docs/RELEASE-NOTES-0.8.0.md)** — what's new + migration guide for operators upgrading from 0.7.x
 - **[HIVERELAY_OVERVIEW.md](docs/HIVERELAY_OVERVIEW.md)** — single-page mental model
 - **[atomic-network-design.md](docs/atomic-network-design.md)** — extended design doc with rollout matrix and protocol shape
