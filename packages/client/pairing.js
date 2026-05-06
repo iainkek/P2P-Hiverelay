@@ -36,9 +36,22 @@
 
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
+// crypto only used for HMAC-SHA256 in proofFor(). Resolved via the
+// package's `imports` map: Bare gets bare-crypto, Node gets node:crypto.
+// All other random-byte / hash needs go through sodium-universal directly,
+// which is Bare-native.
 import crypto from 'crypto'
 import Protomux from 'protomux'
 import c from 'compact-encoding'
+
+// sodium-based cryptographically secure random bytes. Replaces
+// crypto.randomBytes() so the only Node-crypto dependency left in this
+// file is HMAC-SHA256 (see proofFor below).
+function randomBytes (length) {
+  const buf = b4a.alloc(length)
+  sodium.randombytes_buf(buf)
+  return buf
+}
 
 export const PAIR_PROTOCOL = 'hiverelay-pair'
 export const DEFAULT_TTL_MS = 5 * 60 * 1000 // 5 minutes
@@ -78,7 +91,7 @@ export function generateCode (digits = CODE_DIGITS) {
   const limit = Math.floor(0xffffffff / max) * max
   let n
   do {
-    const buf = crypto.randomBytes(4)
+    const buf = randomBytes(4)
     n = buf.readUInt32BE(0)
   } while (n >= limit)
   return String(n % max).padStart(digits, '0')
@@ -370,9 +383,8 @@ export class PairingManager {
     }, timeoutMs)
     if (timer.unref) timer.unref()
 
-    let discovery
     try {
-      discovery = client.swarm.join(topic, { server: false, client: true })
+      client.swarm.join(topic, { server: false, client: true })
       client.swarm.flush().catch(() => {})
     } catch (err) {
       clearTimeout(timer)
@@ -393,7 +405,6 @@ export class PairingManager {
       clearTimeout(timer)
       client.swarm.removeListener('connection', onConnection)
       try { await client.swarm.leave(topic) } catch (_) {}
-      void discovery
     }
 
     if (final.ok) {
@@ -413,7 +424,7 @@ export class PairingManager {
 
     try {
       // 1) Send our challenge.
-      const myNonce = crypto.randomBytes(32)
+      const myNonce = randomBytes(32)
       ch.send({ type: 'challenge', nonce: myNonce.toString('hex') })
 
       // 2) Receive their challenge.
@@ -462,7 +473,7 @@ export class PairingManager {
         await this._cleanup(state, 'failed-after-claim')
       }
       // Don't tear down conn itself — other protocols (replication) may use it.
-      void conn
+      // (Intentionally leaving `conn` alive; ignore the eslint unused-var lint.)
       // Only emit on bad-proof / no-ack to avoid noise from non-pair peers
       // that never even opened the channel.
       if (err.message !== 'recv-timeout') {
@@ -488,7 +499,7 @@ export class PairingManager {
       if (theirNonce.length !== 32) return { ok: false, reason: 'bad-challenge' }
 
       // 2) Send our challenge.
-      const myNonce = crypto.randomBytes(32)
+      const myNonce = randomBytes(32)
       ch.send({ type: 'challenge', nonce: myNonce.toString('hex') })
 
       // 3) Send our proof of `code`.
