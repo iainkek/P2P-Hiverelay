@@ -52,7 +52,7 @@ deploy_server() {
             git fetch origin main
             git reset --hard origin/main
         else
-            git clone https://github.com/bigdestiny2/P2P-Hiveswarm.git hiverelay
+            git clone https://github.com/bigdestiny2/P2P-Hiverelay.git hiverelay
             cd hiverelay
         fi
 
