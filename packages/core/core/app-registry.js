@@ -96,6 +96,13 @@ export class AppRegistry extends EventEmitter {
     const anchoredLength = typeof entry.anchoredLength === 'number' ? entry.anchoredLength : 0
     const lastAnchorCheck = typeof entry.lastAnchorCheck === 'number' ? entry.lastAnchorCheck : null
 
+    // v0.8.12: per-app maxStorage from the seed request. Persisted so we
+    // can compare on re-pin (cap-up vs cap-down vs unchanged) instead of
+    // forgetting it between restarts. See AppLifecycle._reconcileSeedOptsOnRepin.
+    const maxStorage = Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
+      ? Math.floor(entry.maxStorage)
+      : null
+
     return {
       ...entry,
       type,
@@ -108,7 +115,8 @@ export class AppRegistry extends EventEmitter {
       anchored,
       anchoredAt,
       anchoredLength,
-      lastAnchorCheck
+      lastAnchorCheck,
+      maxStorage
     }
   }
 
@@ -473,6 +481,13 @@ export class AppRegistry extends EventEmitter {
           anchoredAt: entry.anchoredAt || null,
           anchoredLength: typeof entry.anchoredLength === 'number' ? entry.anchoredLength : 0,
           lastAnchorCheck: entry.lastAnchorCheck || null,
+          // v0.8.12: per-app maxStorage cap, used by re-pin reconciliation
+          // to detect cap-up vs cap-down without losing the prior value
+          // across restarts. Older registry files won't have this — null
+          // means "no cap declared at seed time."
+          maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
+            ? Math.floor(entry.maxStorage)
+            : null,
           // drive and discoveryKey are set during reseeding
           drive: null,
           discoveryKey: null
@@ -499,7 +514,13 @@ export class AppRegistry extends EventEmitter {
         ciphertextRoot: e.ciphertextRoot || null,
         contentVersion: Number.isFinite(e.contentVersion) ? e.contentVersion : null,
         retainUntil: e.retainUntil || null,
-        shardIds: Array.isArray(e.shardIds) ? e.shardIds : null
+        shardIds: Array.isArray(e.shardIds) ? e.shardIds : null,
+        // v0.8.12: surface persisted maxStorage so reseedFromRegistry
+        // can pass it back through seedApp and the size-check fires
+        // on startup too (not just on fresh publisher seed requests).
+        maxStorage: Number.isFinite(e.maxStorage) && e.maxStorage > 0
+          ? Math.floor(e.maxStorage)
+          : null
       })).filter(e => e.appKey)
     } catch (_) {
       return []
@@ -553,7 +574,13 @@ export class AppRegistry extends EventEmitter {
           anchored: entry.anchored === true,
           anchoredAt: entry.anchoredAt || null,
           anchoredLength: entry.anchoredLength || 0,
-          lastAnchorCheck: entry.lastAnchorCheck || null
+          lastAnchorCheck: entry.lastAnchorCheck || null,
+          // v0.8.12: per-app maxStorage cap, persisted so re-pin
+          // reconciliation can compare across restarts and the size-check
+          // fires on reseed too. Null for entries that predate this field.
+          maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
+            ? Math.floor(entry.maxStorage)
+            : null
         })
       }
 

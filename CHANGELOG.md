@@ -6,6 +6,69 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.12] — 2026-05-14
+
+Structural follow-up to v0.8.11. Closes ask (6) from the
+pearbrowser-desktop feedback — see
+[`docs/RELEASE-NOTES-0.8.12.md`](docs/RELEASE-NOTES-0.8.12.md) for full
+notes. Triggered by a maintainer-side bounce request from the
+pearbrowser-desktop team after they discovered that their v0.8.10-era
+partial-pinned drive couldn't be retriggered by a v0.8.11 re-pin
+because `seedApp`'s `alreadySeeded` early-return swallowed the new opts.
+
+### Fixed
+
+- **`seedApp` no longer swallows new opts on re-pin**: when a publisher
+  re-pins an already-seeded app with new `opts.maxStorage`, the relay
+  now reconciles the change instead of returning early on the
+  `alreadySeeded` branch. New `_reconcileSeedOptsOnRepin`:
+  - cap raised (or newly declared) → entry's stored cap is updated and
+    `_eagerReplicate` is retriggered to drain blocks the prior cap had
+    blocked. Emits `seed-cap-raised` with `{ oldCap, newCap, anchored }`.
+  - cap lowered → emits `seed-cap-warning` (`reason: 'cap-lowered-on-repin'`)
+    and keeps the prior higher cap. Reducing accepted capacity mid-flight
+    isn't honored; publisher must unseed first if they really want to
+    shrink.
+  - cap unchanged (or both null) → no-op.
+  Concurrency-guarded via `entry._replicating` so rapid re-pins don't
+  stack replication attempts. Applies on both the pre-mutex and
+  post-mutex `alreadySeeded` checks in `seedApp` / `_seedAppInner`.
+
+### Added
+
+- **Per-app `maxStorage` persistence**: the publisher's declared cap is
+  now tracked on each registry entry and persisted in
+  `app-registry.json`. Older entries without the field load as
+  `maxStorage: null` (no cap) — backward-compatible. On reseed at
+  startup, `reseedFromRegistry` passes the persisted cap back through
+  `seedApp`, so the v0.8.11 size-check now fires on startup too (it
+  used to be skipped because the cap was forgotten between restarts).
+- New `_eagerReplicate(appKeyHex, drive, opts, meta)` class method
+  (extracted from the prior inline closure in `_seedAppInner`). Same
+  retry-with-backoff + size-check + download + anchor flow, now
+  callable from both the fresh-seed path and the re-pin retrigger
+  path. Adds `source: 'fresh-seed' | 'repin-cap-raised'` to the
+  emitted events (`seed-aborted`, `anchored`, `reseeded`,
+  `reseed-error`) for observability.
+- 12 unit tests in
+  [`test/unit/repin-cap-reconcile.test.js`](test/unit/repin-cap-reconcile.test.js)
+  covering: same-cap no-op, both-null no-op, cap raised, cap newly
+  declared, cap lowered, in-flight retrigger guard, missing-drive
+  guard, closed-drive guard, invalid-cap normalization, and the
+  `AppRegistry` round-trip for the new `maxStorage` field.
+
+### Notes
+
+- Reseed-with-cap change is intentionally a behavior change: v0.8.11
+  reseeded entries skipped the size-check (because the cap wasn't
+  persisted), so an oversized drive accumulated silently after a
+  restart. v0.8.12 now size-checks on reseed for entries written
+  under v0.8.12+. Entries that predate cap persistence (loaded from
+  pre-v0.8.12 `app-registry.json`) still skip the check, so existing
+  partial-pinned drives are not retroactively aborted on upgrade. They
+  benefit from the existing periodic repair monitor and from
+  publisher-driven re-pins that now hit the reconcile path.
+
 ## [0.8.11] — 2026-05-14
 
 Loud-failure release: silent partial-pin trap fixed. See full notes at

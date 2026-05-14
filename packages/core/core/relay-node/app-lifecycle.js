@@ -62,7 +62,14 @@ export class AppLifecycle extends EventEmitter {
           ciphertextRoot: entry.ciphertextRoot || null,
           contentVersion: entry.contentVersion,
           retainUntil: entry.retainUntil,
-          shardIds: entry.shardIds || null
+          shardIds: entry.shardIds || null,
+          // v0.8.12: pass persisted maxStorage through to the reseed so
+          // the size-check fires on startup too. Null for older entries
+          // that predate cap persistence — the size-check is skipped in
+          // that case (matches v0.8.11 reseed behavior).
+          maxStorage: Number.isFinite(entry.maxStorage) && entry.maxStorage > 0
+            ? entry.maxStorage
+            : undefined
         })
         this.emit('reseeded', { appKey: entry.appKey })
       } catch (err) {
@@ -155,7 +162,7 @@ export class AppLifecycle extends EventEmitter {
       }
     }
 
-    // Already seeding this exact key — no-op.
+    // Already seeding this exact key — reconcile new opts against stored entry.
     //
     // Subtlety: AppRegistry.load() populates this.apps with placeholder
     // entries whose discoveryKey is null (set later during reseeding).
@@ -163,12 +170,22 @@ export class AppLifecycle extends EventEmitter {
     // Treating a null-discoveryKey placeholder as "already seeded" was
     // the recurring null-pointer crash in v0.3.0–v0.8.2 — fixed here for
     // good.
+    //
+    // v0.8.12 (ask 6 in FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md):
+    // before v0.8.12 we returned early without inspecting the new opts.
+    // That swallowed re-pins that raised maxStorage — the canonical case
+    // being a drive partial-pinned under v0.8.10's silent-cap-too-small
+    // bug, then re-pinned with a larger cap after upgrading. We honor
+    // those re-pins now via _reconcileSeedOptsOnRepin: cap-up + unanchored
+    // retriggers replication; cap-down emits a warning; same/missing is
+    // a no-op (matches prior behavior).
     if (this.seededApps.has(appKeyHex)) {
       const existing = this.seededApps.get(appKeyHex)
       if (existing && existing.discoveryKey) {
         const dkHex = typeof existing.discoveryKey === 'string'
           ? existing.discoveryKey
           : b4a.toString(existing.discoveryKey, 'hex')
+        this._reconcileSeedOptsOnRepin(appKeyHex, existing, normalizedOpts)
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through to seed properly.
@@ -190,13 +207,15 @@ export class AppLifecycle extends EventEmitter {
     const node = this.node
 
     // Re-check after acquiring mutex — another call may have seeded it.
-    // Same null-discoveryKey guard as the pre-mutex check above.
+    // Same null-discoveryKey guard + v0.8.12 opts reconcile as the
+    // pre-mutex check in seedApp().
     if (this.seededApps.has(appKeyHex)) {
       const existing = this.seededApps.get(appKeyHex)
       if (existing && existing.discoveryKey) {
         const dkHex = typeof existing.discoveryKey === 'string'
           ? existing.discoveryKey
           : b4a.toString(existing.discoveryKey, 'hex')
+        this._reconcileSeedOptsOnRepin(appKeyHex, existing, opts)
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through.
@@ -246,117 +265,10 @@ export class AppLifecycle extends EventEmitter {
       node.swarm.join(discoveryKey, { server: true, client: true })
       node.swarm.flush().then(() => { if (done) done() }).catch(() => { if (done) done() })
 
-      // Eagerly replicate drive content with retry loop. After this exhausts,
-      // the periodic repair monitor (default every 10 min) keeps trying —
-      // this loop is for fast initial replication, not the only path.
-      const eagerReplicate = async () => {
-        const MAX_RETRIES = 6
-        // Tightened tail — 120s was wasteful when the repair monitor takes
-        // over anyway. Total wall time: ~2 min instead of ~4 min.
-        const RETRY_DELAYS = [5000, 10000, 15000, 30000, 30000, 30000]
-
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          // Bail out if the drive was closed (e.g. by unseedApp)
-          if (drive.closed || drive.closing) return
-
-          try {
-            node.swarm.join(discoveryKey, { server: true, client: true })
-            await node.swarm.flush()
-
-            if (drive.closed || drive.closing) return
-
-            // Cancellable update — on timeout, the helper detaches any
-            // in-flight hypercore upgrade refs from the replicator's
-            // activeRequests so they don't accumulate. Previously the
-            // raw Promise.race left the upgrade ref pending, leading to
-            // the "Cannot make sessions on a closing core" leak that
-            // PR #14 papered over with 503 + Retry-After.
-            await updateWithTimeout(drive, { timeoutMs: 30_000 })
-
-            if (drive.version > 0 && !drive.closed && !drive.closing) {
-              // ── Size-check the drive against the publisher's maxStorage ──
-              //
-              // See docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md for the case
-              // study: relay accepts a seed request with maxStorage smaller
-              // than the actual drive, replicates metadata fully, stalls
-              // mid-blob, and never tells the publisher. Symptom on the
-              // consumer side is an indistinguishable-from-network-down hang.
-              //
-              // Loud failure mode: emit a seed-aborted event AND unseed
-              // locally if the actual size exceeds the cap the publisher
-              // declared. Publisher sees the event (via SDK) at pin time
-              // instead of discovering it via end-user reports.
-              const cap = Number.isFinite(opts.maxStorage) && opts.maxStorage > 0
-                ? opts.maxStorage
-                : null
-              if (cap !== null) {
-                const { totalBytes, metaBytes, blobBytes } = await getDriveSize(drive, { timeoutMs: 10_000 })
-                if (totalBytes > cap) {
-                  const recommendedCap = Math.ceil(totalBytes * 1.25)
-                  this.emit('seed-aborted', {
-                    appKey: appKeyHex,
-                    reason: 'maxStorage-too-small',
-                    recoverable: false,
-                    driveBytes: totalBytes,
-                    metaBytes,
-                    blobBytes,
-                    cap,
-                    recommendedCap,
-                    hint: 'drive is ' + totalBytes + ' bytes; publisher should re-seed with maxStorage ≥ ' + recommendedCap
-                  })
-                  // Clean up — we won't accumulate partial bytes for a drive
-                  // we can never anchor.
-                  try { await this.unseedApp(appKeyHex) } catch (_) {}
-                  return
-                }
-              }
-
-              // Cancellable download — destroys the download tracker on
-              // timeout so its in-flight block requests are released.
-              await downloadWithTimeout(drive, '/', { timeoutMs: 120_000 })
-                .catch(() => {}) // partial download is fine; version is what matters
-
-              if (drive.closed || drive.closing) return
-
-              // After content is downloaded, read manifest and deduplicate
-              await this._indexAppManifest(appKeyHex, drive)
-
-              // Mark anchored — we have actual replicated blocks. This is the
-              // signal that distinguishes "we accepted the seed" from "we
-              // can actually serve the content." Catalog/capability docs
-              // surface this so clients can prefer relays that have the data.
-              if (node.appRegistry && typeof node.appRegistry.setAnchored === 'function') {
-                node.appRegistry.setAnchored(appKeyHex, drive.version)
-                await this._recordCustodyReceipt(appKeyHex, opts, drive.version)
-                this.emit('anchored', { appKey: appKeyHex, version: drive.version })
-              }
-
-              this.emit('reseeded', { appKey: appKeyHex, version: drive.version })
-              return
-            }
-          } catch (_) {
-            // SESSION_CLOSED, timeout, or drive closed during replication
-            if (drive.closed || drive.closing) return
-          }
-
-          if (attempt < MAX_RETRIES - 1) {
-            await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt]))
-          }
-        }
-        // Exhausted eager retries — record the check, mark not anchored.
-        // The periodic repair monitor will keep trying; this is NOT a
-        // permanent failure, just the end of the fast-path attempt.
-        if (node.appRegistry && typeof node.appRegistry.recordAnchorCheck === 'function') {
-          node.appRegistry.recordAnchorCheck(appKeyHex)
-        }
-        this.emit('reseed-error', {
-          appKey: appKeyHex,
-          error: 'eager-replicate-exhausted',
-          recoverable: true,
-          hint: 'periodic repair monitor will keep retrying every 10 min'
-        })
-      }
-      eagerReplicate().catch(() => {})
+      // Eagerly replicate drive content. Extracted to a method in v0.8.12
+      // so the alreadySeeded re-pin path can call it too — see
+      // _reconcileSeedOptsOnRepin.
+      this._eagerReplicate(appKeyHex, drive, opts, { source: 'fresh-seed' }).catch(() => {})
 
       // Revocability commitments — recorded at seed time, derived from the
       // signed seed-request payload (committed by publisher signature, so
@@ -379,6 +291,14 @@ export class AppLifecycle extends EventEmitter {
       const durability = Number.isFinite(opts.durability) && opts.durability > 0
         ? Math.floor(opts.durability)
         : 0
+
+      // maxStorage from the publisher's seed request — tracked on the
+      // entry in v0.8.12 so a later re-pin can compare. The reconcile
+      // path uses this to detect cap-raised re-pins (retrigger
+      // replication) and cap-lowered re-pins (emit warning, ignore).
+      const maxStorage = Number.isFinite(opts.maxStorage) && opts.maxStorage > 0
+        ? Math.floor(opts.maxStorage)
+        : null
 
       node.appRegistry.set(appKeyHex, {
         drive,
@@ -407,7 +327,8 @@ export class AppLifecycle extends EventEmitter {
         publisherPubkey,
         revocable,
         unseedFreezeMs,
-        durability
+        durability,
+        maxStorage
       })
 
       if (node.distributedDriveBridge) {
@@ -420,6 +341,242 @@ export class AppLifecycle extends EventEmitter {
       try { await drive.close() } catch (_) {}
       throw err
     }
+  }
+
+  /**
+   * Eagerly replicate a drive with the v0.8.11 size-check. Called from:
+   *   1. _seedAppInner — fresh seed, after the drive is created.
+   *   2. _reconcileSeedOptsOnRepin — re-pin with raised maxStorage, drive
+   *      already exists, we need to retrigger the size-check + download
+   *      under the new cap.
+   *
+   * Was previously an inline closure inside _seedAppInner. Extracted in
+   * v0.8.12 to support the re-pin path that swallows new opts on
+   * alreadySeeded — see FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md ask (6).
+   *
+   * @param {string} appKeyHex
+   * @param {Hyperdrive} drive
+   * @param {object} opts - seed opts (maxStorage is the relevant field)
+   * @param {{ source?: string }} [meta] - 'fresh-seed' | 'repin-cap-raised'
+   */
+  async _eagerReplicate (appKeyHex, drive, opts, meta = {}) {
+    const node = this.node
+    if (!drive || drive.closed || drive.closing) return
+    const discoveryKey = drive.discoveryKey
+    const source = meta.source || 'fresh-seed'
+
+    const MAX_RETRIES = 6
+    // Tightened tail — 120s was wasteful when the repair monitor takes
+    // over anyway. Total wall time: ~2 min instead of ~4 min.
+    const RETRY_DELAYS = [5000, 10000, 15000, 30000, 30000, 30000]
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      // Bail out if the drive was closed (e.g. by unseedApp)
+      if (drive.closed || drive.closing) return
+
+      try {
+        node.swarm.join(discoveryKey, { server: true, client: true })
+        await node.swarm.flush()
+
+        if (drive.closed || drive.closing) return
+
+        // Cancellable update — on timeout, the helper detaches any
+        // in-flight hypercore upgrade refs from the replicator's
+        // activeRequests so they don't accumulate. Previously the
+        // raw Promise.race left the upgrade ref pending, leading to
+        // the "Cannot make sessions on a closing core" leak that
+        // PR #14 papered over with 503 + Retry-After.
+        await updateWithTimeout(drive, { timeoutMs: 30_000 })
+
+        if (drive.version > 0 && !drive.closed && !drive.closing) {
+          // ── Size-check the drive against the publisher's maxStorage ──
+          //
+          // See docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md for the case
+          // study: relay accepts a seed request with maxStorage smaller
+          // than the actual drive, replicates metadata fully, stalls
+          // mid-blob, and never tells the publisher. Symptom on the
+          // consumer side is an indistinguishable-from-network-down hang.
+          //
+          // Loud failure mode: emit a seed-aborted event AND unseed
+          // locally if the actual size exceeds the cap the publisher
+          // declared. Publisher sees the event (via SDK) at pin time
+          // instead of discovering it via end-user reports.
+          const cap = Number.isFinite(opts.maxStorage) && opts.maxStorage > 0
+            ? opts.maxStorage
+            : null
+          if (cap !== null) {
+            const { totalBytes, metaBytes, blobBytes } = await getDriveSize(drive, { timeoutMs: 10_000 })
+            if (totalBytes > cap) {
+              const recommendedCap = Math.ceil(totalBytes * 1.25)
+              this.emit('seed-aborted', {
+                appKey: appKeyHex,
+                reason: 'maxStorage-too-small',
+                recoverable: false,
+                driveBytes: totalBytes,
+                metaBytes,
+                blobBytes,
+                cap,
+                recommendedCap,
+                source,
+                hint: 'drive is ' + totalBytes + ' bytes; publisher should re-seed with maxStorage ≥ ' + recommendedCap
+              })
+              // Clean up — we won't accumulate partial bytes for a drive
+              // we can never anchor.
+              try { await this.unseedApp(appKeyHex) } catch (_) {}
+              return
+            }
+          }
+
+          // Cancellable download — destroys the download tracker on
+          // timeout so its in-flight block requests are released.
+          await downloadWithTimeout(drive, '/', { timeoutMs: 120_000 })
+            .catch(() => {}) // partial download is fine; version is what matters
+
+          if (drive.closed || drive.closing) return
+
+          // After content is downloaded, read manifest and deduplicate.
+          // Idempotent — safe to call on retrigger.
+          await this._indexAppManifest(appKeyHex, drive)
+
+          // Mark anchored — we have actual replicated blocks. This is the
+          // signal that distinguishes "we accepted the seed" from "we
+          // can actually serve the content." Catalog/capability docs
+          // surface this so clients can prefer relays that have the data.
+          if (node.appRegistry && typeof node.appRegistry.setAnchored === 'function') {
+            node.appRegistry.setAnchored(appKeyHex, drive.version)
+            await this._recordCustodyReceipt(appKeyHex, opts, drive.version)
+            this.emit('anchored', { appKey: appKeyHex, version: drive.version, source })
+          }
+
+          this.emit('reseeded', { appKey: appKeyHex, version: drive.version, source })
+          return
+        }
+      } catch (_) {
+        // SESSION_CLOSED, timeout, or drive closed during replication
+        if (drive.closed || drive.closing) return
+      }
+
+      if (attempt < MAX_RETRIES - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt]))
+      }
+    }
+    // Exhausted eager retries — record the check, mark not anchored.
+    // The periodic repair monitor will keep trying; this is NOT a
+    // permanent failure, just the end of the fast-path attempt.
+    if (node.appRegistry && typeof node.appRegistry.recordAnchorCheck === 'function') {
+      node.appRegistry.recordAnchorCheck(appKeyHex)
+    }
+    this.emit('reseed-error', {
+      appKey: appKeyHex,
+      error: 'eager-replicate-exhausted',
+      recoverable: true,
+      source,
+      hint: 'periodic repair monitor will keep retrying every 10 min'
+    })
+  }
+
+  /**
+   * Reconcile new seed opts against an already-seeded entry.
+   *
+   * v0.8.12 (ask 6 in FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md):
+   * before this, seedApp's alreadySeeded path returned early without
+   * looking at the new opts. That swallowed re-pins from publishers
+   * who hit the v0.8.10 silent-partial-pin bug — their drive sat at
+   * partial state forever because the relay's stored cap was too
+   * small and the re-pin's larger cap never reached the inner replicate
+   * path. Operators had to bounce relays to clear seededApps.
+   *
+   * Decision table for opts.maxStorage:
+   *   new == old (or both null)  → no-op
+   *   new < old                  → emit seed-cap-warning, keep old cap
+   *                                (don't shrink already-accepted capacity)
+   *   new > old (or new is set,  → update entry.maxStorage, retrigger
+   *               old was null)    _eagerReplicate to drain blocks that
+   *                                the old cap had blocked
+   *
+   * Concurrency: an in-flight retrigger is tracked via entry._replicating
+   * so rapid re-pins don't stack. If a retrigger is already running, the
+   * new cap is updated on the entry but no second replicate is spawned —
+   * the in-flight one will see the larger cap via the entry reference.
+   * (Caveat: it captured opts.maxStorage at call time; the second-best
+   * fallback is the periodic repair monitor, which always uses the
+   * latest entry.maxStorage.)
+   *
+   * Best-effort, non-throwing — failures emit events instead. Caller
+   * should not await this method's effects (it returns synchronously
+   * after kicking off any async work).
+   *
+   * @param {string} appKeyHex
+   * @param {object} existing - entry from this.seededApps
+   * @param {object} newOpts - normalized opts from the new seedApp call
+   */
+  _reconcileSeedOptsOnRepin (appKeyHex, existing, newOpts) {
+    const node = this.node
+    if (!existing) return
+
+    const newCap = Number.isFinite(newOpts.maxStorage) && newOpts.maxStorage > 0
+      ? Math.floor(newOpts.maxStorage)
+      : null
+    const oldCap = Number.isFinite(existing.maxStorage) && existing.maxStorage > 0
+      ? Math.floor(existing.maxStorage)
+      : null
+
+    // No cap declared on either side — no change to honor.
+    if (newCap === null && oldCap === null) return
+
+    // Cap unchanged — no-op.
+    if (newCap === oldCap) return
+
+    // Cap lowered — emit warning, keep the prior (higher) cap. We don't
+    // honor shrinking on re-pin because the publisher already accepted
+    // the larger commitment; reducing it now would mean unseeding blocks
+    // we already replicated. If the publisher really wants to reduce
+    // storage, they should unseedApp first, then seed fresh.
+    if (newCap !== null && oldCap !== null && newCap < oldCap) {
+      this.emit('seed-cap-warning', {
+        appKey: appKeyHex,
+        reason: 'cap-lowered-on-repin',
+        oldCap,
+        newCap,
+        hint: 'Lowering maxStorage on already-seeded content is not honored on re-pin; relay keeps the higher prior cap. Unseed first if you want to reduce.'
+      })
+      return
+    }
+
+    // Cap raised (or newly declared where it was previously absent).
+    //
+    // Update entry's stored cap so future re-pin comparisons work, and
+    // so the periodic repair monitor / catalog reflect the new value.
+    existing.maxStorage = newCap
+    if (node.appRegistry && typeof node.appRegistry.update === 'function') {
+      try { node.appRegistry.update(appKeyHex, { maxStorage: newCap }) } catch (_) {}
+    }
+
+    this.emit('seed-cap-raised', {
+      appKey: appKeyHex,
+      oldCap,
+      newCap,
+      anchored: existing.anchored === true,
+      hint: oldCap === null
+        ? 'Cap declared for previously-uncapped entry; retriggering replication under new cap.'
+        : 'Cap raised; retriggering replication to drain blocks the prior cap blocked.'
+    })
+
+    // Already replicating from a prior call — let it finish. The entry's
+    // maxStorage was updated above, so the periodic repair monitor (which
+    // reads entry.maxStorage, not the captured opts) will use the new cap
+    // on its next sweep if the in-flight call doesn't suffice.
+    if (existing._replicating) return
+
+    // Drive must be open to retrigger. Stale entry (no drive yet, or drive
+    // closed) means seeding is happening elsewhere — let that path finish.
+    const drive = existing.drive
+    if (!drive || drive.closed || drive.closing) return
+
+    existing._replicating = true
+    this._eagerReplicate(appKeyHex, drive, { ...newOpts, maxStorage: newCap }, { source: 'repin-cap-raised' })
+      .catch(() => {})
+      .finally(() => { existing._replicating = false })
   }
 
   /**

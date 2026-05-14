@@ -329,3 +329,33 @@ We've added this as ask **(6)** for the v0.8.12 cluster. It pairs
 naturally with (2) `seed-progress` (a re-seed with bigger cap and
 no progress reported is the same invisible-failure pattern this
 whole doc started with).
+
+### Resolution — 2026-05-14, v0.8.12
+
+Ask (6) shipped in v0.8.12. The `alreadySeeded` early-return in
+`seedApp` now calls `_reconcileSeedOptsOnRepin(appKey, existing, opts)`
+before returning. The reconcile method:
+
+- **Cap raised** (or set where old was null): updates the entry's
+  stored cap, emits `seed-cap-raised`, and retriggers `_eagerReplicate`
+  to drain blocks the prior cap had blocked. Concurrency-guarded via
+  `entry._replicating` so rapid re-pins don't stack.
+- **Cap lowered**: emits `seed-cap-warning` (`reason:
+  'cap-lowered-on-repin'`) and keeps the prior higher cap. Reducing
+  accepted capacity mid-flight isn't honored — the publisher must
+  unseed first if they really want to shrink.
+- **Cap unchanged** (or both null): no-op (matches prior behavior).
+
+The `maxStorage` value is also now persisted on the registry entry
+(`app-registry.json`) so the comparison survives restarts. As a
+side effect, the v0.8.11 size-check now fires on reseed at startup
+for entries that have the cap persisted — closing the silent-grow
+window that existed between v0.8.10 entries and v0.8.11 fresh seeds.
+
+While v0.8.12 was being prepared, the pearbrowser-desktop team's
+specific drive was unblocked by bouncing the 3 production VPS relays
+that were pinning it. The 4th peer (`0da2f0626d24…`) is an
+independent operator outside our fleet.
+
+See `docs/RELEASE-NOTES-0.8.12.md` for the full release notes and
+the `seed-cap-raised` / `seed-cap-warning` event payloads.
