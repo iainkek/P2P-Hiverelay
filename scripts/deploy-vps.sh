@@ -14,6 +14,7 @@ API_KEY="${HIVERELAY_API_KEY:?Set HIVERELAY_API_KEY environment variable}"
 UTAH_IP="${UTAH_IP:-144.172.101.215}"
 UTAH_US_IP="${UTAH_US_IP:-144.172.91.26}"
 SINGAPORE_IP="${SINGAPORE_IP:-104.194.153.179}"
+SINGAPORE2_IP="${SINGAPORE2_IP:-104.194.152.121}"
 BERN_IP="${BERN_IP:-45.59.123.112}"
 
 # Per-relay API keys (override the env-var fallback so each relay gets its own
@@ -21,12 +22,16 @@ BERN_IP="${BERN_IP:-45.59.123.112}"
 UTAH_API_KEY="${UTAH_API_KEY:-}"
 UTAH_US_API_KEY="${UTAH_US_API_KEY:-}"
 SINGAPORE_API_KEY="${SINGAPORE_API_KEY:-}"
+SINGAPORE2_API_KEY="${SINGAPORE2_API_KEY:-}"
 BERN_API_KEY="${BERN_API_KEY:-}"
 
 # Per-relay operator identifiers (for AutoHeal v2 sybil resistance).
+# Singapore-1 and Singapore-2 share a region but get distinct operator IDs
+# so the diversity-enforced replica scheduler treats them as separate nodes.
 UTAH_OPERATOR="${UTAH_OPERATOR:-hive-foundation-utah}"
 UTAH_US_OPERATOR="${UTAH_US_OPERATOR:-hive-foundation-utah-us}"
 SINGAPORE_OPERATOR="${SINGAPORE_OPERATOR:-hive-foundation-singapore}"
+SINGAPORE2_OPERATOR="${SINGAPORE2_OPERATOR:-hive-foundation-singapore-2}"
 BERN_OPERATOR="${BERN_OPERATOR:-hive-foundation-bern}"
 
 deploy_server() {
@@ -166,6 +171,9 @@ case $TARGET in
     singapore)
         deploy_server "$SINGAPORE_IP" "Singapore" "AS" "512M" 384 "$SINGAPORE_OPERATOR" "$SINGAPORE_API_KEY"
         ;;
+    singapore-2)
+        deploy_server "$SINGAPORE2_IP" "Singapore-2" "AS" "512M" 384 "$SINGAPORE2_OPERATOR" "$SINGAPORE2_API_KEY"
+        ;;
     bern)
         deploy_server "$BERN_IP" "Bern" "EU" "1G" 512 "$BERN_OPERATOR" "$BERN_API_KEY"
         ;;
@@ -173,10 +181,11 @@ case $TARGET in
         deploy_server "$UTAH_IP" "Utah" "NA" "384M" 256 "$UTAH_OPERATOR" "$UTAH_API_KEY"
         deploy_server "$UTAH_US_IP" "Utah-US" "NA" "1G" 512 "$UTAH_US_OPERATOR" "$UTAH_US_API_KEY"
         deploy_server "$SINGAPORE_IP" "Singapore" "AS" "512M" 384 "$SINGAPORE_OPERATOR" "$SINGAPORE_API_KEY"
+        deploy_server "$SINGAPORE2_IP" "Singapore-2" "AS" "512M" 384 "$SINGAPORE2_OPERATOR" "$SINGAPORE2_API_KEY"
         deploy_server "$BERN_IP" "Bern" "EU" "1G" 512 "$BERN_OPERATOR" "$BERN_API_KEY"
         ;;
     *)
-        echo "Usage: $0 [utah|utah-us|singapore|bern|all]"
+        echo "Usage: $0 [utah|utah-us|singapore|singapore-2|bern|all]"
         exit 1
         ;;
 esac
