@@ -649,12 +649,58 @@ export class HiveRelayClient extends EventEmitter {
       ? 1
       : 0
 
+    // maxStorage default — see
+    // docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md for the trap this
+    // protects against: when a publisher leaves maxStorage at the SDK's
+    // default while their drive grows over many releases, the relay
+    // silently partial-pins (downloads metadata fully, stalls mid-blob),
+    // and end users see indistinguishable-from-network-down hangs.
+    //
+    // Strategy:
+    //   1. If opts.maxStorage is explicitly set, use it as-is and check
+    //      it against the drive's current size (if we can see the drive)
+    //      to catch the 256MB-cap-for-365MB-drive case loudly.
+    //   2. If opts.maxStorage is missing, try to size-default from the
+    //      local drive (drive.byteLength + drive.blobs?.core?.byteLength,
+    //      times 4 for headroom). Falls back to 1 GB if we can't see
+    //      the drive locally.
+    let maxStorageBytes = opts.maxStorage
+    if (!Number.isFinite(maxStorageBytes) || maxStorageBytes <= 0) {
+      const observed = this._observedDriveSize(keyHex)
+      if (observed > 0) {
+        // 4× headroom — covers ~3-4 future releases at current growth.
+        maxStorageBytes = Math.max(256 * 1024 * 1024, observed * 4)
+      } else {
+        // No local drive to size from — pick a default that's larger
+        // than the historical 500MB so casual pins don't trip the bug.
+        maxStorageBytes = 1024 * 1024 * 1024
+      }
+    } else {
+      // Explicit cap — sanity-check against current drive size if we
+      // can see it. Don't refuse (that'd break publishers who know what
+      // they're doing) but warn loudly so they have a chance to fix it.
+      const observed = this._observedDriveSize(keyHex)
+      if (observed > 0 && observed > maxStorageBytes) {
+        const recommended = Math.ceil(observed * 1.25)
+        this.emit('seed-cap-warning', {
+          appKey: keyHex,
+          observedBytes: observed,
+          declaredCap: maxStorageBytes,
+          recommendedCap: recommended,
+          hint: 'maxStorage is smaller than the drive\'s current byteLength; relays will silently partial-pin. Bump maxStorage to ≥ ' + recommended
+        })
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('[hiverelay-client] WARNING: maxStorage (' + maxStorageBytes + ') < drive size (' + observed + '); relays may silently partial-pin. Recommended cap: ' + recommended)
+        }
+      }
+    }
+
     const request = {
       appKey: keyBuf,
       discoveryKeys: [discoveryKey],
       replicationFactor: opts.replicas || 3,
       geoPreference: opts.region ? [opts.region] : [],
-      maxStorageBytes: opts.maxStorage || 500 * 1024 * 1024,
+      maxStorageBytes,
       bountyRate: 0,
       ttlSeconds: (opts.ttlDays || 30) * 24 * 3600,
       publisherPubkey: b4a.alloc(32),
@@ -744,6 +790,51 @@ export class HiveRelayClient extends EventEmitter {
     }
 
     return entry.acceptances
+  }
+
+  /**
+   * Look up the on-disk size of a drive we already know locally.
+   *
+   * Used by seed() to size-default maxStorage and to warn when an
+   * explicit cap is smaller than the drive's current byteLength. Both
+   * cases protect publishers from the silent partial-pin trap
+   * (docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md): a too-small cap
+   * causes relays to download metadata fully but stall mid-blob, with
+   * no failure signal to the publisher.
+   *
+   * Returns the sum of metadata-core byteLength + blob-core byteLength
+   * if we have the drive in this client's corestore. Returns 0 if we
+   * don't (in which case seed() can't make a size-based recommendation).
+   *
+   * Best-effort + synchronous: we only check what's already loaded. We
+   * don't call drive.ready() / .update() here because seed() is hot path
+   * and we don't want to block on network I/O.
+   */
+  _observedDriveSize (keyHex) {
+    try {
+      // Try the cached Hyperdrive instances (drives we recently opened
+      // for publish/get/put/etc.). These have up-to-date core byteLengths.
+      for (const [, drive] of (this._driveCache || new Map())) {
+        if (drive && drive.key && b4a.toString(drive.key, 'hex') === keyHex) {
+          const metaBytes = (drive.db && drive.db.core && drive.db.core.byteLength) || 0
+          const blobBytes = (drive.blobs && drive.blobs.core && drive.blobs.core.byteLength) || 0
+          return metaBytes + blobBytes
+        }
+      }
+      // Fallback: peek at the corestore's loaded cores by key. We don't
+      // construct a fresh Hyperdrive here (that'd touch disk + network);
+      // we only report a size if the cores are already in memory.
+      if (this.store && typeof this.store.cores?.get === 'function') {
+        const keyBuf = b4a.from(keyHex, 'hex')
+        const metaCore = this.store.cores.get(b4a.toString(keyBuf, 'hex'))
+        if (metaCore && Number.isFinite(metaCore.byteLength)) {
+          return metaCore.byteLength
+        }
+      }
+    } catch (_) {
+      // Best-effort: any error here means we can't size, just return 0.
+    }
+    return 0
   }
 
   // ─── Persistent seed retry queue ──────────────────────────────────

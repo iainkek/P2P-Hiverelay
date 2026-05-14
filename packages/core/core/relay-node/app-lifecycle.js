@@ -4,7 +4,7 @@ import sodium from 'sodium-universal'
 import { EventEmitter } from 'events'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { updateWithTimeout, downloadWithTimeout } from './cancellable-drive-update.js'
+import { updateWithTimeout, downloadWithTimeout, getDriveSize } from './cancellable-drive-update.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -274,6 +274,43 @@ export class AppLifecycle extends EventEmitter {
             await updateWithTimeout(drive, { timeoutMs: 30_000 })
 
             if (drive.version > 0 && !drive.closed && !drive.closing) {
+              // ── Size-check the drive against the publisher's maxStorage ──
+              //
+              // See docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md for the case
+              // study: relay accepts a seed request with maxStorage smaller
+              // than the actual drive, replicates metadata fully, stalls
+              // mid-blob, and never tells the publisher. Symptom on the
+              // consumer side is an indistinguishable-from-network-down hang.
+              //
+              // Loud failure mode: emit a seed-aborted event AND unseed
+              // locally if the actual size exceeds the cap the publisher
+              // declared. Publisher sees the event (via SDK) at pin time
+              // instead of discovering it via end-user reports.
+              const cap = Number.isFinite(opts.maxStorage) && opts.maxStorage > 0
+                ? opts.maxStorage
+                : null
+              if (cap !== null) {
+                const { totalBytes, metaBytes, blobBytes } = await getDriveSize(drive, { timeoutMs: 10_000 })
+                if (totalBytes > cap) {
+                  const recommendedCap = Math.ceil(totalBytes * 1.25)
+                  this.emit('seed-aborted', {
+                    appKey: appKeyHex,
+                    reason: 'maxStorage-too-small',
+                    recoverable: false,
+                    driveBytes: totalBytes,
+                    metaBytes,
+                    blobBytes,
+                    cap,
+                    recommendedCap,
+                    hint: 'drive is ' + totalBytes + ' bytes; publisher should re-seed with maxStorage ≥ ' + recommendedCap
+                  })
+                  // Clean up — we won't accumulate partial bytes for a drive
+                  // we can never anchor.
+                  try { await this.unseedApp(appKeyHex) } catch (_) {}
+                  return
+                }
+              }
+
               // Cancellable download — destroys the download tracker on
               // timeout so its in-flight block requests are released.
               await downloadWithTimeout(drive, '/', { timeoutMs: 120_000 })

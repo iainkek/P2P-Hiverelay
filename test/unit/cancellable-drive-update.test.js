@@ -12,7 +12,7 @@
  */
 
 import test from 'brittle'
-import { updateWithTimeout, downloadWithTimeout } from 'p2p-hiverelay/core/relay-node/cancellable-drive-update.js'
+import { updateWithTimeout, downloadWithTimeout, getDriveSize } from 'p2p-hiverelay/core/relay-node/cancellable-drive-update.js'
 
 // Mock Hyperdrive that:
 //   - exposes drive.db.core.replicator.clearRequests(activeRequests, err)
@@ -216,4 +216,67 @@ test('downloadWithTimeout: defensive destroy on rejection path', async (t) => {
   }
   // The finally-block destroys defensively even on reject paths
   t.ok(trackerRef.destroyed, 'tracker destroyed by defensive cleanup')
+})
+
+// ─── getDriveSize ───────────────────────────────────────────────────
+
+function mockDriveWithCores ({ metaBytes = 0, blobBytes = 0, blobsCorePresent = true }) {
+  const makeCore = (byteLength) => ({
+    byteLength,
+    update: () => Promise.resolve(true),
+    replicator: {
+      clearRequests () {}
+    }
+  })
+  const drive = {
+    db: { core: makeCore(metaBytes) }
+  }
+  if (blobsCorePresent) {
+    drive.blobs = { core: makeCore(blobBytes) }
+  }
+  return drive
+}
+
+test('getDriveSize: sums metadata + blob core byteLengths', async (t) => {
+  const drive = mockDriveWithCores({ metaBytes: 1_236_505, blobBytes: 381_674_831 })
+  const r = await getDriveSize(drive, { timeoutMs: 1000 })
+  t.is(r.metaBytes, 1_236_505)
+  t.is(r.blobBytes, 381_674_831)
+  t.is(r.totalBytes, 382_911_336)
+})
+
+test('getDriveSize: tolerates missing blobs core', async (t) => {
+  const drive = mockDriveWithCores({ metaBytes: 100, blobsCorePresent: false })
+  const r = await getDriveSize(drive, { timeoutMs: 1000 })
+  t.is(r.metaBytes, 100)
+  t.is(r.blobBytes, 0)
+  t.is(r.totalBytes, 100)
+})
+
+test('getDriveSize: best-effort under update timeout', async (t) => {
+  // Core whose update hangs — getDriveSize should still return whatever
+  // byteLength the core had before the update timed out, not throw.
+  const hangingCore = {
+    byteLength: 999,
+    update: () => new Promise(() => {}), // hang forever
+    replicator: {
+      clearRequests () {}
+    }
+  }
+  const drive = {
+    db: { core: hangingCore },
+    blobs: { core: { byteLength: 42, update: () => Promise.resolve(true), replicator: { clearRequests () {} } } }
+  }
+  const r = await getDriveSize(drive, { timeoutMs: 30 })
+  // Returned without throwing; sizes reflect whatever was visible at call time.
+  t.is(r.metaBytes, 999)
+  t.is(r.blobBytes, 42)
+  t.is(r.totalBytes, 1041)
+})
+
+test('getDriveSize: missing drive.db core returns zeros gracefully', async (t) => {
+  const r = await getDriveSize({}, { timeoutMs: 100 })
+  t.is(r.metaBytes, 0)
+  t.is(r.blobBytes, 0)
+  t.is(r.totalBytes, 0)
 })

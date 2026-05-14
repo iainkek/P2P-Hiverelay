@@ -154,3 +154,71 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
 
 export const UPDATE_TIMEOUT_MS = DEFAULT_UPDATE_TIMEOUT_MS
 export const DOWNLOAD_TIMEOUT_MS = DEFAULT_DOWNLOAD_TIMEOUT_MS
+
+/**
+ * Return the drive's total on-disk footprint estimate, in bytes,
+ * after performing whatever core-updates are needed to know it.
+ *
+ * Hyperdrive's drive.update() only updates the metadata core
+ * (drive.db.core); the blob core (drive.blobs.core) needs its own
+ * update to expose its full byteLength. This helper does both so
+ * callers can size-check against publisher-declared caps before
+ * committing to download the whole thing.
+ *
+ * Both inner updates run with our own activeRequests array + a
+ * timeout so they don't leak hypercore upgrade refs (same pattern
+ * as updateWithTimeout).
+ *
+ * @param {object} drive — Hyperdrive instance
+ * @param {object} [opts]
+ * @param {number} [opts.timeoutMs] — per-core update timeout (default 10s)
+ * @returns {Promise<{ totalBytes: number, metaBytes: number, blobBytes: number }>}
+ *   Best-effort sizes. If an update times out, that core's byteLength
+ *   is whatever was already known (often 0 on a never-synced drive).
+ */
+export async function getDriveSize (drive, opts = {}) {
+  const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 10_000
+
+  const metaCore = drive && drive.db && drive.db.core
+  const blobCore = drive && drive.blobs && drive.blobs.core
+
+  // Helper to update a raw hypercore with a cancellable timeout.
+  // Mirrors updateWithTimeout but for a core (not a drive).
+  async function updateCore (core) {
+    if (!core || typeof core.update !== 'function') return
+    const activeRequests = []
+    let timer = null
+    try {
+      await new Promise((resolve, reject) => {
+        timer = setTimeout(() => {
+          if (core.replicator && typeof core.replicator.clearRequests === 'function') {
+            try { core.replicator.clearRequests(activeRequests, new Error('GET_SIZE_TIMEOUT')) } catch {}
+          }
+          reject(new Error('get-size timeout'))
+        }, timeoutMs)
+        core.update({ wait: true, activeRequests }).then(
+          () => { clearTimeout(timer); resolve() },
+          (err) => { clearTimeout(timer); reject(err) }
+        )
+      }).catch(() => {
+        // Best-effort: partial size info is fine for the caller's decision.
+      })
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (core.replicator && typeof core.replicator.clearRequests === 'function' && activeRequests.length > 0) {
+        try { core.replicator.clearRequests(activeRequests, new Error('GET_SIZE_CANCELLED')) } catch {}
+      }
+    }
+  }
+
+  // Metadata core size — usually already known after the initial drive.update,
+  // but we re-update just in case the caller hasn't done one yet.
+  await updateCore(metaCore)
+  const metaBytes = (metaCore && metaCore.byteLength) || 0
+
+  // Blob core size — separate update required; drive.update doesn't touch it.
+  await updateCore(blobCore)
+  const blobBytes = (blobCore && blobCore.byteLength) || 0
+
+  return { totalBytes: metaBytes + blobBytes, metaBytes, blobBytes }
+}

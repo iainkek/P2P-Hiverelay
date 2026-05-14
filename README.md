@@ -334,6 +334,9 @@ Two simulation harnesses cover behaviors unit tests can't reach:
 
 ## Documentation
 
+### Publisher guides
+- **[PUBLISHING.md](docs/PUBLISHING.md)** — what to know before you pin a Hyperdrive (the `maxStorage` trap, `verify-pin` pattern, publisher commitments)
+
 ### v0.8.0 release
 - **[ATOMIC-BLIND-CUSTODY.md](docs/ATOMIC-BLIND-CUSTODY.md)** — full protocol whitepaper (threat model, state machine, security analysis, simulation evidence, comparison to Filecoin/Sia/Storj/IPFS)
 - **[WHATS-IN-THE-RELAY.md](docs/WHATS-IN-THE-RELAY.md)** — guided tour of every component the relay picks up at v0.8.0
