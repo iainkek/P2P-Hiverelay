@@ -24,6 +24,8 @@ import { SeedProtocol } from '../protocol/seed-request.js'
 import { AnchorProtocol } from '../protocol/anchor-channel.js'
 import { CustodyProtocol } from '../protocol/custody-channel.js'
 import { PublishProtocol } from '../protocol/publish-channel.js'
+import { buildPublisherSignedSeedOpts } from '../seed-request-builder.js'
+import { isTransientCoreError } from '../transient-core-errors.js'
 import { verifyDelegationCert, verifyRevocation } from '../delegation.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
@@ -1048,14 +1050,32 @@ export class RelayNode extends EventEmitter {
             onSubmitSourceRetired: async (body) => {
               const entry = await this.seedingRegistry.publishSourceRetired(body, null)
               return { ok: true, result: entry }
+            },
+            // Seed handler — runs the publisher-signed body through the
+            // same shared builder the HTTPS /api/v1/seed route uses, so
+            // both transports speak identical vocabulary. Validation
+            // failures surface as { ok: false, error } with no retry
+            // hint; transient core errors from seedApp surface with
+            // retryable: true so the client can wait + retry the
+            // submit (mirrors HTTPS 503 + Retry-After convention).
+            onSubmitSeed: async (body) => {
+              const built = buildPublisherSignedSeedOpts(body, {
+                seedingRegistry: this.seedingRegistry
+              })
+              if (!built.ok) {
+                return { ok: false, error: built.error }
+              }
+              try {
+                const result = await this.seedApp(built.appKey, built.opts)
+                return { ok: true, result }
+              } catch (err) {
+                const msg = err && err.message ? err.message : String(err)
+                if (isTransientCoreError(err)) {
+                  return { ok: false, error: msg, retryable: true }
+                }
+                return { ok: false, error: msg }
+              }
             }
-            // onSubmitSeed: intentionally omitted in v1 — the seed-request
-            // validation + seedApp opts assembly currently lives inline in
-            // api.js's /api/v1/seed handler. A follow-up extracts that into
-            // a shared helper so both transports use the same code path.
-            // Until then, the channel returns a typed
-            //   { ok: false, error: "submit kind 'seed' not configured ..." }
-            // so clients fail fast instead of waiting on a timeout.
           })
 
           // When the registry appends a new custody entry locally, push it
