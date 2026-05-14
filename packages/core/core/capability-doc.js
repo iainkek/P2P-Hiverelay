@@ -118,6 +118,11 @@ export function buildCapabilityDoc (opts = {}) {
   // tier can prefer relays advertising this feature, since they're the only
   // ones whose participation actually moves the diversity-threshold needle.
   if (relay && relay.autoHeal) features.push('auto-heal')
+  // hiverelay-publish v1 — publisher-signed Protomux channel for
+  // submitting custody-pipeline entries (intent, commit, source-retired)
+  // over Hyperswarm instead of HTTPS. Publishers should prefer this when
+  // available; falls back to /api/v1/* REST when not.
+  if (relay && relay._publishProtocol) features.push('publish-channel-v1')
 
   // Fees block — only populated if a paymentManager is configured AND the
   // operator has set a fee schedule.
