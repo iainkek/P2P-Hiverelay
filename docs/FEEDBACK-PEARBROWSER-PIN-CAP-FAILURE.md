@@ -262,5 +262,70 @@ Relay agent's writeup: see `CHANGELOG.md` v0.8.11 entry.
   within minutes of any release because the loud-failure path catches the
   partial pin before `verify-pin` would have to
 
-The bug is closed. Future asks (2) and (3) will land as their own
-feedback notes / collaboration on the v0.8.12 design.
+The bug is closed for **new** pins. Future asks (2) and (3) will land
+as their own feedback notes / collaboration on the v0.8.12 design.
+
+---
+
+## Follow-up observation: re-seeds early-return without applying new opts
+
+Discovered while validating v0.8.11 against the in-flight production
+state (pearbrowser-desktop drive was already partial-pinned at 256 MB
+on 4 relays before 0.8.11 deployed).
+
+**Symptom**: re-pinning with the corrected 1 GB cap had no effect.
+Relays accepted the request, the SDK saw no `seed-cap-warning`, the
+relay emitted no `seed-aborted` — looked like a clean re-pin. But
+`verify-pin.js` kept failing for 20+ minutes. The relays were sitting
+on their pre-v0.8.11 partial state and never re-triggered
+`drive.download('/')` with the new cap.
+
+**Cause**: `packages/core/core/relay-node/app-lifecycle.js:166-175` —
+
+```js
+if (this.seededApps.has(appKeyHex)) {
+  const existing = this.seededApps.get(appKeyHex)
+  if (existing && existing.discoveryKey) {
+    return { discoveryKey: dkHex, alreadySeeded: true }
+  }
+}
+```
+
+When a re-seed arrives, the relay returns `alreadySeeded: true`
+immediately. The new size-check + `eagerReplicate` retry loop live
+inside `_seedAppInner`, which is bypassed by the early return. So the
+v0.8.11 fix only covers **fresh** seeds — for any drive a relay was
+already pinning before v0.8.11 rolled out, the publisher can't bump
+the cap without an explicit unseed-then-reseed dance.
+
+**Why this matters**: this is exactly the upgrade-path case. Every
+existing pre-v0.8.11 partial-pin in the wild is stuck. The relay's
+own size-check / `seed-aborted` machinery can't help, because it
+never runs.
+
+**Proposed fix (small, ask #6)**: when `seedApp(appKey, opts)` finds
+an existing entry, compare `opts.maxStorage` (and other
+size/availability-affecting opts) against the stored entry's. If
+they differ — particularly if `maxStorage` is bigger — re-enter
+`_seedAppInner` to re-validate against the now-known drive size and
+re-trigger `drive.download('/')` from the current `drive.version`.
+This way a re-seed becomes the canonical "publisher updated their
+allocation" signal. The `alreadySeeded` early-return then only fires
+when opts are byte-identical to the stored entry.
+
+**Alternative (heavier)**: add an explicit `client.refreshSeed(key,
+opts)` RPC that always re-runs `_seedAppInner`. The naming makes the
+intent loud and the relay can validate the new opts without
+ambiguity.
+
+**Operator unblock for our specific case**: on the relay side, the
+fix is to bounce the relays connected to our drive — fresh start
+clears `seededApps`, the next pin request from us goes through
+`_seedAppInner` and pulls the full drive under the 1 GB cap. The
+PearBrowser team can wait for v0.8.12 or you can restart the 4
+relays serving `pear://tco5...` whenever convenient.
+
+We've added this as ask **(6)** for the v0.8.12 cluster. It pairs
+naturally with (2) `seed-progress` (a re-seed with bigger cap and
+no progress reported is the same invisible-failure pattern this
+whole doc started with).
