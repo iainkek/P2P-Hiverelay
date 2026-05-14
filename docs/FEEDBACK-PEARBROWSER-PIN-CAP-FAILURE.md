@@ -229,3 +229,38 @@ node scripts/verify-pin.js --expect 4914
 The pearbrowser-desktop maintainers will help debug or run experiments
 on the production drive at any time — it's a useful real-world load
 test (365 MB drive, deployed, has actual end users).
+
+---
+
+## Resolution — v0.8.11 (2026-05-14)
+
+Same-day turnaround. Asks (1), (4), (5) shipped in 0.8.11; (2) and (3)
+queued for 0.8.12 with protocol design ahead of them.
+
+| Ask | Status in v0.8.11 |
+|---|---|
+| (1) Reject seed when `drive.byteLength > maxStorage` | ✅ Relay emits `seed-aborted` after metadata sync + unseeds locally (see `eagerReplicate` in `app-lifecycle.js`) |
+| (4) Sane SDK default for `maxStorage` | ✅ Client computes `observedBytes × 4`, falls back to 1 GB. Emits `seed-cap-warning` at seed time when declared cap < observed |
+| (5) `docs/PUBLISHING.md` covering the failure mode | ✅ Shipped — references this doc as the case study |
+| (2) `seed-progress` / `seed-stalled` push events | ⏳ Deferred to 0.8.12 (new Protomux message types on the seed channel) |
+| (3) `client.queryContent(driveKey)` RPC | ⏳ Deferred to 0.8.12 (new REST + SDK surface) |
+
+Relay agent's writeup: see `CHANGELOG.md` v0.8.11 entry.
+
+**PearBrowser side**, after 0.8.11 deploy:
+- Bumped `p2p-hiverelay{,-client,-verifier}` deps `^0.8.5` → `^0.8.11`
+- Migrated the SDK import path (`p2p-hiverelay/client` → `p2p-hiverelay-client`,
+  monorepo split) across `pin-self-on-hiverelay.js`, `publish-and-pin.js`,
+  `check-relays.js`, `unseed-drive.js`
+- Wired `seed-cap-warning` + `seed-aborted` listeners into the pin script
+  so the loud-failure surface is visible in script output
+- Re-pinned the production drive with `maxStorage: 1 GB` (above the 478 MB
+  recommendedCap the SDK computes). No `seed-cap-warning` / `seed-aborted`
+  fired — clean handshake — relays are backfilling the ~30% of blob bytes
+  that the prior 256 MB cap had stranded
+- `verify-pin.js` stays as belt-and-suspenders. On v0.8.11+ it should pass
+  within minutes of any release because the loud-failure path catches the
+  partial pin before `verify-pin` would have to
+
+The bug is closed. Future asks (2) and (3) will land as their own
+feedback notes / collaboration on the v0.8.12 design.
