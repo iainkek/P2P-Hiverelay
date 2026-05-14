@@ -23,6 +23,7 @@ import { resolveAcceptMode, decideAcceptance } from '../accept-mode.js'
 import { SeedProtocol } from '../protocol/seed-request.js'
 import { AnchorProtocol } from '../protocol/anchor-channel.js'
 import { CustodyProtocol } from '../protocol/custody-channel.js'
+import { PublishProtocol } from '../protocol/publish-channel.js'
 import { verifyDelegationCert, verifyRevocation } from '../delegation.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
@@ -1022,6 +1023,41 @@ export class RelayNode extends EventEmitter {
             }
           })
 
+          // Publisher submit channel (hiverelay-publish, v1) — lets external
+          // publishers submit publisher-signed custody-pipeline entries over
+          // Hyperswarm instead of HTTPS. Mirrors the /api/v1/custody/*
+          // REST surface, request/response over Protomux. Per Pear manifesto
+          // §5, this gets escrow-style apps off the HTTPS dependency.
+          //
+          // Authorisation is by the publisher signature embedded in the
+          // submitted body (same trust model as the REST endpoints); the
+          // channel itself adds no auth. Each registry method's pre-signed
+          // path (`signature` truthy, second arg null) runs the same
+          // verifyCustodyEntry path the HTTP route does — there is no shorter
+          // route in, so a malicious caller cannot bypass signature checks
+          // by submitting via Protomux instead.
+          this._publishProtocol = new PublishProtocol({
+            onSubmitIntent: async (body) => {
+              const entry = await this.seedingRegistry.publishCustodyIntent(body, null)
+              return { ok: true, result: entry }
+            },
+            onSubmitCommit: async (body) => {
+              const entry = await this.seedingRegistry.publishCustodyCommit(body, null)
+              return { ok: true, result: entry }
+            },
+            onSubmitSourceRetired: async (body) => {
+              const entry = await this.seedingRegistry.publishSourceRetired(body, null)
+              return { ok: true, result: entry }
+            }
+            // onSubmitSeed: intentionally omitted in v1 — the seed-request
+            // validation + seedApp opts assembly currently lives inline in
+            // api.js's /api/v1/seed handler. A follow-up extracts that into
+            // a shared helper so both transports use the same code path.
+            // Until then, the channel returns a typed
+            //   { ok: false, error: "submit kind 'seed' not configured ..." }
+            // so clients fail fast instead of waiting on a timeout.
+          })
+
           // When the registry appends a new custody entry locally, push it
           // to all connected peers. Fire-and-forget; log replication backs
           // it up if the push doesn't reach.
@@ -1539,6 +1575,11 @@ export class RelayNode extends EventEmitter {
     if (this._custodyProtocol && remotePubKeyHex) {
       try { this._custodyProtocol.attach(conn, remotePubKeyHex) } catch (err) {
         this.emit('protocol-error', { protocol: 'custody', error: err })
+      }
+    }
+    if (this._publishProtocol && remotePubKeyHex) {
+      try { this._publishProtocol.attach(conn, remotePubKeyHex) } catch (err) {
+        this.emit('protocol-error', { protocol: 'publish', error: err })
       }
     }
     if (this.serviceProtocol) {
