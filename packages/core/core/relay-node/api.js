@@ -36,6 +36,7 @@ import { ERR, formatErr } from '../error-prefixes.js'
 import { SetupWizard } from '../wizard.js'
 import { verifyForkProof } from '../fork-proof-signing.js'
 import { verifySeedRequestSignature } from '../protocol/seed-request.js'
+import { isTransientCoreError, TRANSIENT_RETRY_AFTER_SECONDS } from '../transient-core-errors.js'
 import b4a from 'b4a'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -1724,7 +1725,10 @@ export class RelayAPI extends EventEmitter {
             const result = await this.node.seedApp(body.appKey, seedOpts)
             return this._json(res, { ok: true, ...result })
           } catch (err) {
-            return this._json(res, { error: err.message || String(err) }, 400)
+            // Transient corestore/hypercore lifecycle errors → 503 +
+            // Retry-After so the client retries. Everything else stays
+            // as a 400 (malformed request, policy violations, etc.).
+            return this._custodyErrorResponse(res, err)
           }
         }
 
@@ -1742,7 +1746,7 @@ export class RelayAPI extends EventEmitter {
             const entry = await this.node.seedingRegistry.publishCustodyIntent(body, null)
             return this._json(res, { ok: true, ...entry })
           } catch (err) {
-            return this._json(res, { error: err.message || String(err) }, 400)
+            return this._custodyErrorResponse(res, err)
           }
         }
 
@@ -1755,7 +1759,7 @@ export class RelayAPI extends EventEmitter {
             const entry = await this.node.seedingRegistry.publishCustodyCommit({ ...body, intentId }, null)
             return this._json(res, { ok: true, ...entry })
           } catch (err) {
-            return this._json(res, { error: err.message || String(err) }, 400)
+            return this._custodyErrorResponse(res, err)
           }
         }
 
@@ -1768,7 +1772,7 @@ export class RelayAPI extends EventEmitter {
             const entry = await this.node.seedingRegistry.publishSourceRetired({ ...body, intentId }, null)
             return this._json(res, { ok: true, ...entry })
           } catch (err) {
-            return this._json(res, { error: err.message || String(err) }, 400)
+            return this._custodyErrorResponse(res, err)
           }
         }
 
@@ -2038,9 +2042,38 @@ export class RelayAPI extends EventEmitter {
     res.end(this[cacheKey])
   }
 
-  _json (res, data, status = 200) {
+  _json (res, data, status = 200, headers = null) {
+    if (headers) {
+      for (const [name, value] of Object.entries(headers)) {
+        res.setHeader(name, value)
+      }
+    }
     res.writeHead(status)
     res.end(JSON.stringify(data) + '\n')
+  }
+
+  /**
+   * Convert a thrown error from a store-touching code path (seedApp,
+   * publishCustodyIntent, publishCustodyCommit, publishSourceRetired)
+   * into a structured HTTP response.
+   *
+   * Transient corestore/hypercore lifecycle errors ("The corestore is
+   * closed", "Cannot make sessions on a closing core") get a 503 with a
+   * Retry-After header so consumers retry instead of giving up. Other
+   * errors fall through to the existing 400 default — same shape as
+   * before this change, no behaviour change for the malformed-request
+   * cases.
+   */
+  _custodyErrorResponse (res, err) {
+    const message = err && err.message ? err.message : String(err || 'unknown error')
+    if (isTransientCoreError(err)) {
+      return this._json(res, {
+        error: message,
+        retryable: true,
+        hint: 'transient corestore/hypercore lifecycle state; retry the request'
+      }, 503, { 'Retry-After': String(TRANSIENT_RETRY_AFTER_SECONDS) })
+    }
+    return this._json(res, { error: message }, 400)
   }
 
   /**
