@@ -4,6 +4,7 @@ import sodium from 'sodium-universal'
 import { EventEmitter } from 'events'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
+import { updateWithTimeout, downloadWithTimeout } from './cancellable-drive-update.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -264,23 +265,19 @@ export class AppLifecycle extends EventEmitter {
 
             if (drive.closed || drive.closing) return
 
-            await Promise.race([
-              drive.update({ wait: true }),
-              new Promise((_resolve, reject) => setTimeout(() => reject(new Error('update timeout')), 30000))
-            ])
+            // Cancellable update — on timeout, the helper detaches any
+            // in-flight hypercore upgrade refs from the replicator's
+            // activeRequests so they don't accumulate. Previously the
+            // raw Promise.race left the upgrade ref pending, leading to
+            // the "Cannot make sessions on a closing core" leak that
+            // PR #14 papered over with 503 + Retry-After.
+            await updateWithTimeout(drive, { timeoutMs: 30_000 })
 
             if (drive.version > 0 && !drive.closed && !drive.closing) {
-              let dl
-              try {
-                dl = drive.download('/')
-              } catch (_dlErr) {
-                // Drive closed between check and download call
-                return
-              }
-              await Promise.race([
-                dl.done(),
-                new Promise((_resolve, reject) => setTimeout(() => reject(new Error('download timeout')), 120000))
-              ]).catch(() => {}) // Swallow download errors (drive may close mid-download)
+              // Cancellable download — destroys the download tracker on
+              // timeout so its in-flight block requests are released.
+              await downloadWithTimeout(drive, '/', { timeoutMs: 120_000 })
+                .catch(() => {}) // partial download is fine; version is what matters
 
               if (drive.closed || drive.closing) return
 
@@ -516,10 +513,10 @@ export class AppLifecycle extends EventEmitter {
     if (drive.closed || drive.closing) return false
 
     try {
-      await Promise.race([
-        drive.update({ wait: true }),
-        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('REPAIR_UPDATE_TIMEOUT')), updateTimeout))
-      ])
+      // Cancellable update — see cancellable-drive-update.js. On timeout,
+      // detaches in-flight hypercore upgrade refs from activeRequests so
+      // they don't leak.
+      await updateWithTimeout(drive, { timeoutMs: updateTimeout })
     } catch (err) {
       this.emit('repair-update-failed', { appKey: appKeyHex, error: err.message })
       return false
@@ -533,13 +530,10 @@ export class AppLifecycle extends EventEmitter {
       return false
     }
 
-    // We have metadata; pull blob content
+    // We have metadata; pull blob content (cancellable on timeout)
     try {
-      const dl = drive.download('/')
-      await Promise.race([
-        dl.done(),
-        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('REPAIR_DOWNLOAD_TIMEOUT')), downloadTimeout))
-      ]).catch(() => {}) // partial download still counts — version is what matters
+      await downloadWithTimeout(drive, '/', { timeoutMs: downloadTimeout })
+        .catch(() => {}) // partial download still counts — version is what matters
 
       if (drive.closed || drive.closing) return false
 
