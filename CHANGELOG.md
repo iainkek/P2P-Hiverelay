@@ -6,6 +6,176 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.8.11] — 2026-05-14
+
+Loud-failure release: silent partial-pin trap fixed. See full notes at
+[`docs/RELEASE-NOTES-0.8.11.md`](docs/RELEASE-NOTES-0.8.11.md). Triggered
+by the pearbrowser-desktop bug report in
+[`docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md`](docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md).
+
+### Fixed
+
+- **`maxStorage`-too-small no longer silent**: relay now size-checks the
+  drive against the publisher-declared cap after the first metadata
+  sync in `eagerReplicate()`. If `drive.db.core.byteLength +
+  drive.blobs.core.byteLength > opts.maxStorage`, the relay emits a
+  `seed-aborted` event with full diagnostics (`driveBytes`, `metaBytes`,
+  `blobBytes`, `cap`, `recommendedCap`, `hint`), calls `unseedApp()`
+  locally, and returns without anchoring. No partial state retained.
+  Closes ask (1) from the pearbrowser feedback.
+- **Client SDK `maxStorage` default**: `client.seed(driveKey, opts)`
+  now size-defaults from a locally-cached drive
+  (`observedBytes × 4`, floor 256 MB) when `opts.maxStorage` is unset.
+  Falls back to 1 GB (up from 500 MB) when the drive isn't local.
+  If `opts.maxStorage` is explicitly set but smaller than the
+  observed drive size, emits `seed-cap-warning` + `console.warn` with
+  the recommended cap. Closes ask (4).
+
+### Added
+
+- New `getDriveSize(drive, opts)` helper in
+  `packages/core/core/relay-node/cancellable-drive-update.js` —
+  returns `{ totalBytes, metaBytes, blobBytes }` after running
+  cancellable metadata + blob core updates. Used by `eagerReplicate`
+  for the size check; available for downstream consumers via
+  re-export.
+- New `_observedDriveSize(keyHex)` helper on `HiveRelayClient` —
+  synchronous best-effort lookup of a drive's byteLength from the
+  local corestore. Used by `client.seed()` for size-defaulting +
+  warning; doesn't block on network I/O.
+
+### Documentation
+
+- New [`docs/PUBLISHING.md`](docs/PUBLISHING.md): publisher-facing
+  guide covering the `maxStorage` trap, sizing pattern (drive size ×
+  4 headroom), `verify-pin.js` template, publisher commitment fields,
+  complete pin-script template, and a failure-mode reference table.
+  Closes ask (5).
+- New [`docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md`](docs/FEEDBACK-PEARBROWSER-PIN-CAP-FAILURE.md):
+  permanent record of the bug report + the resolution notes added
+  by the maintainers after v0.8.11 deployed.
+- README documentation index gains a "Publisher guides" section.
+
+### Deferred to v0.8.12
+
+- Ask (2) — `seed-progress` / `seed-stalled` push events over the
+  seed Protomux channel. Needs new message-type design.
+- Ask (3) — `client.queryContent(driveKey)` RPC for block-coverage
+  query. Needs new REST + SDK surface.
+
+## [0.8.10] — 2026-05-14
+
+Root-cause fix for the transient corestore errors that v0.8.7 papered
+over with `503 Retry-After`.
+
+### Fixed
+
+- **`eagerReplicate` Hyperdrive-session leak**: the previous retry
+  loop wrapped `drive.update({ wait: true })` in a `Promise.race`
+  with a setTimeout-reject. On timeout, control returned to the
+  caller but the underlying hypercore upgrade ref stayed attached to
+  the replicator's `activeRequests`. Over time these accumulated,
+  eventually surfacing as "Cannot make sessions on a closing core."
+  v0.8.10 introduces `cancellable-drive-update.js` with
+  `updateWithTimeout()` and `downloadWithTimeout()` that pass a
+  per-call `activeRequests = []` array and call
+  `replicator.clearRequests(activeRequests, err)` on timeout —
+  hypercore's documented cancellation API. Both `eagerReplicate()`
+  and `repairUnanchored()` use the new helpers.
+
+### Added
+
+- 9 unit tests for `cancellable-drive-update.js` covering happy-path,
+  timeout, non-timeout rejection, missing-replicator tolerance,
+  active-requests draining, download tracker destroy, and defensive
+  finally-block cleanup.
+
+## [0.8.9] — 2026-05-14
+
+Closes the seed-kind follow-up iainkek noted in PR #15.
+
+### Added
+
+- New `packages/core/core/seed-request-builder.js` exporting
+  `buildPublisherSignedSeedOpts(body, { seedingRegistry? })`. Shared
+  validation + opts-assembly pipeline for publisher-signed seed
+  requests — presence/format checks, numeric bounds, Ed25519
+  signature verification, optional metadata (type / storageClass /
+  availabilityClass / privacyTier / blind), atomic-custody binding,
+  custody publisher cross-check. Returns
+  `{ ok: true, appKey, opts }` or `{ ok: false, error, status }`.
+- Wired into both transports: HTTP `/api/v1/seed` (155 LOC of inline
+  validation replaced with one builder call) and the
+  `hiverelay-publish` Protomux channel's `onSubmitSeed` handler
+  (previously returned `"not configured"`; now resolves and
+  surfaces transient core errors with `retryable: true` mirroring
+  the v0.8.7 HTTPS 503 convention).
+
+### Tests
+
+- 19 new unit tests for the builder covering happy path, presence
+  checks, signature mismatch, tampered fields, numeric bounds,
+  discovery keys, optional metadata, shardIds, custody publisher
+  mismatch, and best-effort registry handling.
+
+## [0.8.8] — 2026-05-14
+
+Merges PR #15 by `iainkek` — new `hiverelay-publish` Protomux channel.
+
+### Added
+
+- **`hiverelay-publish` v1 channel** for external publishers to submit
+  publisher-signed custody-pipeline entries over Hyperswarm without
+  HTTPS, per Pear manifesto §5. Same trust model as the v0.8.6 REST
+  endpoints — the publisher's Ed25519 signature embedded in the body
+  is the authorization; the channel adds none.
+- Wire shape: `1: SUBMIT { id, kind, body }`,
+  `2: RESULT { id, ok, error?, retryable?, result? }`. 4-byte
+  length-prefixed JSON, same as `hiverelay-custody` /
+  `hiverelay-anchor`.
+- 3 of 4 submit kinds wired (intent / commit / source-retired); seed
+  deferred to v0.8.9 (extract validation into shared helper first).
+  `SUBMIT_KINDS` keeps `'seed'` in the protocol vocab; default
+  handler returns a typed `"not configured"` so clients fail fast.
+- Capability-doc advertises `publish-channel-v1` under `features`
+  so clients gate transport choice off `/.well-known/hiverelay.json`.
+- 15 unit tests covering happy path per kind, handler-throw,
+  `retryable` propagation, unknown-kind rejection, concurrent id
+  correlation, channel close, timeout, default-unconfigured behavior.
+
+## [0.8.7] — 2026-05-14
+
+Merges PR #14 by `iainkek` — band-aid for the transient corestore
+errors (root cause shipped in v0.8.10).
+
+### Fixed
+
+- Publisher-signed routes (`/api/v1/seed`, `/api/v1/custody/*`)
+  previously returned an opaque `400 {"error":"The corestore is
+  closed"}` when the underlying corestore or one of its cores was in
+  a closing/closed lifecycle state — typically during a self-heal
+  restart window. Consumers (drop-pear's escrow flow) interpreted
+  the 400 as permanent and gave up. v0.8.7 classifies thrown errors
+  at the API boundary and converts transient lifecycle errors into a
+  structured `503 Service Unavailable` + `Retry-After: 5` header
+  with `retryable: true` in the body. Non-transient errors keep
+  their existing 400 / 403 / 503 status codes verbatim — no behavior
+  change for malformed-request paths.
+
+### Added
+
+- New `packages/core/core/transient-core-errors.js` exporting
+  `isTransientCoreError(err)` + `TRANSIENT_RETRY_AFTER_SECONDS = 5`.
+  Matches both `err.message` substrings and `err.code` prefixes for
+  the corestore + hypercore strings that surface this class of error
+  ("The corestore is closed", "Cannot make sessions on a closing
+  core", `SESSION_CLOSED`, `CORE_CLOSED`).
+- New `_custodyErrorResponse(res, err)` helper in
+  `relay-node/api.js`; four publisher-signed route catch-blocks
+  delegate to it.
+- 19 unit tests across the classifier (9) + API integration (10)
+  routes.
+
 ## [0.8.6] — 2026-05-08
 
 Repo-housekeeping release that lands three substantial PRs and brings CI
