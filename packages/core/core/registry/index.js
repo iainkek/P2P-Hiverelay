@@ -21,12 +21,15 @@ import { isAbortError } from '../relay-node/lifecycle-scope.js'
 import {
   computeReceiptRoot,
   createCustodyCommit,
+  createCustodyClaimWitness,
   createCustodyExpiryWitness,
   createCustodyIntent,
   createCustodyNonServingProof,
   createCustodyProof,
   createCustodyReceipt,
   createSourceRetired,
+  createSourceRetiredWitness,
+  findCustodyConflict,
   summarizeCustodyStatus,
   validateCustodyTransition,
   verifyCustodyEntry
@@ -92,6 +95,9 @@ export class SeedingRegistry extends EventEmitter {
     this._custodyProofs = new Map() // intentId -> custody-proof[]
     this._custodyNonServingProofs = new Map() // intentId -> custody-non-serving-proof[]
     this._custodyExpiryWitnesses = new Map() // intentId -> custody-expiry-witness[]
+    // M1 — Binding Witnesses (Provable Custody Roadmap)
+    this._sourceRetiredWitnesses = new Map() // intentId -> source-retired-witness (one per intent)
+    this._custodyClaimWitnesses = new Map() // intentId -> Map(recipientPubkey -> custody-claim-witness)
     this._custodyStatusCache = new Map()
 
     this._indexedOffsets = new Map() // logId -> indexed block count
@@ -373,7 +379,9 @@ export class SeedingRegistry extends EventEmitter {
       entry.type === 'source-retired' ||
       entry.type === 'custody-proof' ||
       entry.type === 'custody-non-serving-proof' ||
-      entry.type === 'custody-expiry-witness'
+      entry.type === 'custody-expiry-witness' ||
+      entry.type === 'source-retired-witness' ||
+      entry.type === 'custody-claim-witness'
     ) {
       const verified = verifyCustodyEntry(entry)
       if (!verified.valid) {
@@ -612,6 +620,34 @@ export class SeedingRegistry extends EventEmitter {
         list[idx] = entry
         this._invalidateCustodyStatus(entry.intentId)
       }
+      return
+    }
+
+    if (entry.type === 'source-retired-witness') {
+      const current = this._sourceRetiredWitnesses.get(entry.intentId)
+      // First-writer-wins. A publisher should publish exactly one
+      // source-retired-witness per intent; re-publishing with a different
+      // kPub would itself be evidence of misbehavior — but since the
+      // entry signs (intent, kPub) under the publisher key, the validator
+      // would catch the inconsistency at conflict-detection time.
+      if (!current) {
+        this._sourceRetiredWitnesses.set(entry.intentId, entry)
+        this._invalidateCustodyStatus(entry.intentId)
+      }
+      return
+    }
+
+    if (entry.type === 'custody-claim-witness') {
+      if (!this._custodyClaimWitnesses.has(entry.intentId)) {
+        this._custodyClaimWitnesses.set(entry.intentId, new Map())
+      }
+      const claims = this._custodyClaimWitnesses.get(entry.intentId)
+      const current = claims.get(entry.recipientPubkey)
+      if (!current || current.timestamp <= entry.timestamp) {
+        claims.set(entry.recipientPubkey, entry)
+        this._invalidateCustodyStatus(entry.intentId)
+      }
+      return
     }
   }
 
@@ -761,6 +797,39 @@ export class SeedingRegistry extends EventEmitter {
     return this._appendCustodyEntry(entry, 'custody-expiry-witness-recorded')
   }
 
+  /**
+   * M1 — Publish a source-retired-witness binding the publisher to a
+   * K-derived Ed25519 public key. Must be published *after* the matching
+   * `source-retired` entry; the validator enforces this ordering.
+   *
+   * Pre-signed entries are accepted as-is (after signature verification).
+   * Otherwise the registry signs with the supplied publisherKeyPair.
+   */
+  async publishSourceRetiredWitness (witness, publisherKeyPair) {
+    const entry = witness.signature
+      ? this._verifiedCustodyEntry(witness)
+      : createSourceRetiredWitness(witness, publisherKeyPair)
+    return this._appendCustodyEntry(entry, 'source-retired-witness-published')
+  }
+
+  /**
+   * M1 — Record a custody-claim-witness from a recipient. The validator
+   * enforces:
+   *   - a matching source-retired-witness exists (so kPub is known), and
+   *   - the entry's `bindingSignature` verifies under that kPub for the
+   *     canonical claim-payload.
+   *
+   * After this lands, anyone calling `getCustodyConflict(intentId)` can
+   * detect a double-issuance (two distinct recipients with valid binding
+   * signatures under the same kPub).
+   */
+  async recordCustodyClaimWitness (witness, recipientKeyPair) {
+    const entry = witness.signature
+      ? this._verifiedCustodyEntry(witness)
+      : createCustodyClaimWitness(witness, recipientKeyPair)
+    return this._appendCustodyEntry(entry, 'custody-claim-witness-recorded')
+  }
+
   _verifiedCustodyEntry (entry) {
     const verified = verifyCustodyEntry(entry)
     if (!verified.valid) throw new Error(`INVALID_CUSTODY_ENTRY: ${verified.reason}`)
@@ -795,7 +864,11 @@ export class SeedingRegistry extends EventEmitter {
   _applyPushedEntry (entry, fromPeer) {
     if (!entry || typeof entry !== 'object') return false
     if (typeof entry.type !== 'string') return false
-    if (!entry.type.startsWith('custody-') && entry.type !== 'source-retired') return false
+    if (
+      !entry.type.startsWith('custody-') &&
+      entry.type !== 'source-retired' &&
+      entry.type !== 'source-retired-witness'
+    ) return false
 
     // Validate the same way the indexer does — drops invalid signatures,
     // forbidden plaintext fields, etc.
@@ -820,7 +893,9 @@ export class SeedingRegistry extends EventEmitter {
       'source-retired': 'source-retired-published',
       'custody-proof': 'custody-proof-recorded',
       'custody-non-serving-proof': 'custody-non-serving-proof-recorded',
-      'custody-expiry-witness': 'custody-expiry-witness-recorded'
+      'custody-expiry-witness': 'custody-expiry-witness-recorded',
+      'source-retired-witness': 'source-retired-witness-published',
+      'custody-claim-witness': 'custody-claim-witness-recorded'
     }
     const eventName = eventByType[normalized.type]
     if (eventName) this.emit(eventName, normalized)
@@ -863,6 +938,15 @@ export class SeedingRegistry extends EventEmitter {
         w.relayPubkey === entry.relayPubkey &&
         w.challengeNonce === entry.challengeNonce
       )
+    }
+    if (entry.type === 'source-retired-witness') {
+      const existing = this._sourceRetiredWitnesses.get(entry.intentId)
+      return !!existing && existing.timestamp >= entry.timestamp
+    }
+    if (entry.type === 'custody-claim-witness') {
+      const claims = this._custodyClaimWitnesses.get(entry.intentId)
+      const current = claims?.get(entry.recipientPubkey)
+      return !!current && current.timestamp >= entry.timestamp
     }
     return false
   }
@@ -940,6 +1024,30 @@ export class SeedingRegistry extends EventEmitter {
     return [...(this._custodyExpiryWitnesses.get(intentId) || [])]
   }
 
+  getSourceRetiredWitness (intentId) {
+    return this._sourceRetiredWitnesses.get(intentId) || null
+  }
+
+  getCustodyClaimWitnesses (intentId) {
+    return Array.from(this._custodyClaimWitnesses.get(intentId)?.values() || [])
+  }
+
+  /**
+   * M1 — Detect double-issuance for an intent.
+   *
+   * Returns null if no conflict (zero, one, or all-same-recipient claim
+   * witnesses), or `{ left, right }` — two custody-claim-witness entries
+   * from distinct recipients whose `bindingSignature`s both verify under
+   * the publisher's committed `kPub`. Either pair is a public,
+   * algebraically-verifiable proof that K was served twice.
+   */
+  getCustodyConflict (intentId) {
+    const srw = this.getSourceRetiredWitness(intentId)
+    if (!srw) return null
+    const claims = this.getCustodyClaimWitnesses(intentId)
+    return findCustodyConflict(srw, claims)
+  }
+
   getCustodyStatus (intentId) {
     const cached = this._custodyStatusCache.get(intentId)
     if (cached) return cached
@@ -950,6 +1058,8 @@ export class SeedingRegistry extends EventEmitter {
     const proofs = this.getCustodyProofs(intentId)
     const nonServingProofs = this.getCustodyNonServingProofs(intentId)
     const expiryWitnesses = this.getCustodyExpiryWitnesses(intentId)
+    const sourceRetiredWitness = this.getSourceRetiredWitness(intentId)
+    const claimWitnesses = this.getCustodyClaimWitnesses(intentId)
     const commitCheck = rawCommit
       ? validateCustodyTransition(rawCommit, { intent, receipts })
       : { valid: false, reason: 'no commit' }
@@ -959,7 +1069,17 @@ export class SeedingRegistry extends EventEmitter {
       : { valid: false, reason: 'no source retirement' }
     const effectiveRetirement = retirementCheck.valid ? sourceRetired : null
     const status = {
-      ...summarizeCustodyStatus(intent, receipts, commit, effectiveRetirement, proofs, nonServingProofs, expiryWitnesses),
+      ...summarizeCustodyStatus(
+        intent,
+        receipts,
+        commit,
+        effectiveRetirement,
+        proofs,
+        nonServingProofs,
+        expiryWitnesses,
+        sourceRetiredWitness,
+        claimWitnesses
+      ),
       intent,
       receipts,
       commit,
@@ -968,7 +1088,9 @@ export class SeedingRegistry extends EventEmitter {
       sourceRetirementPendingReason: sourceRetired && !effectiveRetirement ? retirementCheck.reason : null,
       proofs,
       nonServingProofs,
-      expiryWitnesses
+      expiryWitnesses,
+      sourceRetiredWitness,
+      claimWitnesses
     }
     this._custodyStatusCache.set(intentId, status)
     return status

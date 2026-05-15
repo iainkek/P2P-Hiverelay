@@ -1112,6 +1112,31 @@ export class RelayNode extends EventEmitter {
                 }
                 return { ok: false, error: msg }
               }
+            },
+            // M1 — Binding-witness handlers. Both routes through the same
+            // registry methods the HTTP layer uses; pre-signed entries are
+            // verified again at the validator before indexing, so the only
+            // thing the publish channel adds is "fast P2P transport
+            // alongside log replication".
+            onSubmitSourceRetiredWitness: async (body) => {
+              try {
+                const entry = await this.seedingRegistry.publishSourceRetiredWitness(body, null)
+                return { ok: true, result: entry }
+              } catch (err) {
+                const msg = err && err.message ? err.message : String(err)
+                if (isTransientCoreError(err)) return { ok: false, error: msg, retryable: true }
+                return { ok: false, error: msg }
+              }
+            },
+            onSubmitCustodyClaimWitness: async (body) => {
+              try {
+                const entry = await this.seedingRegistry.recordCustodyClaimWitness(body, null)
+                return { ok: true, result: entry }
+              } catch (err) {
+                const msg = err && err.message ? err.message : String(err)
+                if (isTransientCoreError(err)) return { ok: false, error: msg, retryable: true }
+                return { ok: false, error: msg }
+              }
             }
           })
 
@@ -1140,7 +1165,9 @@ export class RelayNode extends EventEmitter {
             'source-retired-published': 'custody-retired',
             'custody-proof-recorded': 'custody-proof',
             'custody-non-serving-proof-recorded': 'custody-non-serving-proof',
-            'custody-expiry-witness-recorded': 'custody-expiry-witness'
+            'custody-expiry-witness-recorded': 'custody-expiry-witness',
+            'source-retired-witness-published': 'custody-source-retired-witness',
+            'custody-claim-witness-recorded': 'custody-claim-witness'
           }
           for (const [from, to] of Object.entries(eventBubbleMap)) {
             this.seedingRegistry.on(from, (entry) => this.emit(to, entry))

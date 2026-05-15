@@ -31,7 +31,22 @@ const SIGNER_FIELD_BY_TYPE = {
   // non-serving state. Closes the post-expiry serving leak that the
   // simulation surfaced (drops undetected continued serving from ~82%
   // to <1% with a 5-of-7 witness quorum).
-  'custody-expiry-witness': 'witnessPubkey'
+  'custody-expiry-witness': 'witnessPubkey',
+  // M1 — Binding Witnesses (Provable Custody Roadmap §3).
+  //
+  // `source-retired-witness`: publisher commits to the K-derived Ed25519
+  //   pubkey at retire time. Only someone with K can produce signatures
+  //   verifiable under this pubkey.
+  // `custody-claim-witness`: recipient, after recombining K, signs a
+  //   claim-payload with the K-derived private key. Verifiable by anyone
+  //   against the publisher's committed kPub.
+  //
+  // Detection: two valid `custody-claim-witness` entries for the same
+  // intentId with different `recipientPubkey` whose `bindingSignature`
+  // both verify under the publisher's committed `kPub` are an algebraic
+  // proof that K was served twice.
+  'source-retired-witness': 'publisherPubkey',
+  'custody-claim-witness': 'recipientPubkey'
 }
 
 const SIGNABLE_FIELDS_BY_TYPE = {
@@ -141,6 +156,22 @@ const SIGNABLE_FIELDS_BY_TYPE = {
     'catalogPresent', // did relay's catalog still expose the entry?
     'gatewayServing', // did relay's gateway still serve the content?
     'activeSwarmObserved' // did we see active swarm replication?
+  ],
+  'source-retired-witness': [
+    'type',
+    'version',
+    'timestamp',
+    'intentId',
+    'publisherPubkey',
+    'kPub' // Ed25519 pubkey derived from K via blake2b(K || domain-tag)
+  ],
+  'custody-claim-witness': [
+    'type',
+    'version',
+    'timestamp',
+    'intentId',
+    'recipientPubkey',
+    'bindingSignature' // Ed25519 signature over canonicalClaimPayload, signed with K-derived private key
   ]
 }
 
@@ -305,6 +336,154 @@ export function createCustodyNonServingProof (fields, relayKeyPair, opts = {}) {
 }
 
 /**
+ * M1 — Source-Retired-Witness (Binding Witness, publisher-signed).
+ *
+ * The publisher derives an Ed25519 keypair `(kPriv, kPub)` deterministically
+ * from the drop's symmetric key K, then publishes `kPub` here, signed by
+ * `publisherPubkey`. The signed entry commits the publisher to the
+ * statement: "the K that decrypts this drop binds to this kPub."
+ *
+ * After this is published, anyone holding K can produce signatures
+ * verifiable under kPub (because they can derive kPriv from K). A second
+ * party serving K would let *that* party produce a `custody-claim-witness`
+ * verifiable under the same kPub — which, by the publisher's commitment,
+ * is provable evidence of double-issuance.
+ *
+ * Key derivation must match `deriveKBindingKeypair(K)` on the client side:
+ *   seed = blake2b(K || "drop-binding-v1") (32 bytes)
+ *   (publicKey, secretKey) = ed25519_keypair_from_seed(seed)
+ *
+ * `kPub` is the hex-encoded 32-byte ed25519 public key. We DO NOT
+ * derive or store kPriv in any signed entry — only the publisher and
+ * subsequent recipients (each independently) compute it from K.
+ */
+export function createSourceRetiredWitness (fields, publisherKeyPair, opts = {}) {
+  requireKeyPair(publisherKeyPair, 'publisherKeyPair')
+  const entry = normalizeCustodyEntry({
+    version: SIGNATURE_VERSION,
+    timestamp: Number.isFinite(opts.timestamp) ? opts.timestamp : Date.now(),
+    ...fields,
+    type: 'source-retired-witness',
+    publisherPubkey: b4a.toString(publisherKeyPair.publicKey, 'hex')
+  })
+  return signCustodyEntry(entry, publisherKeyPair)
+}
+
+/**
+ * M1 — Custody-Claim-Witness (Binding Witness, recipient-signed).
+ *
+ * After the recipient successfully recombines K from t-of-n Shamir shares,
+ * they derive `(kPriv, kPub)` from K via the same deterministic procedure
+ * as the publisher, and sign a canonical claim-payload with kPriv:
+ *
+ *   claimPayload = "drop-claim-witness-v1" || intentId || recipientPubkey || timestamp(be64)
+ *   bindingSignature = ed25519_sign(kPriv, claimPayload)
+ *
+ * The recipient then publishes this entry signed (separately) by their own
+ * recipient keypair. The outer signature proves identity of the claimer;
+ * the inner `bindingSignature` proves knowledge of K.
+ *
+ * Verification (anyone with access to the registry can perform):
+ *   1. Look up `source-retired-witness` for the same intentId → obtain kPub.
+ *   2. Verify `bindingSignature` under kPub for the reconstructed claim payload.
+ *   3. Verify the outer signature under `recipientPubkey`.
+ *
+ * Detection of double-issuance:
+ *   If the registry contains two valid `custody-claim-witness` entries
+ *   for the same intentId with different `recipientPubkey`, and both
+ *   `bindingSignature`s verify under the publisher's committed kPub, the
+ *   pair is a public proof that the publisher served K twice. Cheating
+ *   is not prevented but is *publicly provable*.
+ */
+export function createCustodyClaimWitness (fields, recipientKeyPair, opts = {}) {
+  requireKeyPair(recipientKeyPair, 'recipientKeyPair')
+  const entry = normalizeCustodyEntry({
+    version: SIGNATURE_VERSION,
+    timestamp: Number.isFinite(opts.timestamp) ? opts.timestamp : Date.now(),
+    ...fields,
+    type: 'custody-claim-witness',
+    recipientPubkey: b4a.toString(recipientKeyPair.publicKey, 'hex')
+  })
+  return signCustodyEntry(entry, recipientKeyPair)
+}
+
+/**
+ * Canonical claim-payload used by the K-derived ed25519 binding signature.
+ * Both publisher (when checking) and recipient (when signing) MUST use this
+ * exact byte construction.
+ *
+ *   "hiverelay-claim-binding-v1" || intentId(hex) || recipientPubkey(hex) || timestamp(decimal-utf8)
+ *
+ * Returned as a Buffer suitable for sodium.crypto_sign_detached.
+ */
+export function canonicalClaimBindingPayload ({ intentId, recipientPubkey, timestamp }) {
+  if (!isHex32(intentId)) throw new Error('intentId must be hex(32)')
+  if (!isHex32(recipientPubkey)) throw new Error('recipientPubkey must be hex(32)')
+  if (!Number.isFinite(timestamp) || timestamp < 0) throw new Error('timestamp must be a non-negative number')
+  return b4a.from(
+    `hiverelay-claim-binding-v1:${intentId}:${recipientPubkey}:${Math.floor(timestamp)}`
+  )
+}
+
+/**
+ * Verify the inner `bindingSignature` of a custody-claim-witness against
+ * a publisher-committed `kPub` (from the matching source-retired-witness).
+ *
+ * Returns true iff the recipient could only have produced the signature
+ * by holding K (since kPriv is derived solely from K).
+ */
+export function verifyClaimBinding (claimWitness, kPubHex) {
+  if (!claimWitness || claimWitness.type !== 'custody-claim-witness') return false
+  if (!isHex32(kPubHex)) return false
+  if (!HEX_SIG.test(claimWitness.bindingSignature || '')) return false
+  const payload = canonicalClaimBindingPayload({
+    intentId: claimWitness.intentId,
+    recipientPubkey: claimWitness.recipientPubkey,
+    timestamp: claimWitness.timestamp
+  })
+  return sodium.crypto_sign_verify_detached(
+    b4a.from(claimWitness.bindingSignature, 'hex'),
+    payload,
+    b4a.from(kPubHex, 'hex')
+  )
+}
+
+/**
+ * Find a double-issuance conflict among claim-witnesses for a single intent.
+ *
+ * Inputs:
+ *   - sourceRetiredWitness: the publisher's signed kPub commitment (one).
+ *   - claimWitnesses: array of custody-claim-witness entries for the same intentId.
+ *
+ * Returns null if no conflict, or { left, right } — two distinct claim-
+ * witnesses that both verify under the publisher's committed kPub but
+ * have different recipientPubkeys. Either of those pairs is a public
+ * proof of double-issuance.
+ */
+export function findCustodyConflict (sourceRetiredWitness, claimWitnesses = []) {
+  if (!sourceRetiredWitness || sourceRetiredWitness.type !== 'source-retired-witness') return null
+  const kPub = sourceRetiredWitness.kPub
+  if (!isHex32(kPub)) return null
+  const verified = []
+  for (const w of claimWitnesses) {
+    if (!w || w.type !== 'custody-claim-witness') continue
+    if (w.intentId !== sourceRetiredWitness.intentId) continue
+    if (!verifyClaimBinding(w, kPub)) continue
+    verified.push(w)
+  }
+  if (verified.length < 2) return null
+  // Find any two with distinct recipients.
+  for (let i = 0; i < verified.length; i++) {
+    for (let j = i + 1; j < verified.length; j++) {
+      if (verified[i].recipientPubkey !== verified[j].recipientPubkey) {
+        return { left: verified[i], right: verified[j] }
+      }
+    }
+  }
+  return null
+}
+
+/**
  * Witness Tombstone — independent third-party attestation that a relay
  * is no longer actively serving content past `retainUntil`. The witness
  * does NOT store content; it only probes the relay's catalog, gateway,
@@ -395,13 +574,26 @@ export function normalizeCustodyEntry (entry, opts = {}) {
     if (out.custodyMode !== 'blind') throw new Error('custodyMode must be blind')
   }
 
-  if (type !== 'source-retired' && type !== 'custody-proof' && type !== 'custody-non-serving-proof' && type !== 'custody-expiry-witness') {
+  const typesWithoutContent = new Set([
+    'source-retired',
+    'custody-proof',
+    'custody-non-serving-proof',
+    'custody-expiry-witness',
+    'source-retired-witness',
+    'custody-claim-witness'
+  ])
+  if (!typesWithoutContent.has(type)) {
     out.ciphertextRoot = hexField(out.ciphertextRoot, 'ciphertextRoot')
     out.contentVersion = numberField(out.contentVersion, 'contentVersion')
   }
 
   if (out.addressKey != null) out.addressKey = hexField(out.addressKey, 'addressKey')
-  out.blindContentId = hexField(out.blindContentId, 'blindContentId')
+  // M1 binding witnesses don't reference blindContentId directly — they live
+  // off intentId alone (the publisher already bound blindContentId into the
+  // intent's signature payload).
+  if (type !== 'source-retired-witness' && type !== 'custody-claim-witness') {
+    out.blindContentId = hexField(out.blindContentId, 'blindContentId')
+  }
 
   if (type === 'custody-intent') return normalizeIntent(out)
   if (type === 'custody-receipt') return normalizeReceipt(out)
@@ -410,6 +602,8 @@ export function normalizeCustodyEntry (entry, opts = {}) {
   if (type === 'custody-proof') return normalizeProof(out)
   if (type === 'custody-non-serving-proof') return normalizeNonServingProof(out)
   if (type === 'custody-expiry-witness') return normalizeExpiryWitness(out)
+  if (type === 'source-retired-witness') return normalizeSourceRetiredWitness(out)
+  if (type === 'custody-claim-witness') return normalizeClaimWitness(out)
 }
 
 export function validateCustodyTransition (entry, status = {}) {
@@ -455,6 +649,34 @@ export function validateCustodyTransition (entry, status = {}) {
     if (entry.catalogPresent || entry.activeSwarmServing) return { valid: false, reason: 'relay still reports active serving state' }
   }
 
+  if (entry.type === 'source-retired-witness') {
+    if (!status.retirement) {
+      return { valid: false, reason: 'source-retired must precede source-retired-witness' }
+    }
+    if (entry.intentId !== status.retirement.intentId) {
+      return { valid: false, reason: 'source-retired-witness intentId mismatch' }
+    }
+    if (entry.publisherPubkey !== status.retirement.publisherPubkey) {
+      return { valid: false, reason: 'source-retired-witness publisherPubkey mismatch with source-retired' }
+    }
+  }
+
+  if (entry.type === 'custody-claim-witness') {
+    const srw = status.sourceRetiredWitness
+    if (!srw || srw.type !== 'source-retired-witness') {
+      return { valid: false, reason: 'source-retired-witness must precede custody-claim-witness' }
+    }
+    if (entry.intentId !== srw.intentId) {
+      return { valid: false, reason: 'custody-claim-witness intentId mismatch with source-retired-witness' }
+    }
+    // The inner binding signature MUST verify under the publisher-committed kPub.
+    // This is the crux of M1 — without it, anyone could publish a fake
+    // claim-witness and falsely accuse a publisher of double-issuance.
+    if (!verifyClaimBinding(entry, srw.kPub)) {
+      return { valid: false, reason: 'bindingSignature does not verify under publisher-committed kPub' }
+    }
+  }
+
   if (entry.type === 'custody-expiry-witness') {
     if (!intent) return { valid: false, reason: 'custody intent required before witness tombstone' }
     if (entry.blindContentId !== intent.blindContentId) return { valid: false, reason: 'blindContentId mismatch' }
@@ -474,10 +696,30 @@ export function validateCustodyTransition (entry, status = {}) {
   return { valid: true }
 }
 
-export function summarizeCustodyStatus (intent, receipts = [], commit = null, retirement = null, proofs = [], nonServingProofs = [], expiryWitnesses = []) {
+export function summarizeCustodyStatus (
+  intent,
+  receipts = [],
+  commit = null,
+  retirement = null,
+  proofs = [],
+  nonServingProofs = [],
+  expiryWitnesses = [],
+  sourceRetiredWitness = null,
+  claimWitnesses = []
+) {
   const requiredReplicas = intent?.requiredReplicas || 0
   const validReceipts = receipts.filter(r => r.anchored === true)
   const validExpiryWitnesses = expiryWitnesses.filter(w => validateCustodyTransition(w, { intent, nonServingProofs }).valid)
+
+  // M1: assess binding witnesses + detect double-issuance.
+  const validClaimWitnesses = sourceRetiredWitness
+    ? claimWitnesses.filter(w => verifyClaimBinding(w, sourceRetiredWitness.kPub))
+    : []
+  const distinctRecipients = new Set(validClaimWitnesses.map(w => w.recipientPubkey))
+  const conflict = sourceRetiredWitness
+    ? findCustodyConflict(sourceRetiredWitness, validClaimWitnesses)
+    : null
+
   return {
     intentId: intent?.intentId || null,
     blindContentId: intent?.blindContentId || null,
@@ -495,7 +737,13 @@ export function summarizeCustodyStatus (intent, receipts = [], commit = null, re
     nonServingRelays: nonServingProofs.filter(p => p.notServing === true).map(p => p.relayPubkey).sort(),
     expiryWitnessCount: expiryWitnesses.length,
     validExpiryWitnessCount: validExpiryWitnesses.length,
-    expiryWitnessRelays: validExpiryWitnesses.map(w => w.relayPubkey).sort()
+    expiryWitnessRelays: validExpiryWitnesses.map(w => w.relayPubkey).sort(),
+    // M1 binding-witness layer.
+    sourceRetiredWitnessKPub: sourceRetiredWitness?.kPub || null,
+    claimWitnessCount: validClaimWitnesses.length,
+    claimWitnessRecipients: [...distinctRecipients].sort(),
+    doubleIssuance: !!conflict,
+    doubleIssuanceProof: conflict
   }
 }
 
@@ -579,6 +827,21 @@ function normalizeExpiryWitness (entry) {
   entry.catalogPresent = entry.catalogPresent === true
   entry.gatewayServing = entry.gatewayServing === true
   entry.activeSwarmObserved = entry.activeSwarmObserved === true
+  return orderedEntry(entry)
+}
+
+function normalizeSourceRetiredWitness (entry) {
+  entry.publisherPubkey = hexField(entry.publisherPubkey, 'publisherPubkey')
+  entry.kPub = hexField(entry.kPub, 'kPub')
+  return orderedEntry(entry)
+}
+
+function normalizeClaimWitness (entry) {
+  entry.recipientPubkey = hexField(entry.recipientPubkey, 'recipientPubkey')
+  if (!HEX_SIG.test(entry.bindingSignature || '')) {
+    throw new Error('bindingSignature must be 128 hex characters')
+  }
+  entry.bindingSignature = entry.bindingSignature.toLowerCase()
   return orderedEntry(entry)
 }
 

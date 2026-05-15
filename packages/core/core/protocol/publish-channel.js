@@ -64,7 +64,10 @@ export const SUBMIT_KINDS = new Set([
   'intent', // SUBMIT_INTENT — publisher-signed custody-intent
   'commit', // SUBMIT_COMMIT — publisher-signed custody-commit
   'source-retired', // SUBMIT_SOURCE_RETIRED — publisher-signed source-retired
-  'seed' // SUBMIT_SEED — publisher-signed seed-request payload
+  'seed', // SUBMIT_SEED — publisher-signed seed-request payload
+  // M1 — Binding-witness entries (Provable Custody Roadmap)
+  'source-retired-witness', // publisher-signed kPub commitment
+  'custody-claim-witness' // recipient-signed binding signature
 ])
 
 const encoding = {
@@ -118,6 +121,9 @@ export class PublishProtocol extends EventEmitter {
     this._onSubmitCommit = opts.onSubmitCommit || defaultUnsupported('commit')
     this._onSubmitSourceRetired = opts.onSubmitSourceRetired || defaultUnsupported('source-retired')
     this._onSubmitSeed = opts.onSubmitSeed || defaultUnsupported('seed')
+    // M1 — Binding-witness entries
+    this._onSubmitSourceRetiredWitness = opts.onSubmitSourceRetiredWitness || defaultUnsupported('source-retired-witness')
+    this._onSubmitCustodyClaimWitness = opts.onSubmitCustodyClaimWitness || defaultUnsupported('custody-claim-witness')
   }
 
   attach (mux, remotePubkey) {
@@ -182,6 +188,8 @@ export class PublishProtocol extends EventEmitter {
       case 'commit': return this._onSubmitCommit(body)
       case 'source-retired': return this._onSubmitSourceRetired(body)
       case 'seed': return this._onSubmitSeed(body)
+      case 'source-retired-witness': return this._onSubmitSourceRetiredWitness(body)
+      case 'custody-claim-witness': return this._onSubmitCustodyClaimWitness(body)
       default: return Promise.resolve({ ok: false, error: `unknown kind: ${kind}` })
     }
   }
