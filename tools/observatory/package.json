@@ -1,0 +1,15 @@
+{
+  "name": "hiverelay-observatory",
+  "version": "0.1.0",
+  "description": "Birdseye view of the HiveRelay fleet — polls each relay's HTTP endpoints, renders topology + per-relay state. Designed to run as a single Node process on a tiny VPS or laptop, no DB needed for v0.1.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "private": true,
+  "license": "Apache-2.0"
+}
