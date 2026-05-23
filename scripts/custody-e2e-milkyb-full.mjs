@@ -44,7 +44,15 @@ import {
 const RELAYS = {
   'milkyb-fra': { baseUrl: 'https://milkyb-hiverelay-fra.fly.dev' },
   'milkyb-iad': { baseUrl: 'https://milkyb-hiverelay-iad.fly.dev' },
-  'milkyb-syd': { baseUrl: 'https://milkyb-hiverelay-syd.fly.dev' }
+  'milkyb-syd': { baseUrl: 'https://milkyb-hiverelay-syd.fly.dev' },
+  // Foundation fleet (v0.8.20) — added for cross-fleet witness pass
+  // verification. Real public IPv4 → improves chance of hyperswarm
+  // hole-punching from a Fly-NAT'd publisher.
+  utah:        { baseUrl: 'http://144.172.101.215:9100' },
+  'utah-us':   { baseUrl: 'http://144.172.91.26:9100' },
+  'singapore-1': { baseUrl: 'http://104.194.153.179:9100' },
+  'singapore-2': { baseUrl: 'http://104.194.152.121:9100' },
+  bern:        { baseUrl: 'http://45.59.123.112:9100' }
 }
 
 const args = parseArgs(process.argv.slice(2))
