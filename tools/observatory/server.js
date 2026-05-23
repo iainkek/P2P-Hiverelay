@@ -23,12 +23,18 @@ const HISTORY_LEN = Number(process.env.OBSERVATORY_HISTORY) || 360 // ~1 hour at
 // Fleet config. Per-relay API keys are intentionally NOT here — the
 // observatory only hits public endpoints. If we later add authenticated
 // pulls (/api/manage/*), we'll thread keys via env vars per relay.
+// Each entry: { id, host, region, operator, baseUrl? }.
+// baseUrl overrides the default `http://${host}:9100` (used for hosts that
+// terminate TLS upstream — e.g. Fly.io apps reachable only on https/:443).
 const RELAYS = [
   { id: 'utah',        host: '144.172.101.215', region: 'NA', operator: 'hive-foundation-utah' },
   { id: 'utah-us',     host: '144.172.91.26',   region: 'NA', operator: 'hive-foundation-utah-us' },
   { id: 'singapore-1', host: '104.194.153.179', region: 'AS', operator: 'hive-foundation-singapore' },
   { id: 'singapore-2', host: '104.194.152.121', region: 'AS', operator: 'hive-foundation-singapore-2' },
-  { id: 'bern',        host: '45.59.123.112',   region: 'EU', operator: 'hive-foundation-bern' }
+  { id: 'bern',        host: '45.59.123.112',   region: 'EU', operator: 'hive-foundation-bern' },
+  { id: 'milkyb-fra',  host: 'milkyb-hiverelay-fra.fly.dev', region: 'EU', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-fra.fly.dev' },
+  { id: 'milkyb-iad',  host: 'milkyb-hiverelay-iad.fly.dev', region: 'NA', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-iad.fly.dev' },
+  { id: 'milkyb-syd',  host: 'milkyb-hiverelay-syd.fly.dev', region: 'OC', operator: 'milkyb', baseUrl: 'https://milkyb-hiverelay-syd.fly.dev' }
 ]
 
 // Current snapshot (overwritten every poll) + ring buffer of last N snapshots
@@ -50,7 +56,7 @@ async function fetchJson (url, timeoutMs = 5_000) {
 }
 
 async function pollRelay (relay) {
-  const base = `http://${relay.host}:9100`
+  const base = relay.baseUrl || `http://${relay.host}:9100`
   const snap = {
     id: relay.id,
     host: relay.host,
