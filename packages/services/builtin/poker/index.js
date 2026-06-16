@@ -171,6 +171,16 @@ export class PokerApp extends ServiceProvider {
    * Returns the SignedLog.append result verbatim.
    */
   submitEntry (tableKey, signedEntry) {
+    // Dual calling convention. Positional form `submitEntry(tableKey, entry)` is used
+    // by the HTTP adapter and direct JS callers. The P2P services-RPC path invokes
+    // every capability as `method(params, ctx)` (see core/router registerFromRegistry +
+    // services/protocol _handleRequest), so when the first arg is an object we unpack it
+    // as `{ tableKey, entry }`. A hex tableKey is always a string, so this is unambiguous
+    // and non-breaking for existing positional callers.
+    if (tableKey !== null && typeof tableKey === 'object') {
+      signedEntry = tableKey.entry
+      tableKey = tableKey.tableKey
+    }
     const record = this._get(tableKey)
     if (!record) return { ok: false, reason: 'no-such-table' }
     return record.log.append(signedEntry)
@@ -180,12 +190,21 @@ export class PokerApp extends ServiceProvider {
    * Read entries from `fromIdx`. Returns `{ from, to, entries }`.
    */
   getLog (tableKey, fromIdx = 0, limit = Infinity) {
+    // Dual calling convention (see submitEntry): P2P-RPC passes `{ tableKey, from, limit }`.
+    if (tableKey !== null && typeof tableKey === 'object') {
+      const p = tableKey
+      tableKey = p.tableKey
+      fromIdx = p.from ?? 0
+      limit = p.limit ?? Infinity
+    }
     const record = this._get(tableKey)
     if (!record) return null
     return record.log.slice(fromIdx, limit)
   }
 
   getState (tableKey) {
+    // Dual calling convention (see submitEntry): P2P-RPC passes `{ tableKey }`.
+    if (tableKey !== null && typeof tableKey === 'object') tableKey = tableKey.tableKey
     const record = this._get(tableKey)
     if (!record) return null
     return {
@@ -287,7 +306,12 @@ export class PokerApp extends ServiceProvider {
   _emit (tableKey, entry, index) {
     if (!this.node || !this.node.router || !this.node.router.pubsub) return
     try {
-      this.node.router.pubsub.publish('poker/entry', { tableKey, index, entry })
+      const msg = { tableKey, index, entry }
+      // Global topic (backward compat — existing subscribers filter by tableKey).
+      this.node.router.pubsub.publish('poker/entry', msg)
+      // Per-table topic so a P2P subscriber can subscribe to ONLY its own table
+      // (the services-RPC SUBSCRIBE path is the no-HTTP equivalent of the WS /events feed).
+      this.node.router.pubsub.publish('poker/entry/' + tableKey, msg)
     } catch (err) {
       this._log('emit-error', { error: err && err.message })
     }

@@ -62,7 +62,17 @@ const ROUTE_ACCESS_POLICIES = {
   'arbitration.vote': 'authenticated-user',
   'arbitration.get': 'authenticated-user',
   'arbitration.list': 'relay-admin',
-  'arbitration.evidence': 'relay-admin'
+  'arbitration.evidence': 'relay-admin',
+
+  // Poker (card-blind signed-log substrate). Public to mirror the HTTP surface
+  // (/api/poker/* has no auth); the per-table SignedLog still enforces the writer
+  // allowlist + ed25519 signature + per-writer seq + ts-skew + byte budget, so an
+  // unauthenticated peer can submit/read but cannot forge or write out of turn.
+  'poker.createTable': 'public',
+  'poker.submitEntry': 'public',
+  'poker.getLog': 'public',
+  'poker.getState': 'public',
+  'poker.listTables': 'public'
 }
 
 const SERVICE_DEFAULT_ACCESS = {
@@ -72,7 +82,8 @@ const SERVICE_DEFAULT_ACCESS = {
   sla: 'authenticated-user',
   arbitration: 'authenticated-user',
   zk: 'authenticated-user',
-  identity: 'authenticated-user'
+  identity: 'authenticated-user',
+  poker: 'public' // card-blind signed-log; safety enforced per-entry by SignedLog (see policy above)
 }
 
 export class Router extends EventEmitter {
