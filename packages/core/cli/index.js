@@ -301,6 +301,11 @@ async function start () {
   const pluginsArg = args.plugins || process.env.HIVERELAY_PLUGINS
   if (typeof pluginsArg === 'string' && pluginsArg.trim()) {
     cliOverrides.plugins = pluginsArg.split(',').map(s => s.trim()).filter(Boolean)
+    // The service-protocol layer is gated on enableServices !== false (default is
+    // false — the "focused kernel"). Enabling plugins is meaningless without it:
+    // RelayNode only loads plugins AND attaches the hiverelay-services Protomux
+    // channel when enableServices !== false. So turning on plugins implies services.
+    cliOverrides.enableServices = true
   }
   // --auto-heal — opt into the diversity-enforced replica recruitment scheduler.
   // See docs/WHATS-IN-THE-RELAY.md §3 and the Atomic Blind Custody whitepaper.
