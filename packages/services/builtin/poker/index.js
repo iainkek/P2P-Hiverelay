@@ -163,6 +163,18 @@ export class PokerApp extends ServiceProvider {
       this._emit(log.tableKey, entry, index)
     })
     this._tables.set(log.tableKey, record)
+    // Optional lifecycle hook (Phase 12 Wave 1). A persistence/seeding collaborator
+    // sets `pokerApp._onTableCreated` so EVERY table — created via the HTTP adapter OR
+    // the P2P services-RPC path — is mirrored to a hypercore + seeded for cross-relay
+    // availability, without PokerApp depending on any persistence layer. Best-effort:
+    // the hook must not throw into the create path. `writers` is normalized by SignedLog.
+    if (this._onTableCreated) {
+      try {
+        this._onTableCreated({ tableKey: log.tableKey, writers: Array.from(log.writers), options: record.options })
+      } catch (err) {
+        this._log('on-table-created-error', { error: err && err.message })
+      }
+    }
     return this._publicDescriptor(log.tableKey, record)
   }
 
