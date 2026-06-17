@@ -7,7 +7,7 @@
 #
 # Multi-stage build:
 #   Stage 1 (deps):    install production deps for all workspaces
-#   Stage 2 (runtime): minimal Alpine runtime, non-root user, tini PID 1
+#   Stage 2 (runtime): minimal Debian-slim runtime, non-root user, tini PID 1
 #
 # Build:
 #   docker build -t p2p-hiverelay:latest .
@@ -35,13 +35,16 @@
 #   LNBITS_ADMIN_KEY=...          (LNbits admin key for invoice creation)
 
 # ─── Stage 1: dependencies ────────────────────────────────────────────
-# Use Alpine for the smaller image footprint critical on Pi-class Umbrel
-# hardware. node:20 LTS — Bare/Pear runtime targets stay aligned.
-FROM node:20-alpine AS deps
+# Debian-slim (glibc) base. Some prebuilt native deps (e.g. udx-native, pulled
+# by dht-rpc/bare-dgram) ship a linux-x64 glibc prebuild but NO linux-x64-musl
+# build and no compilable source — so an Alpine/musl image fails to boot. slim
+# loads the glibc prebuild directly. node:20 LTS — Bare/Pear targets stay aligned.
+FROM node:20-slim AS deps
 WORKDIR /app
 
 # Install build tools needed for native deps (sodium-universal, hypercore-crypto)
-RUN apk add --no-cache python3 make g++ git
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ git \
+  && rm -rf /var/lib/apt/lists/*
 
 # Copy ALL workspace package.json files (npm needs them all to resolve workspaces)
 COPY package.json package-lock.json ./
@@ -56,7 +59,7 @@ COPY packages/verifier/package.json packages/verifier/
 RUN npm ci --omit=dev --workspaces --include-workspace-root --no-audit --no-fund
 
 # ─── Stage 2: runtime ─────────────────────────────────────────────────
-FROM node:20-alpine AS runtime
+FROM node:20-slim AS runtime
 
 LABEL org.opencontainers.image.title="p2p-hiverelay"
 LABEL org.opencontainers.image.description="Always-on P2P relay infrastructure for the Holepunch/Pear ecosystem"
@@ -65,7 +68,8 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # tini for proper PID 1 signal handling (graceful shutdown).
 # wget for HEALTHCHECK without bringing curl/openssl bloat.
-RUN apk add --no-cache tini wget
+RUN apt-get update && apt-get install -y --no-install-recommends tini wget \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -80,12 +84,11 @@ COPY --from=deps /app/node_modules ./node_modules
 # Copy application source (respects .dockerignore)
 COPY . .
 
-# Non-root user for security. Alpine uses addgroup/adduser instead of
-# Debian's groupadd/useradd.
-RUN addgroup -S hiverelay && \
-    adduser -S -G hiverelay -h /data -s /sbin/nologin hiverelay && \
-    mkdir -p /data /config && \
-    chown -R hiverelay:hiverelay /app /data /config
+# Runs as root, matching the already-deployed relay images whose /data volumes
+# are root-owned (uid 0). The non-root `USER hiverelay` hardening was never
+# shipped to those relays; switching users here would EACCES on the existing
+# root-owned /data/.hiverelay/storage. Keep root to stay volume-compatible.
+RUN mkdir -p /data /config
 
 # Make the hiverelay binary globally callable inside the container, so
 # `docker exec -it hiverelay hiverelay tui` just works.
@@ -93,15 +96,19 @@ RUN ln -s /app/packages/core/cli/index.js /usr/local/bin/p2p-hiverelay && \
     ln -s /app/packages/core/cli/index.js /usr/local/bin/hiverelay && \
     chmod +x /app/packages/core/cli/index.js
 
-USER hiverelay
-
 VOLUME ["/data", "/config"]
 
 # API port. Gateway (9200) and other transport ports may need their own
 # `-p` mappings when you enable them.
 EXPOSE 9100
 
+# HOME=/data so os.homedir()-based storage resolves to /data/.hiverelay/storage —
+# the path the already-deployed relays persist their identity (primary-key) at on
+# the /data volume. The config loader is homedir-based and ignores HIVERELAY_STORAGE,
+# so HOME is the lever that makes a fresh image reuse the existing relay pubkey
+# instead of minting a new identity on ephemeral /root storage every restart.
 ENV NODE_ENV=production \
+    HOME=/data \
     HIVERELAY_STORAGE=/data \
     HIVERELAY_CONFIG_DIR=/config \
     HIVERELAY_LOG_LEVEL=info \
@@ -116,7 +123,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     http://127.0.0.1:${HIVERELAY_API_PORT:-9100}/health || exit 1
 
 # tini as PID 1 → graceful SIGTERM handling so shutdown actually runs.
-ENTRYPOINT ["/sbin/tini", "--", "node", "/app/packages/core/cli/index.js"]
+# Debian's tini package installs to /usr/bin/tini (Alpine used /sbin/tini).
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "/app/packages/core/cli/index.js"]
 
 # Default: start a relay node. Override to run other subcommands, e.g.:
 #   docker run ... p2p-hiverelay:latest help
