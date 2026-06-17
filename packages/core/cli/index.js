@@ -294,6 +294,14 @@ async function start () {
   if (typeof args.operator === 'string' && args.operator.trim()) {
     cliOverrides.operator = args.operator.trim()
   }
+  // --plugins / HIVERELAY_PLUGINS — enable built-in service plugins (comma-separated,
+  // e.g. "poker" or "poker,storage"). Mirrors the env-override pattern used by
+  // --dht-relay-ws below. Lets a general hiverelay serve poker over the P2P
+  // services-RPC channel with no dedicated relay — see plugin-loader BUILTIN_MAP.
+  const pluginsArg = args.plugins || process.env.HIVERELAY_PLUGINS
+  if (typeof pluginsArg === 'string' && pluginsArg.trim()) {
+    cliOverrides.plugins = pluginsArg.split(',').map(s => s.trim()).filter(Boolean)
+  }
   // --auto-heal — opt into the diversity-enforced replica recruitment scheduler.
   // See docs/WHATS-IN-THE-RELAY.md §3 and the Atomic Blind Custody whitepaper.
   if (args['auto-heal'] === true || args.autoheal === true) {
