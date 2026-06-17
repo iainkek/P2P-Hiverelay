@@ -142,6 +142,9 @@ export class HiveRelayClient extends EventEmitter {
     this._pendingServiceRequests = new Map() // requestId -> { resolve, reject, timer }
     this._serviceRequestId = 1
 
+    // Service pubsub state — topic -> Set<onEvent fn>
+    this._serviceTopicHandlers = new Map()
+
     // Persistent seed retry queue
     // Stored at {storagePath}/pending-seeds.json; survives process restart.
     this._pendingSeeds = new Map() // appKey hex -> { appKey, opts, enqueuedAt, attempts, lastAttempt, nextRetryAt, reason }
@@ -188,6 +191,17 @@ export class HiveRelayClient extends EventEmitter {
     // ForkDetector is loaded lazily on start() so the class is usable
     // in test environments that don't call start().
     this.forkDetector = null
+
+    // Reconnect resubscribe — one listener registered ONCE in the constructor.
+    // When a service channel re-opens, re-send all active topic subscriptions
+    // so live fanout survives relay reconnection (D-01/D-02).
+    this.on('service-channel-open', ({ relay }) => {
+      const topics = Array.from(this._serviceTopicHandlers.keys())
+      if (topics.length === 0) return
+      const relayObj = this.relays.get(relay)
+      if (!relayObj?.channels?.service) return
+      relayObj.channels.service.msg.send({ type: 4, topics })
+    })
   }
 
   /**
@@ -2890,6 +2904,74 @@ export class HiveRelayClient extends EventEmitter {
     })
   }
 
+  /**
+   * Subscribe to one or more service pubsub topics on a relay.
+   *
+   *   const unsub = client.subscribeService(['poker/entry/tableKey'], (topic, data) => { ... })
+   *   unsub() // unsubscribes
+   *
+   * Topics must be non-empty strings of length ≤ 256 (mirrors server _handleSubscribe guard).
+   * Returns an unsubscribe function.
+   */
+  subscribeService (topics, onEvent, opts = {}) {
+    this._ensureStarted()
+
+    const relayPubkey = opts.relay || this._selectBestRelay('service')
+    if (!relayPubkey) throw new Error('NO_RELAY: no relay with service channel')
+
+    const relay = this.relays.get(relayPubkey)
+    if (!relay?.channels?.service) {
+      throw new Error('NO_SERVICE_CHANNEL: relay ' + relayPubkey + ' has no service protocol')
+    }
+
+    // Validate + register handlers; collect valid topics for wire frame
+    const validTopics = []
+    for (const topic of topics) {
+      if (typeof topic !== 'string' || topic.length === 0 || topic.length > 256) continue
+      if (!this._serviceTopicHandlers.has(topic)) {
+        this._serviceTopicHandlers.set(topic, new Set())
+      }
+      this._serviceTopicHandlers.get(topic).add(onEvent)
+      validTopics.push(topic)
+    }
+
+    if (validTopics.length > 0) {
+      relay.channels.service.msg.send({ type: 4, topics: validTopics })
+    }
+
+    return () => this.unsubscribeService(topics, onEvent, opts)
+  }
+
+  /**
+   * Unsubscribe from service pubsub topics.
+   * When onEvent is omitted, removes ALL handlers for the given topics.
+   * Sends a MSG_UNSUBSCRIBE (type 5) frame for any topic whose handler Set is now empty.
+   */
+  unsubscribeService (topics, onEvent, opts = {}) {
+    const relayPubkey = opts.relay || this._selectBestRelay('service')
+    const relay = relayPubkey ? this.relays.get(relayPubkey) : null
+
+    const topicsToUnsub = []
+    for (const topic of topics) {
+      if (typeof topic !== 'string') continue
+      const handlers = this._serviceTopicHandlers.get(topic)
+      if (!handlers) continue
+      if (onEvent) {
+        handlers.delete(onEvent)
+      } else {
+        handlers.clear()
+      }
+      if (handlers.size === 0) {
+        this._serviceTopicHandlers.delete(topic)
+        topicsToUnsub.push(topic)
+      }
+    }
+
+    if (topicsToUnsub.length > 0 && relay?.channels?.service) {
+      relay.channels.service.msg.send({ type: 5, topics: topicsToUnsub })
+    }
+  }
+
   // ─── Internal ────────────────────────────────────────────────────
 
   _onConnection (conn, info) {
@@ -3316,6 +3398,17 @@ export class HiveRelayClient extends EventEmitter {
       const relay2 = this.relays.get(relayPubkey)
       if (relay2) relay2.seededApps = msg.apps || []
       this.emit('app-catalog', { relay: relayPubkey, apps: msg.apps || [] })
+    } else if (msg.type === 6) { // MSG_EVENT — pubsub push from relay
+      const topic = msg.topic
+      if (typeof topic === 'string') {
+        const handlers = this._serviceTopicHandlers.get(topic)
+        if (handlers) {
+          for (const fn of handlers) {
+            try { fn(topic, msg.data) } catch (_) {}
+          }
+        }
+        this.emit('service-event', { relay: relayPubkey, topic, data: msg.data })
+      }
     }
   }
 
