@@ -24,7 +24,11 @@ const BUILTIN_MAP = {
   zk: { module: 'p2p-hiveservices/builtin/zk-service.js', className: 'ZKService' },
   sla: { module: 'p2p-hiveservices/builtin/sla-service.js', className: 'SLAService' },
   schema: { module: 'p2p-hiveservices/builtin/schema-service.js', className: 'SchemaService' },
-  arbitration: { module: 'p2p-hiveservices/builtin/arbitration-service.js', className: 'ArbitrationService' }
+  arbitration: { module: 'p2p-hiveservices/builtin/arbitration-service.js', className: 'ArbitrationService' },
+  // Card-blind signed-log substrate for turn-based games (poker is the first consumer).
+  // Enabling it (config.plugins: ['poker']) together with the P2P services-RPC exposure
+  // makes any hiverelay serve poker over the swarm — no HTTP, no dedicated relay needed.
+  poker: { module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' }
 }
 
 export class PluginLoader {
