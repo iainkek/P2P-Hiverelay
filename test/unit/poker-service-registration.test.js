@@ -1,6 +1,7 @@
 import test from 'brittle'
 import { ServiceRegistry } from 'p2p-hiverelay/core/services/registry.js'
 import { PokerApp } from 'p2p-hiveservices/builtin/poker/index.js'
+import { PluginLoader, BUILTIN_SERVICE_NAMES } from '../../packages/core/core/plugin-loader.js'
 
 // Poker as a P2P service: register it, start it, and drive its capabilities the
 // way the service RPC does — `handleRequest(service, method, params, context)`,
@@ -74,4 +75,26 @@ test('submitEntry honours the params-object form (extracts tableKey + entry)', a
   t.ok(res, 'submitEntry returns a result')
   t.is(res.ok, false, 'invalid entry is rejected (as expected)')
   t.not(res.reason, 'no-such-table', 'tableKey was resolved from the params object')
+})
+
+// The DEPLOYED path: a Node relay (cli/index.js → RelayNode) does NOT use
+// bare-relay.js. It registers services from `config.plugins` via PluginLoader's
+// BUILTIN_MAP. So `poker` must be a known builtin and must resolve + register +
+// advertise its capabilities through that loader — otherwise `plugins: ['poker']`
+// (or HIVERELAY_PLUGINS=poker / HIVERELAY_POKER=1) silently registers nothing.
+test('poker is a known builtin and registers via the PluginLoader path', async (t) => {
+  t.ok(BUILTIN_SERVICE_NAMES.includes('poker'), 'poker is in BUILTIN_SERVICE_NAMES')
+
+  const providers = await new PluginLoader().load(['poker'], {})
+  t.is(providers.length, 1, 'loader resolves poker to one provider')
+
+  const registry = new ServiceRegistry()
+  for (const p of providers) registry.register(p)
+  await registry.startAll({})
+
+  const poker = registry.catalog().find(s => s.name === 'poker')
+  t.ok(poker, 'poker appears in the catalog after the loader path')
+  for (const cap of ['createTable', 'submitEntry', 'getLog', 'getState', 'listTables']) {
+    t.ok(poker.capabilities.includes(cap), `capability ${cap} advertised`)
+  }
 })

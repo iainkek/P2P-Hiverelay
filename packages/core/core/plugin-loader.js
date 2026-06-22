@@ -25,7 +25,10 @@ const BUILTIN_MAP = {
   sla: { module: 'p2p-hiveservices/builtin/sla-service.js', className: 'SLAService' },
   schema: { module: 'p2p-hiveservices/builtin/schema-service.js', className: 'SchemaService' },
   arbitration: { module: 'p2p-hiveservices/builtin/arbitration-service.js', className: 'ArbitrationService' },
-  vrf: { module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService' }
+  vrf: { module: 'p2p-hiveservices/builtin/vrf-service.js', className: 'VRFService' },
+  // Poker is an app-level service (card-blind signed-log substrate for turn-based
+  // games), opt-in via config.plugins / HIVERELAY_POKER — see cli/index.js.
+  poker: { module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' }
 }
 
 // Names operators can add as services (the Services tab's "available" list).

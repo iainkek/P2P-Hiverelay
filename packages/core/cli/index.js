@@ -417,6 +417,24 @@ async function start () {
     }
   }
 
+  // ─── Services / plugins (headless enable) ──────────────────────────
+  // v0.19 enables services from the saved setup config (services.json), written
+  // by the interactive wizard. These env vars give a headless / Docker / Fly relay
+  // the same control without the wizard: HIVERELAY_PLUGINS is a comma-separated
+  // builtin list (e.g. "poker"); HIVERELAY_POKER=1 is shorthand for adding poker.
+  // Either implies enableServices for this boot.
+  {
+    const plugins = new Set(Array.isArray(cliOverrides.plugins) ? cliOverrides.plugins : [])
+    if (process.env.HIVERELAY_PLUGINS) {
+      for (const p of process.env.HIVERELAY_PLUGINS.split(',').map(s => s.trim()).filter(Boolean)) plugins.add(p)
+    }
+    if (process.env.HIVERELAY_POKER === '1' || process.env.HIVERELAY_POKER === 'true') plugins.add('poker')
+    if (plugins.size > 0) {
+      cliOverrides.plugins = [...plugins]
+      cliOverrides.enableServices = true
+    }
+  }
+
   const config = loadConfig(cliOverrides)
 
   console.log(mainBanner(VERSION))
