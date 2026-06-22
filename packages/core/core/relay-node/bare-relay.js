@@ -222,7 +222,13 @@ export class BareRelay extends EventEmitter {
     //   - operators who only install Core get a clean "no services" mode
     //   - Compute and AI builtins, which need Node-only deps (vm / dns), are
     //     simply not in the list below
-    if (this.config.enableServices !== false) {
+    //
+    // HIVERELAY_POKER=1 also turns the service framework on, so a headless /
+    // Docker / Fly relay can enable poker purely from the environment without the
+    // interactive `setup` wizard (services are otherwise only enabled via the saved
+    // config). It implies enableServices for this boot only.
+    const _pokerEnv = process.env.HIVERELAY_POKER === '1'
+    if (this.config.enableServices !== false || _pokerEnv) {
       this.serviceRegistry = new ServiceRegistry()
       const bareSafeServices = [
         { name: 'identity', module: 'p2p-hiveservices/builtin/identity-service.js', className: 'IdentityService', opts: { keyPair: this.swarm.keyPair } },
@@ -244,8 +250,7 @@ export class BareRelay extends EventEmitter {
       // idle TTL; the durable hypercore mirror (persistence-hypercore.js) is a
       // follow-up that routes service-created tables through createPersistentTable.
       const _appServices = this.config.services || this.config.plugins || []
-      const _pokerSelected = (Array.isArray(_appServices) && _appServices.includes('poker')) ||
-        process.env.HIVERELAY_POKER === '1'
+      const _pokerSelected = (Array.isArray(_appServices) && _appServices.includes('poker')) || _pokerEnv
       if (_pokerSelected) {
         bareSafeServices.push({ name: 'poker', module: 'p2p-hiveservices/builtin/poker/index.js', className: 'PokerApp' })
       }
