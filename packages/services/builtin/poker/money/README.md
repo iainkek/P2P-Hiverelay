@@ -32,21 +32,23 @@ bankroll on-chain, play off-chain on the signed log, settle net per session
 
 | Module | Phase | What | Tests |
 |---|---|---|---|
-| `hand-eval.js` + `reducer.js` | 02 | deterministic settlement (winners from revealed cards, side-pots, conservation, `sessionHash`) | 10/10 |
-| `escrow/contracts/PokerEscrow.sol` | 08 | USD₮ state-channel escrow (deposit / cooperative / dispute / exit) | 6/6 |
-| `escrow/settle.cjs` | 10/11 | reducer net-balances → on-chain close calldata | (incl. below) |
-| `escrow/attest.cjs` | 03 | relay verdict attestation (grief-path oracle) | 3/3 |
-| `escrow/wallet/wdk-signer.cjs` | 07 | Tether **WDK** player wallet (escrow-compatible sigs) | 2/2 |
-| `fra/play-on-fra.mjs` | — | drive the REAL relay's signed log → reducer | ready |
+| `hand-eval.js` + `reducer.js` | 02 | deterministic settlement (winners from revealed cards, side-pots, conservation, `sessionHash`) | 10 |
+| `betting.js` | 09 | No-Limit Hold'em betting engine — **heads-up + multiway** (blinds, turn order, min-raise, all-in, street progression) → contributions/folded | 13 |
+| `arbitration-bridge.js` | 04 | cheating verdict → cheater forfeits → reducer re-settles to the honest player | 4 |
+| `timeout.js` | 05 | objective settlement deadlines from relay-signed timestamps (stall → overdue) | 4 |
+| `escrow/contracts/PokerEscrow.sol` | 08 | USD₮ state-channel escrow (deposit / cooperative / dispute / exit), **reentrancy-hardened (CEI + guard)** | 14 |
+| `escrow/settle.cjs` | 10/11 | reducer net-balances → on-chain close calldata | (in escrow suite) |
+| `escrow/attest.cjs` | 03 | relay verdict attestation (grief-path oracle) | (in escrow suite) |
+| `escrow/wallet/wdk-signer.cjs` | 07 | Tether **WDK** player wallet (escrow-compatible sigs) | (in escrow suite) |
+| `escrow/scripts/full-demo.cjs` | — | end-to-end capstone: betting → reduce → settle in USD₮ (both close paths) | runnable |
+| `fra/play-on-fra.mjs` | — | drive the REAL relay's signed log → reducer | ready (needs FRA key) |
 
-Reducer→escrow integration (a played session drives the actual USD₮ payout,
-cooperative **and** dispute) is proven on a local EVM. Run the on-chain suite:
+**All three settlement paths exist:** cooperative (players co-sign), stall
+(relay attestation), and cheat (arbitration → forfeit). Run the suites:
 ```
-cd escrow && npm install && npx hardhat test     # 13 passing
-```
-Run the off-chain reducer suite:
-```
-npx brittle test/unit/poker-reducer.test.js      # 10 passing  (from repo root)
+npx brittle test/unit/poker-*.test.js              # 67 passing  (off-chain, from repo root)
+cd escrow && npm install && npx hardhat test       # 14 passing  (on-chain, local EVM)
+npx hardhat run scripts/full-demo.cjs              # the end-to-end capstone demo
 ```
 
 ## Go live — the only two remaining steps (both operator credentials)
@@ -71,11 +73,17 @@ FRA_API_KEY="<relay management key>" \
 # → creates an ephemeral test table on FRA, posts a signed hand, reduces it
 ```
 
-## Not yet built (next, if wanted)
-- **Phase 09 betting engine** — turns raw player actions (blinds/bet/raise/fold)
-  into the normalized hand records the reducer consumes (the harness fakes this
-  today). Needed for full live gameplay; not needed to prove testnet settlement.
-- Phase 04/05/06 HR refinements (arbitration verdict wiring, objective
-  timeouts, watchtower seeding of settlement-critical data).
-- Production hardening + external audit of `PokerEscrow.sol` and the attestation
-  signature scheme (the ADR notes BLS-aggregate as the scale-up).
+## Status: feature-complete in isolation
+
+Every cleanly-isolatable module is built, tested, and demonstrated (81 tests +
+the capstone demo). What remains genuinely needs the operator or the live relay:
+
+- **Go-live (operator credentials)** — the two steps above: a funded testnet key
+  for the on-chain broadcast, and/or the FRA management key for the signed-log
+  run. The code is wired and ready for both.
+- **Phase 06 — watchtower** (relay seeding of settlement-critical data so a hand
+  settles even after a peer goes offline). Not isolatable: it's a relay
+  integration that needs the running relay + the seeding machinery, so it's
+  built against FRA (with the FRA key), not as a standalone module.
+- **External audit** of `PokerEscrow.sol` + the attestation signature scheme
+  (the ADR notes BLS-aggregate as the scale-up) before handling real value.
