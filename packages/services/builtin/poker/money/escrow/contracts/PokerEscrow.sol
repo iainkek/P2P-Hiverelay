@@ -41,6 +41,16 @@ contract PokerEscrow {
         _;
     }
 
+    // Reentrancy guard (defense-in-depth; the close functions also follow
+    // checks-effects-interactions and flip `closed` before any token transfer).
+    bool private _entered;
+    modifier nonReentrant() {
+        require(!_entered, "REENTRANT");
+        _entered = true;
+        _;
+        _entered = false;
+    }
+
     constructor(
         bytes32 _escrowId,
         IERC20 _token,
@@ -63,7 +73,7 @@ contract PokerEscrow {
         emit Opened(_escrowId);
     }
 
-    function deposit(uint256 amount) external open {
+    function deposit(uint256 amount) external open nonReentrant {
         require(isParticipant[msg.sender], "NOT_SEAT");
         require(token.transferFrom(msg.sender, address(this), amount), "XFER");
         deposited[msg.sender] += amount;
@@ -74,14 +84,14 @@ contract PokerEscrow {
         address[] calldata payees,
         uint256[] calldata balances,
         bytes[] calldata sigs
-    ) external open {
+    ) external open nonReentrant {
         require(payees.length == balances.length, "LEN");
         bytes32 digest = keccak256(abi.encode(escrowId, payees, balances));
         require(_allParticipantsSigned(digest, sigs), "NOT_ALL_SIGNED");
         _conserves(balances);
-        _payout(payees, balances);
-        closed = true;
+        closed = true; // effect before interaction (CEI); `open` also blocks re-close
         emit Closed("cooperative");
+        _payout(payees, balances);
     }
 
     function disputeClose(
@@ -90,20 +100,22 @@ contract PokerEscrow {
         address[] calldata payees,
         uint256[] calldata balances,
         bytes[] calldata committeeSigs
-    ) external open {
+    ) external open nonReentrant {
         require(committeeThreshold > 0, "DISPUTE_DISABLED");
         require(epoch > lastEpoch, "STALE_EPOCH");
         bytes32 digest = keccak256(abi.encode(escrowId, sessionHash, payees, balances, epoch));
         require(_committeeQuorum(digest, committeeSigs), "NO_QUORUM");
         _conserves(balances);
         lastEpoch = epoch;
-        _payout(payees, balances);
-        closed = true;
+        closed = true; // CEI
         emit Closed("dispute");
+        _payout(payees, balances);
     }
 
-    function unilateralExit() external open {
+    function unilateralExit() external open nonReentrant {
         require(block.timestamp >= expiry, "NOT_EXPIRED");
+        closed = true; // CEI: flip before refunds; deposits are also zeroed per-seat
+        emit Closed("exit");
         for (uint256 i = 0; i < participants.length; i++) {
             uint256 amt = deposited[participants[i]];
             if (amt > 0) {
@@ -111,8 +123,6 @@ contract PokerEscrow {
                 require(token.transfer(participants[i], amt), "REFUND");
             }
         }
-        closed = true;
-        emit Closed("exit");
     }
 
     // ── helpers ────────────────────────────────────────────────────────
