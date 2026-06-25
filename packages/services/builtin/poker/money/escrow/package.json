@@ -1,0 +1,16 @@
+{
+  "name": "p2poker-escrow",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Isolated hardhat subproject for the P2Poker on-chain escrow (USD₮ state channel). Separate from the Bare/Node packages; not part of the workspace runtime.",
+  "scripts": {
+    "test": "hardhat test",
+    "compile": "hardhat compile"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.1.3",
+    "chai": "^4.5.0",
+    "ethers": "^6.17.0",
+    "hardhat": "^2.28.6"
+  }
+}
