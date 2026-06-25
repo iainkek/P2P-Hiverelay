@@ -65,14 +65,20 @@ If the mechanism changes later, those phases churn. So decide now, cheaply.
 
 ## Success criteria
 
-- [ ] `DECISION.md` (ADR): mechanism per asset for v1 + multi-asset path, with
-      the decision matrix and explicit trade-offs.
-- [ ] `interfaces.md`: frozen `EscrowDescriptor` / `Attestation` / `Verdict` /
-      `escrowProof` shapes that 02–11 can code against.
-- [ ] A working **testnet happy-path release** of a 2-party pot in the chosen
-      mechanism (evidence: tx/ledger refs).
-- [ ] `RESEARCH.md`: WDK payment-surface findings + the per-asset escrow notes.
-- [ ] Confirmed answer to "per-hand vs per-session settlement" with rationale.
+- [x] `DECISION.md` (ADR): EVM USD₮ state-channel escrow for v1 + multi-asset
+      path, decision matrix, explicit trade-offs.
+- [x] `interfaces.md`: frozen `EscrowDescriptor` / `Attestation` / `Verdict` /
+      `escrowProof` + escrow-contract interface that 02–11 code against.
+- [~] **Testnet happy-path release**: reference contract `proof/PokerEscrow.sol`
+      + `proof/README.md` runbook are ready; the on-chain **broadcast is
+      pending a funded testnet key** (external action — needs go-ahead). Design
+      is proven in code; the wire-level proof is the one open item.
+- [x] `RESEARCH.md`: WDK module/payment-surface findings + per-asset escrow notes.
+- [x] Answer to per-hand vs per-session: **PER-SESSION** (state channel) — see
+      DECISION.
+
+**Phase status:** design deliverables COMPLETE; one executable step (testnet
+broadcast) scaffolded and blocked on a funded key. Phases 02 + 07 are unblocked.
 
 ## Explicitly NOT in this phase
 
