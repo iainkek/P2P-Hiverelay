@@ -123,6 +123,34 @@ describe('PokerEscrow (USD₮ state channel)', function () {
     const sig = await stranger.signMessage(ethers.getBytes(digest))
     await expectRevert(escrow.disputeClose(sessionHash, 1, payees, balances, [sig]), 'NO_QUORUM')
   })
+
+  it('disputeClose rejects a non-advancing epoch (must be > lastEpoch=0)', async function () {
+    const committee = (await ethers.getSigners())[4]
+    const { usdt, escrow, escrowId, alice, bob } = await deploy([committee.address], 1)
+    await fund(usdt, escrow, alice, bob)
+    const sessionHash = ethers.id('session-1')
+    const payees = [alice.address, bob.address]
+    const balances = [U(120), U(80)]
+    const digest = disputeDigest(escrowId, sessionHash, payees, balances, 0) // epoch 0
+    const sig = await committee.signMessage(ethers.getBytes(digest))
+    await expectRevert(escrow.disputeClose(sessionHash, 0, payees, balances, [sig]), 'STALE_EPOCH')
+  })
+
+  it('a cooperative-close signature cannot be replayed on a different escrow (escrowId domain separation)', async function () {
+    const a = await deploy() // escrow A
+    const b = await deploy() // escrow B — same participants, different escrowId
+    await fund(a.usdt, a.escrow, a.alice, a.bob)
+    await fund(b.usdt, b.escrow, b.alice, b.bob)
+    const payees = [a.alice.address, a.bob.address]
+    const balances = [U(150), U(50)]
+    // Players sign for escrow A's id only.
+    const digestA = coopDigest(a.escrowId, payees, balances)
+    const sigA = await a.alice.signMessage(ethers.getBytes(digestA))
+    const sigB = await a.bob.signMessage(ethers.getBytes(digestA))
+    // A accepts; B (which recomputes the digest with ITS escrowId) rejects.
+    await a.escrow.cooperativeClose(payees, balances, [sigA, sigB])
+    await expectRevert(b.escrow.cooperativeClose(payees, balances, [sigA, sigB]), 'NOT_ALL_SIGNED')
+  })
 })
 
 // withdraw-net model: a seat only ever takes out its settled NET — there is no

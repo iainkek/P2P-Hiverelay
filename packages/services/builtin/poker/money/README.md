@@ -43,18 +43,18 @@ full deposit to escape a loss). If you never withdraw, you get nothing.
 | `betting.js` | 09 | No-Limit Hold'em betting engine — **heads-up + multiway** (blinds, turn order, min-raise, all-in incl. incomplete-raise rule + auto-run-out, sub-blind all-in, street progression) → contributions/folded | 19 |
 | `arbitration-bridge.js` | 04 | cheating verdict → cheater forfeits → reducer re-settles to the honest player | 4 |
 | `timeout.js` | 05 | objective settlement deadlines from relay-signed timestamps (stall → overdue) | 4 |
-| `escrow/contracts/PokerEscrow.sol` | 08 | USD₮ state-channel escrow — **deposit / settle-net / withdraw** (cooperative + committee-dispute; no deposit-refund escape; multi-hand settle), **reentrancy-hardened (CEI + guard)** | 20 |
+| `escrow/contracts/PokerEscrow.sol` | 08 | USD₮ state-channel escrow — **deposit / settle-net / withdraw** (cooperative + committee-dispute; no deposit-refund escape; multi-hand settle; cheat/stall/coop paths), **reentrancy-hardened (CEI + guard)** | 23 |
 | `escrow/settle.cjs` | 10/11 | reducer net-balances → on-chain close calldata | (in escrow suite) |
 | `escrow/attest.cjs` | 03 | relay verdict attestation (grief-path oracle) | (in escrow suite) |
 | `escrow/wallet/wdk-signer.cjs` | 07 | Tether **WDK** player wallet (escrow-compatible sigs) | (in escrow suite) |
 | `escrow/scripts/full-demo.cjs` | — | end-to-end capstone: betting → reduce → settle in USD₮ (both close paths) | runnable |
 | `fra/play-on-fra.mjs` | — | drive the REAL relay's signed log → reducer | ready (needs FRA key) |
 
-**All three settlement paths exist:** cooperative (players co-sign), stall
+**All three settlement paths are proven on-chain:** cooperative (players co-sign), stall
 (relay attestation), and cheat (arbitration → forfeit). Run the suites:
 ```
 npx brittle test/unit/poker-*.test.js              # 78 passing  (off-chain, from repo root)
-cd escrow && npm install && npx hardhat test       # 20 passing  (on-chain, local EVM)
+cd escrow && npm install && npx hardhat test       # 23 passing  (on-chain, local EVM)
 npx hardhat run scripts/full-demo.cjs              # the end-to-end capstone demo
 ```
 
@@ -82,7 +82,7 @@ FRA_API_KEY="<relay management key>" \
 
 ## Status: feature-complete in isolation
 
-Every cleanly-isolatable module is built, tested, and demonstrated (98 tests +
+Every cleanly-isolatable module is built, tested, and demonstrated (101 tests +
 the capstone demo). What remains genuinely needs the operator or the live relay:
 
 - **Go-live (operator credentials)** — the two steps above: a funded testnet key
