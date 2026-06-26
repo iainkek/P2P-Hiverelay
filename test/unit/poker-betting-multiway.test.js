@@ -75,3 +75,36 @@ test('3-handed illegal: acting out of turn', (t) => {
   t.not(r.illegal, null)
   t.is(r.illegal.reason, 'OUT_OF_TURN')
 })
+
+// Incomplete-raise rule: a short all-in (raise < a full min-raise) does NOT
+// reopen the betting for players who already acted.
+const cfgShort = (over = {}) => ({ seats: ['a', 'b', 'c'], stacks: { a: 200, b: 200, c: 14 }, blinds: { sb: 1, bb: 2 }, button: 'a', ...over })
+
+test('incomplete all-in does NOT let an already-acted player re-raise', (t) => {
+  // a raises to 10 (full), b calls; c all-in 14 (raiseBy 4 < min-raise 8 = incomplete).
+  // a already acted → a may only call/fold, not re-raise.
+  const r = playHand(cfgShort(), [
+    { seat: 'a', type: 'raise', amount: 10 }, { seat: 'b', type: 'call' }, { seat: 'c', type: 'allin' },
+    { seat: 'a', type: 'raise', amount: 30 }
+  ])
+  t.not(r.illegal, null)
+  t.is(r.illegal.reason, 'RAISE_NOT_REOPENED')
+})
+
+test('after an incomplete all-in, already-acted players can still CALL', (t) => {
+  const r = playHand(cfgShort(), [
+    { seat: 'a', type: 'raise', amount: 10 }, { seat: 'b', type: 'call' }, { seat: 'c', type: 'allin' },
+    { seat: 'a', type: 'call' }, { seat: 'b', type: 'call' }
+  ])
+  t.is(r.illegal, null)
+  t.alike(r.contributions, { a: 14, b: 14, c: 14 })
+})
+
+test('a FULL re-raise still reopens betting (regression)', (t) => {
+  // Heads-up: a raises to 10, b re-raises to 30 (full), a 4-bets to 60 (full).
+  // Each is a full raise, so the action keeps reopening — all legal.
+  const r = playHand({ seats: ['a', 'b'], stacks: { a: 200, b: 200 }, blinds: { sb: 1, bb: 2 }, button: 'a' }, [
+    { seat: 'a', type: 'raise', amount: 10 }, { seat: 'b', type: 'raise', amount: 30 }, { seat: 'a', type: 'raise', amount: 60 }
+  ])
+  t.is(r.illegal, null)
+})

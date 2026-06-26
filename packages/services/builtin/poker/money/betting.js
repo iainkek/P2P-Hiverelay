@@ -134,6 +134,11 @@ export function playHand (config, actions) {
         if (!Number.isInteger(to)) return bad('BAD_AMOUNT', i)
         if (act.type === 'bet' && currentBet !== 0) return bad('BET_WHEN_FACING_BET', i)
         if (act.type === 'raise' && currentBet === 0) return bad('RAISE_WITH_NO_BET', i)
+        // Incomplete-raise rule: a player who has already acted since the last
+        // FULL raise may only call/fold when an incomplete all-in bumps the bet
+        // — they do not regain the right to re-raise. (Full raises reset `acted`,
+        // so this never blocks a legitimate re-raise or a check-raise.)
+        if (act.type === 'raise' && acted.has(seat)) return bad('RAISE_NOT_REOPENED', i)
         if (to <= currentBet) return bad('RAISE_NOT_HIGHER', i)
         const need = to - street[seat]
         if (need > stack[seat]) return bad('EXCEEDS_STACK', i)
@@ -150,9 +155,14 @@ export function playHand (config, actions) {
         if (stack[seat] === 0) return bad('NOTHING_TO_ALLIN', i)
         put(seat, stack[seat])
         if (street[seat] > currentBet) {
-          minRaise = Math.max(minRaise, street[seat] - currentBet)
+          const raiseBy = street[seat] - currentBet
+          const fullRaise = raiseBy >= minRaise
           currentBet = street[seat]
-          acted = new Set([seat])
+          minRaise = Math.max(minRaise, raiseBy)
+          // Only a FULL raise reopens betting (resets `acted`). An incomplete
+          // all-in raise bumps the bet but leaves already-acted players on a
+          // call-only footing (see the raise handler's RAISE_NOT_REOPENED).
+          if (fullRaise) acted = new Set([seat])
         } else {
           acted.add(seat)
         }
