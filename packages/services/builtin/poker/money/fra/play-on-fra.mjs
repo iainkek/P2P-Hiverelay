@@ -100,6 +100,11 @@ async function main () {
   const reduced = reduce(session)
   console.log('\n=== reducer over FRA signed-log ===')
   console.log('illegal:    ', reduced.illegal)
+  if (reduced.illegal) {
+    console.error('FAILED: the relay log did not reduce to a legal session — cannot settle.')
+    process.exitCode = 1
+    return
+  }
   console.log('sessionHash:', reduced.sessionHash)
   console.log('balances:   ', { alice: reduced.balances[alice.pubHex], bob: reduced.balances[bob.pubHex] })
 
