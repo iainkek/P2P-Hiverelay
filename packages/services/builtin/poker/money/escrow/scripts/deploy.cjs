@@ -8,7 +8,6 @@
 //   PARTICIPANTS    comma-separated settlement addresses (default: [deployer]).
 //   COMMITTEE       comma-separated relay attestor addresses (default: []).
 //   THRESHOLD       committee m-of-n (default: COMMITTEE.length).
-//   EXPIRY_HOURS    unilateral-exit window (default: 24).
 //   ESCROW_LABEL    string hashed into escrowId (default: "p2poker-testnet").
 
 const { ethers } = require('hardhat')
@@ -35,12 +34,10 @@ async function main () {
   const participants = (process.env.PARTICIPANTS || deployer.address).split(',').map(s => s.trim()).filter(Boolean)
   const committee = (process.env.COMMITTEE || '').split(',').map(s => s.trim()).filter(Boolean)
   const threshold = process.env.THRESHOLD ? Number(process.env.THRESHOLD) : committee.length
-  const expiryHours = process.env.EXPIRY_HOURS ? Number(process.env.EXPIRY_HOURS) : 24
-  const now = (await ethers.provider.getBlock('latest')).timestamp
   const escrowId = ethers.id(process.env.ESCROW_LABEL || 'p2poker-testnet')
 
   const Escrow = await ethers.getContractFactory('PokerEscrow')
-  const escrow = await Escrow.deploy(escrowId, usdt, participants, committee, threshold, now + expiryHours * 3600)
+  const escrow = await Escrow.deploy(escrowId, usdt, participants, committee, threshold)
   await escrow.waitForDeployment()
   const addr = await escrow.getAddress()
 
@@ -49,10 +46,10 @@ async function main () {
   console.log('escrowId:    ', escrowId)
   console.log('usdt:        ', usdt)
   console.log('participants:', participants.join(', '))
-  console.log('committee:   ', committee.length ? committee.join(', ') : '(none — cooperative+exit only)')
+  console.log('committee:   ', committee.length ? committee.join(', ') : '(none — cooperative settle only)')
   console.log('threshold:   ', threshold)
-  console.log('expiry:      ', new Date((now + expiryHours * 3600) * 1000).toISOString())
-  console.log('\nnext: each participant approve()+deposit() their bankroll, play off-chain, then cooperativeClose / disputeClose.')
+  console.log('\nnext: each participant approve()+deposit() their bankroll, play off-chain,')
+  console.log('then cooperativeClose / disputeClose to settle net, and each seat withdraw()s its net.')
 }
 
 main().catch((e) => { console.error(e); process.exitCode = 1 })

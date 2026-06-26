@@ -13,10 +13,12 @@ npm install
 ```
 npx hardhat test
 ```
-Proves: deposit → cooperative close (USD₮ moves), conservation + missing-sig
-rejection, dispute/oracle close (committee attestation), unilateral exit, and
-the **reducer → escrow integration** (a played session's net balances drive the
-real payout).
+Proves the **deposit / play / withdraw-net** model: deposit → cooperative close
+records each seat's net → each seat `withdraw()`s its net; conservation +
+missing-sig rejection; dispute/oracle close (committee attestation); a losing
+seat can only pull its NET, never reclaim its full deposit; reentrancy
+resistance on `withdraw()`; and the **reducer → escrow integration** (a played
+session's net balances drive the real payout).
 
 ## Deploy locally (in-process node)
 ```
@@ -37,12 +39,14 @@ npx hardhat run scripts/deploy.cjs
    ```
    npx hardhat run scripts/deploy.cjs --network testnet
    ```
-   Optional env: `PARTICIPANTS`, `COMMITTEE`, `THRESHOLD`, `EXPIRY_HOURS`,
-   `USDT_ADDRESS`, `ESCROW_LABEL`.
+   Optional env: `PARTICIPANTS`, `COMMITTEE`, `THRESHOLD`, `USDT_ADDRESS`,
+   `ESCROW_LABEL`.
 4. The script prints the escrow + USD₮ addresses + escrowId. Then each
    participant `approve()`+`deposit()` their bankroll; play off-chain; settle
-   via `cooperativeClose` or `disputeClose` (see `settle.cjs` for digest/
-   balance construction).
+   the net via `cooperativeClose` or `disputeClose` (see `settle.cjs` for digest/
+   balance construction); finally each seat calls `withdraw()` to pull its net.
+   There is no deposit-refund path — your bankroll is at risk during play and you
+   only ever take out your settled net.
 
 ## What this needs from the operator (the only remaining gate)
 - A **funded testnet private key** + **RPC URL**. Everything else is built and
@@ -59,7 +63,8 @@ a BLS aggregate later).
 ```
 off-chain:  HiveRelay signed log  ──reduce()──▶ {sessionHash, balances}
                                                    │
-on-chain:   PokerEscrow (USD₮)  ◀── cooperativeClose (players sign)
-                                ◀── disputeClose   (committee attests sessionHash)
+on-chain:   PokerEscrow (USD₮)  ◀── cooperativeClose (players sign)   ─┐ settle net
+                                ◀── disputeClose   (committee attests) ─┘
+                                ──▶ withdraw()  (each seat pulls its net)
 ```
 ```

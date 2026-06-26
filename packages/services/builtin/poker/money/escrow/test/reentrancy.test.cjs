@@ -1,6 +1,6 @@
-// Proves PokerEscrow resists a reentrant token: the re-entry during payout is
-// blocked (CEI flips `closed` before transfers; nonReentrant guard backs it),
-// and each payee is paid exactly once (no double-pay).
+// Proves PokerEscrow resists a reentrant token: the re-entry during a withdraw()
+// payout is blocked (CEI zeroes `withdrawable` before the transfer; nonReentrant
+// guard backs it), and each payee is paid exactly once (no double-pay).
 
 const { ethers } = require('hardhat')
 const { expect } = require('chai')
@@ -18,9 +18,8 @@ describe('PokerEscrow reentrancy resistance', function () {
     await evil.mint(bob.address, U(1000))
 
     const escrowId = ethers.id('table-evil')
-    const now = (await ethers.provider.getBlock('latest')).timestamp
     const Escrow = await ethers.getContractFactory('PokerEscrow')
-    const escrow = await Escrow.deploy(escrowId, await evil.getAddress(), [alice.address, bob.address], [], 0, now + 3600)
+    const escrow = await Escrow.deploy(escrowId, await evil.getAddress(), [alice.address, bob.address], [], 0)
     await escrow.waitForDeployment()
     const escrowAddr = await escrow.getAddress()
 
@@ -29,21 +28,22 @@ describe('PokerEscrow reentrancy resistance', function () {
     await evil.connect(bob).approve(escrowAddr, U(100))
     await escrow.connect(bob).deposit(U(100))
 
-    // Arm the token to re-enter the escrow on the next transfer (the payout).
-    await evil.arm(escrowAddr)
-
     const payees = [alice.address, bob.address]
     const balances = [U(150), U(50)]
     const digest = coopDigest(escrowId, payees, balances)
     const sigA = await alice.signMessage(ethers.getBytes(digest))
     const sigB = await bob.signMessage(ethers.getBytes(digest))
+    await escrow.cooperativeClose(payees, balances, [sigA, sigB]) // settles net (no transfer)
 
-    await escrow.cooperativeClose(payees, balances, [sigA, sigB])
+    // Arm the token to re-enter withdraw() on its next transfer (the payout).
+    await evil.arm(escrowAddr)
+    await escrow.connect(alice).withdraw()
+    await escrow.connect(bob).withdraw()
 
-    // Payout happened exactly once (no double-pay), and the re-entry was caught.
+    // Each seat was paid exactly once (no double-pay), and the re-entry was caught.
     expect(await evil.balanceOf(alice.address)).to.equal(U(1050)) // 900 left + 150, once
     expect(await evil.balanceOf(bob.address)).to.equal(U(950))
     expect(await evil.reentryReverted()).to.equal(true) // the re-entry was blocked
-    expect(await escrow.closed()).to.equal(true)
+    expect(await escrow.settled()).to.equal(true)
   })
 })

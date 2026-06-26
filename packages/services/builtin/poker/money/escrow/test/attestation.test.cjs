@@ -28,9 +28,8 @@ async function setup (committeeAddrs, threshold) {
   const usdt = await USDT.deploy(); await usdt.waitForDeployment()
   await usdt.mint(alice.address, U(1000)); await usdt.mint(bob.address, U(1000))
   const escrowId = ethers.id('table-att')
-  const now = (await ethers.provider.getBlock('latest')).timestamp
   const Escrow = await ethers.getContractFactory('PokerEscrow')
-  const escrow = await Escrow.deploy(escrowId, await usdt.getAddress(), [alice.address, bob.address], committeeAddrs, threshold, now + 3600)
+  const escrow = await Escrow.deploy(escrowId, await usdt.getAddress(), [alice.address, bob.address], committeeAddrs, threshold)
   await escrow.waitForDeployment()
   for (const s of [alice, bob]) {
     await usdt.connect(s).approve(await escrow.getAddress(), U(100))
@@ -62,9 +61,11 @@ describe('attestation (Phase 03) → dispute settlement', function () {
     const sigs = aggregate([a0, a1])
 
     await escrow.disputeClose(a0.sessionHash, a0.epoch, a0.payees, a0.balances, sigs)
+    expect(await escrow.settled()).to.equal(true)
+    await escrow.connect(alice).withdraw()
+    await escrow.connect(bob).withdraw()
     expect(await usdt.balanceOf(alice.address)).to.equal(U(1030)) // won +30
     expect(await usdt.balanceOf(bob.address)).to.equal(U(970))
-    expect(await escrow.closed()).to.equal(true)
   })
 
   it('below threshold is rejected (NO_QUORUM)', async function () {

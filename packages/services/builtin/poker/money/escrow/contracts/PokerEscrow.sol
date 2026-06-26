@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-// PokerEscrow — state-channel escrow for real-money P2Poker (Phase 08 build,
-// from the Phase 01 decision). UNAUDITED. Each seat deposits a USD₮ session
-// bankroll; play happens off-chain on the HiveRelay signed log; the channel
-// closes one of three ways:
-//   - cooperativeClose: every participant signs the final balances (n-of-n).
-//   - disputeClose:     a HiveRelay committee m-of-n attestation over the
-//                       canonical outcome (sessionHash) settles the channel.
-//   - unilateralExit:   after expiry anyone can force return of deposits, so
-//                       funds can never be frozen.
+// PokerEscrow — deposit / play / withdraw-net escrow for real-money P2Poker.
+// UNAUDITED. Operates like a normal poker service:
+//   - deposit:  each seat funds a USD₮ bankroll into the contract.
+//   - play:     off-chain on the HiveRelay signed log.
+//   - settle:   the session's NET balances are recorded ONCE, either by all
+//               participants co-signing (cooperativeClose) or by a HiveRelay
+//               committee m-of-n attestation over the canonical outcome
+//               (disputeClose). Balances must conserve the pot.
+//   - withdraw: each seat PULLS its settled net. If you never withdraw, you get
+//               nothing.
+//
+// There is NO unilateral deposit-refund: your bankroll is at risk during play
+// and you can only ever take out your settled NET — you cannot reclaim your full
+// deposit to escape a loss. Liveness is the committee's job: the dispute path
+// settles from the signed log without any player's cooperation, and an aborted
+// session simply settles to net = deposit for everyone.
+//
 // Signatures are EIP-191 personal-sign over an abi.encode digest, recovered via
-// ecrecover (Phase 03 may switch the committee path to a BLS aggregate).
+// ecrecover (a future revision may switch the committee path to a BLS aggregate).
 
 interface IERC20 {
     function transferFrom(address f, address t, uint256 a) external returns (bool);
@@ -21,28 +29,23 @@ interface IERC20 {
 contract PokerEscrow {
     IERC20 public immutable token;
     bytes32 public immutable escrowId;
-    uint256 public immutable expiry;
     uint256 public immutable committeeThreshold;
 
     address[] public participants;
     mapping(address => bool) public isParticipant;
     mapping(address => uint256) public deposited;
     mapping(address => bool) public isCommittee;
+    mapping(address => uint256) public withdrawable; // settled net; pull-based
 
     uint256 public lastEpoch;
-    bool public closed;
+    bool public settled;
 
     event Opened(bytes32 escrowId);
     event Funded(address seat, uint256 amount);
-    event Closed(string kind);
+    event Settled(string kind);
+    event Withdrawn(address seat, uint256 amount);
 
-    modifier open() {
-        require(!closed, "CLOSED");
-        _;
-    }
-
-    // Reentrancy guard (defense-in-depth; the close functions also follow
-    // checks-effects-interactions and flip `closed` before any token transfer).
+    // Reentrancy guard (defense-in-depth; deposit/withdraw also follow CEI).
     bool private _entered;
     modifier nonReentrant() {
         require(!_entered, "REENTRANT");
@@ -56,42 +59,46 @@ contract PokerEscrow {
         IERC20 _token,
         address[] memory _participants,
         address[] memory _committee,
-        uint256 _committeeThreshold,
-        uint256 _expiry
+        uint256 _committeeThreshold
     ) {
         escrowId = _escrowId;
         token = _token;
         for (uint256 i = 0; i < _participants.length; i++) {
+            require(_participants[i] != address(0), "ZERO_SEAT");
             participants.push(_participants[i]);
             isParticipant[_participants[i]] = true;
         }
-        for (uint256 i = 0; i < _committee.length; i++) isCommittee[_committee[i]] = true;
-        // threshold 0 ⇒ no committee / dispute path disabled (cooperative + exit only).
+        for (uint256 i = 0; i < _committee.length; i++) {
+            require(_committee[i] != address(0), "ZERO_COMMITTEE");
+            isCommittee[_committee[i]] = true;
+        }
+        // threshold 0 ⇒ no committee / dispute path disabled (cooperative only).
         require(_committeeThreshold <= _committee.length, "BAD_THRESHOLD");
         committeeThreshold = _committeeThreshold;
-        expiry = _expiry;
         emit Opened(_escrowId);
     }
 
-    function deposit(uint256 amount) external open nonReentrant {
+    function deposit(uint256 amount) external nonReentrant {
+        require(!settled, "SETTLED");
         require(isParticipant[msg.sender], "NOT_SEAT");
         require(token.transferFrom(msg.sender, address(this), amount), "XFER");
         deposited[msg.sender] += amount;
         emit Funded(msg.sender, amount);
     }
 
+    // Settle to NET balances. No payout here — seats pull via withdraw().
     function cooperativeClose(
         address[] calldata payees,
         uint256[] calldata balances,
         bytes[] calldata sigs
-    ) external open nonReentrant {
+    ) external {
+        require(!settled, "SETTLED");
         require(payees.length == balances.length, "LEN");
         bytes32 digest = keccak256(abi.encode(escrowId, payees, balances));
         require(_allParticipantsSigned(digest, sigs), "NOT_ALL_SIGNED");
-        _conserves(balances);
-        closed = true; // effect before interaction (CEI); `open` also blocks re-close
-        emit Closed("cooperative");
-        _payout(payees, balances);
+        _record(payees, balances);
+        settled = true;
+        emit Settled("cooperative");
     }
 
     function disputeClose(
@@ -100,29 +107,26 @@ contract PokerEscrow {
         address[] calldata payees,
         uint256[] calldata balances,
         bytes[] calldata committeeSigs
-    ) external open nonReentrant {
+    ) external {
+        require(!settled, "SETTLED");
         require(committeeThreshold > 0, "DISPUTE_DISABLED");
         require(epoch > lastEpoch, "STALE_EPOCH");
         bytes32 digest = keccak256(abi.encode(escrowId, sessionHash, payees, balances, epoch));
         require(_committeeQuorum(digest, committeeSigs), "NO_QUORUM");
-        _conserves(balances);
         lastEpoch = epoch;
-        closed = true; // CEI
-        emit Closed("dispute");
-        _payout(payees, balances);
+        _record(payees, balances);
+        settled = true;
+        emit Settled("dispute");
     }
 
-    function unilateralExit() external open nonReentrant {
-        require(block.timestamp >= expiry, "NOT_EXPIRED");
-        closed = true; // CEI: flip before refunds; deposits are also zeroed per-seat
-        emit Closed("exit");
-        for (uint256 i = 0; i < participants.length; i++) {
-            uint256 amt = deposited[participants[i]];
-            if (amt > 0) {
-                deposited[participants[i]] = 0;
-                require(token.transfer(participants[i], amt), "REFUND");
-            }
-        }
+    // Pull your settled net. CEI: zero before transfer; nonReentrant on top.
+    function withdraw() external nonReentrant {
+        require(settled, "NOT_SETTLED");
+        uint256 amt = withdrawable[msg.sender];
+        require(amt > 0, "NOTHING");
+        withdrawable[msg.sender] = 0;
+        require(token.transfer(msg.sender, amt), "WITHDRAW");
+        emit Withdrawn(msg.sender, amt);
     }
 
     // ── helpers ────────────────────────────────────────────────────────
@@ -130,15 +134,14 @@ contract PokerEscrow {
         for (uint256 i = 0; i < participants.length; i++) p += deposited[participants[i]];
     }
 
-    function _payout(address[] calldata payees, uint256[] calldata balances) internal {
-        for (uint256 i = 0; i < payees.length; i++) {
-            if (balances[i] > 0) require(token.transfer(payees[i], balances[i]), "PAYOUT");
-        }
-    }
-
-    function _conserves(uint256[] calldata balances) internal view {
+    // Record the settled net per payee, enforcing conservation (Σ balances ==
+    // pot, so total withdrawable never exceeds what was deposited).
+    function _record(address[] calldata payees, uint256[] calldata balances) internal {
         uint256 sum;
-        for (uint256 i = 0; i < balances.length; i++) sum += balances[i];
+        for (uint256 i = 0; i < balances.length; i++) {
+            sum += balances[i];
+            if (balances[i] > 0) withdrawable[payees[i]] += balances[i];
+        }
         require(sum == pot(), "NOT_CONSERVED");
     }
 

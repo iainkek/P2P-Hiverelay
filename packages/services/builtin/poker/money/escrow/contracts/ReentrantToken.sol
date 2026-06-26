@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-// A malicious ERC-20 whose transfer() re-enters the escrow. TEST ONLY — proves
-// PokerEscrow resists reentrancy (CEI: `closed` flips before payout; plus the
-// nonReentrant guard). The re-entry is wrapped in try/catch so the attack does
-// not just revert the whole tx — it records whether the re-entry was blocked.
+// A malicious ERC-20 whose transfer() re-enters the escrow during withdraw().
+// TEST ONLY — proves PokerEscrow resists reentrancy (CEI: withdrawable is zeroed
+// before the transfer; plus the nonReentrant guard). The re-entry is wrapped in
+// try/catch so the attack does not just revert the whole tx — it records whether
+// the re-entry was blocked.
 interface IEscrowAttack {
-    function unilateralExit() external;
+    function withdraw() external;
 }
 
 contract ReentrantToken {
@@ -36,7 +37,7 @@ contract ReentrantToken {
         balanceOf[t] += a;
         if (armed) {
             armed = false; // one-shot
-            try IEscrowAttack(escrow).unilateralExit() {
+            try IEscrowAttack(escrow).withdraw() {
                 // re-entry SUCCEEDED — escrow is vulnerable
             } catch {
                 reentryReverted = true; // re-entry blocked — escrow is safe

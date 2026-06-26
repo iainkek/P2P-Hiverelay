@@ -30,9 +30,8 @@ async function setup (committeeAddrs = [], threshold = committeeAddrs.length) {
   await usdt.mint(alice.address, U(1000))
   await usdt.mint(bob.address, U(1000))
   const escrowId = ethers.id('table-int')
-  const now = (await ethers.provider.getBlock('latest')).timestamp
   const Escrow = await ethers.getContractFactory('PokerEscrow')
-  const escrow = await Escrow.deploy(escrowId, await usdt.getAddress(), [alice.address, bob.address], committeeAddrs, threshold, now + 3600)
+  const escrow = await Escrow.deploy(escrowId, await usdt.getAddress(), [alice.address, bob.address], committeeAddrs, threshold)
   await escrow.waitForDeployment()
   // each seat deposits a 100 USD₮ bankroll
   for (const s of [alice, bob]) {
@@ -61,6 +60,8 @@ describe('reducer → escrow integration', function () {
     const sigA = await alice.signMessage(ethers.getBytes(digest))
     const sigB = await bob.signMessage(ethers.getBytes(digest))
     await escrow.cooperativeClose(payees, balances, [sigA, sigB])
+    await escrow.connect(alice).withdraw()
+    await escrow.connect(bob).withdraw()
 
     expect(await usdt.balanceOf(alice.address)).to.equal(U(1030)) // 900 + 130
     expect(await usdt.balanceOf(bob.address)).to.equal(U(970)) // 900 + 70
@@ -82,6 +83,8 @@ describe('reducer → escrow integration', function () {
     const sig = await committee.signMessage(ethers.getBytes(digest))
 
     await escrow.disputeClose('0x' + r.sessionHash, epoch, payees, balances, [sig])
+    await escrow.connect(alice).withdraw()
+    await escrow.connect(bob).withdraw()
     expect(await usdt.balanceOf(alice.address)).to.equal(U(1030))
     expect(await usdt.balanceOf(bob.address)).to.equal(U(970))
   })

@@ -169,3 +169,36 @@ test('reducer: illegal — eligible contender with no reveal is rejected', (t) =
   t.is(r.illegal.reason.split(':')[0], 'MISSING_REVEAL')
   t.is(r.balances, null)
 })
+
+test('reducer: illegal — a duplicate card across reveals/board is rejected', (t) => {
+  // bob reveals the Ace of spades (card(12,0)) that alice also holds → impossible deal.
+  const r = reduce({
+    seats: ['alice', 'bob'],
+    hands: [{
+      handId: 'h1',
+      board: [card(7, 0), card(3, 1), card(11, 2), card(0, 3), card(6, 0)],
+      contributions: { alice: 100, bob: 100 },
+      folded: [],
+      reveals: { alice: [card(12, 0), card(12, 1)], bob: [card(12, 0), card(4, 1)] }
+    }]
+  })
+  t.not(r.illegal, null)
+  t.is(r.illegal.reason, 'INVALID_DEAL:duplicate')
+  t.is(r.balances, null)
+})
+
+test('reducer: illegal — an out-of-range card is rejected', (t) => {
+  const r = reduce({
+    seats: ['alice', 'bob'],
+    hands: [{
+      handId: 'h1',
+      board: [card(7, 0), card(3, 1), card(11, 2), card(0, 3), card(6, 0)],
+      contributions: { alice: 100, bob: 100 },
+      folded: [],
+      reveals: { alice: [52, card(12, 1)], bob: [card(11, 0), card(4, 1)] } // 52 is out of [0,51]
+    }]
+  })
+  t.not(r.illegal, null)
+  t.is(r.illegal.reason, 'INVALID_DEAL:card_range')
+  t.is(r.balances, null)
+})

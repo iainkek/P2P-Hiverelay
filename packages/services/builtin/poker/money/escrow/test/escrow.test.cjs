@@ -19,7 +19,7 @@ const coopDigest = (escrowId, payees, balances) =>
 const disputeDigest = (escrowId, sessionHash, payees, balances, epoch) =>
   ethers.keccak256(abi.encode(['bytes32', 'bytes32', 'address[]', 'uint256[]', 'uint256'], [escrowId, sessionHash, payees, balances, epoch]))
 
-async function deploy (committeeAddrs = [], threshold = committeeAddrs.length, expiryOffset = 3600) {
+async function deploy (committeeAddrs = [], threshold = committeeAddrs.length) {
   const [, alice, bob] = await ethers.getSigners()
   const USDT = await ethers.getContractFactory('MockUSDT')
   const usdt = await USDT.deploy()
@@ -28,12 +28,11 @@ async function deploy (committeeAddrs = [], threshold = committeeAddrs.length, e
   await usdt.mint(bob.address, U(1000))
 
   const escrowId = ethers.id('table-1')
-  const now = (await ethers.provider.getBlock('latest')).timestamp
   const Escrow = await ethers.getContractFactory('PokerEscrow')
   const escrow = await Escrow.deploy(
     escrowId, await usdt.getAddress(),
     [alice.address, bob.address],
-    committeeAddrs, threshold, now + expiryOffset
+    committeeAddrs, threshold
   )
   await escrow.waitForDeployment()
   return { usdt, escrow, escrowId, alice, bob }
@@ -47,12 +46,12 @@ async function fund (usdt, escrow, alice, bob, amt = U(100)) {
 }
 
 describe('PokerEscrow (USD₮ state channel)', function () {
-  it('deposit → cooperativeClose moves USD₮ to the winner', async function () {
+  it('deposit → cooperativeClose settles net; each seat pulls via withdraw()', async function () {
     const { usdt, escrow, escrowId, alice, bob } = await deploy()
     await fund(usdt, escrow, alice, bob) // pot = 200
     expect(await escrow.pot()).to.equal(U(200))
 
-    // Final balances: alice won 150, bob 50.
+    // Final NET balances: alice 150, bob 50.
     const payees = [alice.address, bob.address]
     const balances = [U(150), U(50)]
     const digest = coopDigest(escrowId, payees, balances)
@@ -60,10 +59,15 @@ describe('PokerEscrow (USD₮ state channel)', function () {
     const sigB = await bob.signMessage(ethers.getBytes(digest))
 
     await escrow.cooperativeClose(payees, balances, [sigA, sigB])
+    expect(await escrow.settled()).to.equal(true)
+    // Settlement records the net; no tokens have moved yet (pull-based).
+    expect(await usdt.balanceOf(alice.address)).to.equal(U(900))
+    expect(await escrow.withdrawable(alice.address)).to.equal(U(150))
 
+    await escrow.connect(alice).withdraw()
+    await escrow.connect(bob).withdraw()
     expect(await usdt.balanceOf(alice.address)).to.equal(U(1050)) // 900 left + 150
     expect(await usdt.balanceOf(bob.address)).to.equal(U(950)) // 900 left + 50
-    expect(await escrow.closed()).to.equal(true)
   })
 
   it('rejects a cooperativeClose that does not conserve the pot', async function () {
@@ -100,9 +104,11 @@ describe('PokerEscrow (USD₮ state channel)', function () {
     const sig = await committee.signMessage(ethers.getBytes(digest))
 
     await escrow.disputeClose(sessionHash, epoch, payees, balances, [sig])
+    expect(await escrow.settled()).to.equal(true)
+    await escrow.connect(alice).withdraw()
+    await escrow.connect(bob).withdraw()
     expect(await usdt.balanceOf(bob.address)).to.equal(U(1060)) // 900 + 160
     expect(await usdt.balanceOf(alice.address)).to.equal(U(940)) // 900 + 40
-    expect(await escrow.closed()).to.equal(true)
   })
 
   it('disputeClose rejects a non-committee attestation', async function () {
@@ -119,25 +125,58 @@ describe('PokerEscrow (USD₮ state channel)', function () {
   })
 })
 
-// Separate exit test with a valid committee + short expiry (constructor forbids threshold 0).
-describe('PokerEscrow unilateralExit', function () {
-  it('returns deposits after expiry', async function () {
-    const committee = (await ethers.getSigners())[4]
-    const [, alice, bob] = await ethers.getSigners()
-    const USDT = await ethers.getContractFactory('MockUSDT')
-    const usdt = await USDT.deploy(); await usdt.waitForDeployment()
-    await usdt.mint(alice.address, U(1000)); await usdt.mint(bob.address, U(1000))
-    const now = (await ethers.provider.getBlock('latest')).timestamp
-    const Escrow = await ethers.getContractFactory('PokerEscrow')
-    const escrow = await Escrow.deploy(ethers.id('t'), await usdt.getAddress(), [alice.address, bob.address], [committee.address], 1, now + 2)
-    await escrow.waitForDeployment()
-    await usdt.connect(alice).approve(await escrow.getAddress(), U(100))
-    await escrow.connect(alice).deposit(U(100))
-    // advance past expiry
-    await ethers.provider.send('evm_increaseTime', [10])
-    await ethers.provider.send('evm_mine', [])
-    await escrow.unilateralExit()
-    expect(await usdt.balanceOf(alice.address)).to.equal(U(1000)) // fully refunded
-    expect(await escrow.closed()).to.equal(true)
+// withdraw-net model: a seat only ever takes out its settled NET — there is no
+// path to reclaim a full deposit and escape a loss, and no payout before settle.
+describe('PokerEscrow withdraw (deposit / play / withdraw-net)', function () {
+  async function settled (balances) {
+    const { usdt, escrow, escrowId, alice, bob } = await deploy()
+    await fund(usdt, escrow, alice, bob) // each deposits 100; pot 200
+    const payees = [alice.address, bob.address]
+    const digest = coopDigest(escrowId, payees, balances)
+    const sigA = await alice.signMessage(ethers.getBytes(digest))
+    const sigB = await bob.signMessage(ethers.getBytes(digest))
+    await escrow.cooperativeClose(payees, balances, [sigA, sigB])
+    return { usdt, escrow, alice, bob }
+  }
+
+  it('a losing seat can only withdraw its NET, never its full deposit', async function () {
+    // alice lost 60 (net 40); she deposited 100 but can only pull 40.
+    const { usdt, escrow, alice } = await settled([U(40), U(160)])
+    expect(await escrow.withdrawable(alice.address)).to.equal(U(40))
+    await escrow.connect(alice).withdraw()
+    expect(await usdt.balanceOf(alice.address)).to.equal(U(940)) // 900 + 40, NOT 1000
+  })
+
+  it('withdraw zeroes the balance — a second withdraw reverts', async function () {
+    const { escrow, alice } = await settled([U(150), U(50)])
+    await escrow.connect(alice).withdraw()
+    expect(await escrow.withdrawable(alice.address)).to.equal(0n)
+    await expectRevert(escrow.connect(alice).withdraw(), 'NOTHING')
+  })
+
+  it('a seat that settled to zero net has nothing to withdraw', async function () {
+    const { escrow, alice, bob } = await settled([U(0), U(200)])
+    await expectRevert(escrow.connect(alice).withdraw(), 'NOTHING')
+    await escrow.connect(bob).withdraw() // bob took the whole pot
+  })
+
+  it('cannot withdraw before the session is settled', async function () {
+    const { usdt, escrow, alice, bob } = await deploy()
+    await fund(usdt, escrow, alice, bob)
+    await expectRevert(escrow.connect(alice).withdraw(), 'NOT_SETTLED')
+  })
+
+  it('cannot deposit or re-settle after settlement', async function () {
+    const { usdt, escrow, escrowId, alice, bob } = await deploy()
+    await fund(usdt, escrow, alice, bob)
+    const payees = [alice.address, bob.address]
+    const balances = [U(150), U(50)]
+    const digest = coopDigest(escrowId, payees, balances)
+    const sigA = await alice.signMessage(ethers.getBytes(digest))
+    const sigB = await bob.signMessage(ethers.getBytes(digest))
+    await escrow.cooperativeClose(payees, balances, [sigA, sigB])
+    await usdt.connect(alice).approve(await escrow.getAddress(), U(10))
+    await expectRevert(escrow.connect(alice).deposit(U(10)), 'SETTLED')
+    await expectRevert(escrow.cooperativeClose(payees, balances, [sigA, sigB]), 'SETTLED')
   })
 })

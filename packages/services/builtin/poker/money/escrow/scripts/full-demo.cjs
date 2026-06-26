@@ -20,9 +20,8 @@ const fmt = (x) => (Number(x) / 1e6).toFixed(2)
 function assert (cond, msg) { if (!cond) throw new Error('DEMO ASSERT FAILED: ' + msg) }
 
 async function deployEscrow (usdtAddr, players, committee, threshold) {
-  const now = (await ethers.provider.getBlock('latest')).timestamp
   const Escrow = await ethers.getContractFactory('PokerEscrow')
-  const e = await Escrow.deploy(ethers.id('demo-table'), usdtAddr, players.map(p => p.address), committee, threshold, now + 3600)
+  const e = await Escrow.deploy(ethers.id('demo-table'), usdtAddr, players.map(p => p.address), committee, threshold)
   await e.waitForDeployment()
   return e
 }
@@ -81,10 +80,11 @@ async function main () {
     const { payees, balances } = finalBalances(['alice', 'bob', 'carol'], seatToAddress, deposits, red.balances)
     const digest = coopDigest(ethers.id('demo-table'), payees, balances)
     const sigs = await Promise.all(players.map(p => p.signMessage(ethers.getBytes(digest))))
-    await escrow.cooperativeClose(payees, balances, sigs)
-    console.log('\n[3A] cooperative close → on-chain USD₮:')
+    await escrow.cooperativeClose(payees, balances, sigs) // records net; no payout yet
+    for (const p of players) await escrow.connect(p).withdraw() // each seat pulls its net
+    console.log('\n[3A] cooperative close → each seat withdrew its net USD₮:')
     for (const p of players) console.log('     ', p === alice ? 'alice' : p === bob ? 'bob  ' : 'carol', fmt(await usdt.balanceOf(p.address)), 'USDT')
-    assert((await usdt.balanceOf(alice.address)) === U(100) - U(100) + (U(100) + BigInt(red.balances.alice)), 'alice paid correctly')
+    assert((await usdt.balanceOf(alice.address)) === U(100) + BigInt(red.balances.alice), 'alice paid correctly')
   }
 
   // ── Path B: dispute close (relay committee attests) ──────────────────
@@ -96,7 +96,11 @@ async function main () {
     const ctx = { escrowId: ethers.id('demo-table'), participants: ['alice', 'bob', 'carol'], seatToAddress, deposits, reducerResult: red, epoch: 1 }
     const a = await attest({ ...ctx, attestorKey: committeeWallet.privateKey })
     await escrow.disputeClose(a.sessionHash, a.epoch, a.payees, a.balances, aggregate([a]))
-    console.log('\n[3B] dispute close (committee-attested grief path) → settled the same net result ✓')
+    const beforeA = await usdt.balanceOf(alice.address)
+    for (const p of players) await escrow.connect(p).withdraw()
+    // alice withdraws her settled net = deposit + delta (balances carry over from Path A, so assert the delta).
+    assert((await usdt.balanceOf(alice.address)) - beforeA === U(100) + BigInt(red.balances.alice), 'alice settled-net via dispute path')
+    console.log('\n[3B] dispute close (committee-attested grief path) → same net result, each seat withdrew ✓')
   }
 
   console.log('\n══════════ DEMO OK — full hand played, reduced, and settled in USD₮ ══════════')

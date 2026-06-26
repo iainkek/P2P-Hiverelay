@@ -92,6 +92,17 @@ function settleHand (hand, seatSet) {
     if (!Array.isArray(hole) || hole.length !== 2) return { error: 'MISSING_REVEAL:' + seat }
   }
 
+  // Validate the deal: every card is an integer in [0,51] and GLOBALLY distinct
+  // across the board and all revealed hole cards — no duplicate or out-of-range
+  // card can reach the evaluator (a malformed/cheating reveal is rejected, not
+  // silently mis-ranked).
+  const seen = new Set()
+  for (const c of [...hand.board, ...eligible.flatMap(s => hand.reveals[s])]) {
+    if (!isInt(c) || c < 0 || c > 51) return { error: 'INVALID_DEAL:card_range' }
+    if (seen.has(c)) return { error: 'INVALID_DEAL:duplicate' }
+    seen.add(c)
+  }
+
   // Pre-rank eligible hands once.
   const rankOf = {}
   for (const seat of eligible) {
