@@ -92,6 +92,13 @@ export function playHand (config, actions) {
     toActIdx = fi
   }
 
+  // ≤1 player can still act and all bets are matched → no further betting is
+  // possible; deal the remaining streets straight through to showdown rather
+  // than stalling for a ceremonial check the lone live player can't act on.
+  function runOut () {
+    while (!complete) closeStreet()
+  }
+
   // Resolve the table state after an action: hand over (one left), or run out
   // (≤1 can act and bets matched), else advance / close the round.
   function resolve (actorIdx) {
@@ -99,7 +106,7 @@ export function playHand (config, actions) {
     if (activeSeats().length === 1) { complete = true; showdown = false; return }
     const ca = canActSeats()
     if (ca.length <= 1) {
-      if (allMatched(ca)) { closeStreet() } else { toActIdx = nextCanAct(actorIdx) }
+      if (allMatched(ca)) { runOut() } else { toActIdx = nextCanAct(actorIdx) }
       return
     }
     if (allMatched(ca) && ca.every(s => acted.has(s))) { closeStreet(); return }

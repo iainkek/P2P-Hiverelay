@@ -39,11 +39,11 @@ full deposit to escape a loss). If you never withdraw, you get nothing.
 
 | Module | Phase | What | Tests |
 |---|---|---|---|
-| `hand-eval.js` + `reducer.js` | 02 | deterministic settlement (winners from revealed cards, side-pots, conservation, invalid-deal rejection, `sessionHash`) | 12 |
-| `betting.js` | 09 | No-Limit Hold'em betting engine — **heads-up + multiway** (blinds, turn order, min-raise, all-in incl. incomplete-raise rule, street progression) → contributions/folded | 16 |
+| `hand-eval.js` + `reducer.js` | 02 | deterministic settlement (winners from revealed cards, side-pots, conservation, invalid-deal rejection, `sessionHash`) | 13 |
+| `betting.js` | 09 | No-Limit Hold'em betting engine — **heads-up + multiway** (blinds, turn order, min-raise, all-in incl. incomplete-raise rule + auto-run-out, street progression) → contributions/folded | 17 |
 | `arbitration-bridge.js` | 04 | cheating verdict → cheater forfeits → reducer re-settles to the honest player | 4 |
 | `timeout.js` | 05 | objective settlement deadlines from relay-signed timestamps (stall → overdue) | 4 |
-| `escrow/contracts/PokerEscrow.sol` | 08 | USD₮ state-channel escrow — **deposit / settle-net / withdraw** (cooperative + committee-dispute; no deposit-refund escape), **reentrancy-hardened (CEI + guard)** | 18 |
+| `escrow/contracts/PokerEscrow.sol` | 08 | USD₮ state-channel escrow — **deposit / settle-net / withdraw** (cooperative + committee-dispute; no deposit-refund escape), **reentrancy-hardened (CEI + guard)** | 19 |
 | `escrow/settle.cjs` | 10/11 | reducer net-balances → on-chain close calldata | (in escrow suite) |
 | `escrow/attest.cjs` | 03 | relay verdict attestation (grief-path oracle) | (in escrow suite) |
 | `escrow/wallet/wdk-signer.cjs` | 07 | Tether **WDK** player wallet (escrow-compatible sigs) | (in escrow suite) |
@@ -53,8 +53,8 @@ full deposit to escape a loss). If you never withdraw, you get nothing.
 **All three settlement paths exist:** cooperative (players co-sign), stall
 (relay attestation), and cheat (arbitration → forfeit). Run the suites:
 ```
-npx brittle test/unit/poker-*.test.js              # 72 passing  (off-chain, from repo root)
-cd escrow && npm install && npx hardhat test       # 18 passing  (on-chain, local EVM)
+npx brittle test/unit/poker-*.test.js              # 74 passing  (off-chain, from repo root)
+cd escrow && npm install && npx hardhat test       # 19 passing  (on-chain, local EVM)
 npx hardhat run scripts/full-demo.cjs              # the end-to-end capstone demo
 ```
 
@@ -82,7 +82,7 @@ FRA_API_KEY="<relay management key>" \
 
 ## Status: feature-complete in isolation
 
-Every cleanly-isolatable module is built, tested, and demonstrated (90 tests +
+Every cleanly-isolatable module is built, tested, and demonstrated (92 tests +
 the capstone demo). What remains genuinely needs the operator or the live relay:
 
 - **Go-live (operator credentials)** — the two steps above: a funded testnet key

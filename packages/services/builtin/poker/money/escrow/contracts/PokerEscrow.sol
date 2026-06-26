@@ -135,10 +135,12 @@ contract PokerEscrow {
     }
 
     // Record the settled net per payee, enforcing conservation (Σ balances ==
-    // pot, so total withdrawable never exceeds what was deposited).
+    // pot, so total withdrawable never exceeds what was deposited) and that every
+    // payee is a seat (funds can only ever return to the players at the table).
     function _record(address[] calldata payees, uint256[] calldata balances) internal {
         uint256 sum;
         for (uint256 i = 0; i < balances.length; i++) {
+            require(isParticipant[payees[i]], "PAYEE_NOT_SEAT");
             sum += balances[i];
             if (balances[i] > 0) withdrawable[payees[i]] += balances[i];
         }

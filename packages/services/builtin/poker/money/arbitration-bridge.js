@@ -7,8 +7,9 @@
 // 'respondent' (the respondent is exonerated). This bridge maps a guilty
 // verdict onto the settlement: the cheater FORFEITS the disputed hand (treated
 // as folded), and the reducer re-settles the pot to the honest player(s). The
-// cheater additionally loses their bond via the arbitration service's own
-// slashing — that is reputation/stake, separate from this in-hand forfeit.
+// in-hand consequence is exactly that forfeit — the cheater wins nothing from
+// the disputed hand and settles to their net like any other loss; there is no
+// extra on-chain penalty (no deposit is confiscated).
 //
 // Pure: returns a corrected session for reduce(); no I/O.
 

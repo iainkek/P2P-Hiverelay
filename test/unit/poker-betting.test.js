@@ -60,6 +60,18 @@ test('all-in preflop, called → showdown', (t) => {
   t.is(r.showdown, true)
 })
 
+test('short all-in called by a deeper stack auto-runs-out to showdown', (t) => {
+  // a (50) shoves, b (100) calls 50 with chips behind. No further betting is
+  // possible, so the hand must run straight to showdown — no ceremonial checks.
+  const r = playHand(cfg({ stacks: { a: 50, b: 100 } }), [
+    { seat: 'a', type: 'allin' }, { seat: 'b', type: 'call' }
+  ])
+  t.is(r.illegal, null)
+  t.alike(r.contributions, { a: 50, b: 50 }) // b only matches the 50 shove
+  t.is(r.complete, true)
+  t.is(r.showdown, true)
+})
+
 test('illegal: BB cannot act first preflop (out of turn)', (t) => {
   const r = playHand(cfg(), [{ seat: 'b', type: 'check' }])
   t.not(r.illegal, null)

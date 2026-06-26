@@ -166,6 +166,18 @@ describe('PokerEscrow withdraw (deposit / play / withdraw-net)', function () {
     await expectRevert(escrow.connect(alice).withdraw(), 'NOT_SETTLED')
   })
 
+  it('rejects a settle that directs funds to a non-seat address', async function () {
+    const { usdt, escrow, escrowId, alice, bob } = await deploy()
+    await fund(usdt, escrow, alice, bob)
+    const outsider = (await ethers.getSigners())[6]
+    const payees = [alice.address, outsider.address] // outsider never sat at the table
+    const balances = [U(150), U(50)]
+    const digest = coopDigest(escrowId, payees, balances)
+    const sigA = await alice.signMessage(ethers.getBytes(digest))
+    const sigB = await bob.signMessage(ethers.getBytes(digest))
+    await expectRevert(escrow.cooperativeClose(payees, balances, [sigA, sigB]), 'PAYEE_NOT_SEAT')
+  })
+
   it('cannot deposit or re-settle after settlement', async function () {
     const { usdt, escrow, escrowId, alice, bob } = await deploy()
     await fund(usdt, escrow, alice, bob)
