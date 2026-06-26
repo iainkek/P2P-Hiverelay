@@ -72,6 +72,23 @@ test('short all-in called by a deeper stack auto-runs-out to showdown', (t) => {
   t.is(r.showdown, true)
 })
 
+test('a sub-blind all-in by the opener does not deadlock — runs out', (t) => {
+  // a is button/SB with stack 1: posting the SB puts a all-in. a is first to act
+  // pre-flop but cannot act; the hand must still resolve (run out), not stall.
+  const r = playHand(cfg({ stacks: { a: 1, b: 100 } }), [])
+  t.is(r.illegal, null)
+  t.is(r.complete, true)
+  t.is(r.showdown, true)
+  t.alike(r.contributions, { a: 1, b: 2 })
+})
+
+test('everyone all-in from the blinds runs straight to showdown', (t) => {
+  const r = playHand(cfg({ stacks: { a: 1, b: 2 } }), [])
+  t.is(r.illegal, null)
+  t.is(r.complete, true)
+  t.is(r.showdown, true)
+})
+
 test('illegal: BB cannot act first preflop (out of turn)', (t) => {
   const r = playHand(cfg(), [{ seat: 'b', type: 'check' }])
   t.not(r.illegal, null)

@@ -113,6 +113,16 @@ export function playHand (config, actions) {
     toActIdx = nextCanAct(actorIdx)
   }
 
+  // Resolve the OPENING state before any action: a seat that posted a sub-blind
+  // all-in is first-to-act but cannot act. Advance to the first seat that can;
+  // if none can, or only one can with bets already matched, deal to showdown.
+  {
+    const fi = firstCanActFrom(firstPreIdx)
+    const ca = canActSeats()
+    if (fi < 0 || (ca.length <= 1 && allMatched(ca))) runOut()
+    else toActIdx = fi
+  }
+
   for (let i = 0; i < actions.length; i++) {
     if (complete) return bad('ACTION_AFTER_COMPLETE', i)
     const act = actions[i]

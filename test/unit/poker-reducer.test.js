@@ -219,3 +219,50 @@ test('reducer: illegal — a hole card that duplicates a board card is rejected'
   t.is(r.illegal.reason, 'INVALID_DEAL:duplicate')
   t.is(r.balances, null)
 })
+
+// Seeded PRNG (mulberry32) so any fuzz failure is reproducible.
+function mulberry32 (a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0
+    let t = Math.imul(a ^ a >>> 15, 1 | a)
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t
+    return ((t ^ t >>> 14) >>> 0) / 4294967296
+  }
+}
+
+test('reducer fuzz: conservation + non-negativity hold over random sessions', (t) => {
+  const rnd = mulberry32(0xC0FFEE)
+  const ri = (n) => Math.floor(rnd() * n)
+  let legal = 0
+  for (let iter = 0; iter < 3000; iter++) {
+    const n = 2 + ri(4) // 2..5 seats
+    const seats = Array.from({ length: n }, (_, i) => 's' + i)
+    // Shuffle a 52-card deck → a guaranteed-distinct deal.
+    const deck = [...Array(52).keys()]
+    for (let i = 51; i > 0; i--) { const j = ri(i + 1); const tmp = deck[i]; deck[i] = deck[j]; deck[j] = tmp }
+    const board = deck.slice(0, 5)
+    const contributions = {}; const folded = []; const reveals = {}
+    let k = 5
+    for (const s of seats) {
+      contributions[s] = ri(200) // 0..199 chips
+      reveals[s] = [deck[k++], deck[k++]]
+      if (rnd() < 0.3) folded.push(s)
+    }
+    const session = { seats, hands: [{ handId: 'h', board, contributions, folded, reveals }] }
+    const r = reduce(session)
+    if (r.illegal) continue
+    legal++
+    // Conservation: net balances always sum to zero.
+    const sum = seats.reduce((a, s) => a + r.balances[s], 0)
+    t.is(sum, 0, 'Σ balances == 0 (iter ' + iter + ')')
+    // Non-negativity: no seat can lose more chips than it contributed.
+    for (const s of seats) t.ok(r.balances[s] >= -contributions[s], 'no over-loss (iter ' + iter + ' ' + s + ')')
+    // Payouts never exceed the chips put in (Σ winnings ≤ Σ contributions).
+    const totalIn = seats.reduce((a, s) => a + contributions[s], 0)
+    const paid = r.perHand[0] ? Object.values(r.perHand[0].potDistribution).reduce((a, b) => a + b, 0) : 0
+    t.ok(paid <= totalIn, 'payout ≤ pot (iter ' + iter + ')')
+    // Determinism: identical input → identical sessionHash.
+    if (iter % 500 === 0) t.is(reduce(session).sessionHash, r.sessionHash, 'deterministic hash')
+  }
+  t.ok(legal > 500, 'exercised enough legal sessions (' + legal + ')')
+})
