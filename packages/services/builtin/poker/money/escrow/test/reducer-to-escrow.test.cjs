@@ -88,4 +88,39 @@ describe('reducer → escrow integration', function () {
     expect(await usdt.balanceOf(alice.address)).to.equal(U(1030))
     expect(await usdt.balanceOf(bob.address)).to.equal(U(970))
   })
+
+  it('a MULTI-HAND session settles once to the accumulated net', async function () {
+    const { reduce } = await import('../../reducer.js')
+    const { usdt, escrow, escrowId, alice, bob } = await setup()
+    const board = [card(7, 0), card(3, 1), card(2, 2), card(0, 3), card(6, 0)]
+    // Three hands across one session; only the NET settles on-chain.
+    const session = {
+      seats: ['alice', 'bob'],
+      hands: [
+        // h1: alice (aces) beats bob (kings), 30 each → alice +30
+        { handId: 'h1', board, contributions: { alice: Number(U(30)), bob: Number(U(30)) }, folded: [], reveals: { alice: [card(12, 0), card(12, 1)], bob: [card(11, 0), card(11, 1)] } },
+        // h2: bob (aces) beats alice (kings), 20 each → bob +20
+        { handId: 'h2', board, contributions: { alice: Number(U(20)), bob: Number(U(20)) }, folded: [], reveals: { alice: [card(11, 0), card(11, 1)], bob: [card(12, 0), card(12, 1)] } },
+        // h3: alice folds, bob takes it → bob +5 (uncalled excess refunded)
+        { handId: 'h3', board: [], contributions: { alice: Number(U(5)), bob: Number(U(10)) }, folded: ['alice'], reveals: {} }
+      ]
+    }
+    const r = reduce(session)
+    expect(r.illegal).to.equal(null)
+    // net: alice +30 -20 -5 = +5 ; bob -30 +20 +5 = -5
+    expect(r.balances.alice).to.equal(Number(U(5)))
+    expect(r.balances.bob).to.equal(-Number(U(5)))
+
+    const deposits = { alice: U(100), bob: U(100) }
+    const { payees, balances } = finalBalances(['alice', 'bob'], { alice: alice.address, bob: bob.address }, deposits, r.balances)
+    expect(balances).to.deep.equal([U(105), U(95)])
+    const digest = coopDigest(escrowId, payees, balances)
+    const sigA = await alice.signMessage(ethers.getBytes(digest))
+    const sigB = await bob.signMessage(ethers.getBytes(digest))
+    await escrow.cooperativeClose(payees, balances, [sigA, sigB])
+    await escrow.connect(alice).withdraw()
+    await escrow.connect(bob).withdraw()
+    expect(await usdt.balanceOf(alice.address)).to.equal(U(1005)) // 900 + 105
+    expect(await usdt.balanceOf(bob.address)).to.equal(U(995)) // 900 + 95
+  })
 })

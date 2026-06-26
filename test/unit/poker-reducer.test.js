@@ -266,3 +266,28 @@ test('reducer fuzz: conservation + non-negativity hold over random sessions', (t
   }
   t.ok(legal > 500, 'exercised enough legal sessions (' + legal + ')')
 })
+
+test('hand-eval fuzz: evaluate7 is permutation-invariant and dominates every 5-subset', (t) => {
+  const rnd = mulberry32(0xDECAF)
+  const ri = (n) => Math.floor(rnd() * n)
+  for (let iter = 0; iter < 2000; iter++) {
+    const deck = [...Array(52).keys()]
+    for (let i = 51; i > 0; i--) { const j = ri(i + 1); const tmp = deck[i]; deck[i] = deck[j]; deck[j] = tmp }
+    const seven = deck.slice(0, 7)
+    const r7 = evaluate7(seven)
+    // Permutation invariance: reordering the 7 cards yields the same rank.
+    const shuffled = [...seven]
+    for (let i = 6; i > 0; i--) { const j = ri(i + 1); const tmp = shuffled[i]; shuffled[i] = shuffled[j]; shuffled[j] = tmp }
+    if (compareRank(evaluate7(shuffled), r7) !== 0) { t.fail('not permutation-invariant (iter ' + iter + ')'); break }
+    // Best-of-7 dominance: no 5-card subset can outrank the chosen best 5.
+    let dominated = true
+    for (let a = 0; a < 7 && dominated; a++) {
+      for (let b = a + 1; b < 7; b++) {
+        const five = seven.filter((_, i) => i !== a && i !== b)
+        if (compareRank(r7, evaluate5(five)) < 0) { dominated = false; break }
+      }
+    }
+    if (!dominated) { t.fail('a 5-subset outranked evaluate7 (iter ' + iter + ')'); break }
+  }
+  t.pass('2000 random 7-card hands: permutation-invariant and best-5-of-7 dominant')
+})
