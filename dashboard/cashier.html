@@ -51,6 +51,9 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 label{display:block;font-size:.68rem;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin:.6rem 0 .3rem}
 input{width:100%;background:#0c0f16;border:1px solid var(--card-border);border-radius:7px;padding:.6rem .7rem;color:var(--text);font-family:var(--mono);font-size:.85rem}
 input:focus{outline:none;border-color:var(--cyan)}
+textarea{width:100%;background:#0c0f16;border:1px solid var(--card-border);border-radius:7px;padding:.6rem .7rem;color:var(--text);font-family:var(--mono);font-size:.76rem;resize:vertical;line-height:1.5}
+textarea:focus{outline:none;border-color:var(--cyan)}
+input[readonly]{color:var(--cyan);cursor:text}
 .row{display:flex;gap:.5rem;align-items:flex-end}
 .row>div{flex:1}
 
@@ -231,6 +234,36 @@ input:focus{outline:none;border-color:var(--cyan)}
   </div>
 </div>
 
+<!-- Cooperative settlement (live mode) -->
+<div id="settleSection" style="display:none">
+  <div class="section-title">Cooperative settlement (live)</div>
+  <div class="grid-3">
+    <div class="card">
+      <h3>① Agreed result</h3>
+      <div class="hint">The session's final balances (deposit ± net), as everyone agreed. In production these come from the reducer; paste or type them here.</div>
+      <label>Payees — addresses, comma-separated</label>
+      <input id="setPayees" placeholder="0xAlice…,0xBob…">
+      <label>Final balances — USD₮, same order</label>
+      <input id="setBalances" placeholder="150,50">
+    </div>
+    <div class="card">
+      <h3>② Sign your share</h3>
+      <div class="hint">Sign the agreed result with your wallet (EIP-191). Share your signature with the table — every seat must sign.</div>
+      <button class="btn btn-cyan" id="btnSign" disabled>Sign settlement</button>
+      <label>Your signature</label>
+      <input id="mySig" readonly placeholder="— sign to produce —">
+      <button class="btn btn-ghost" id="btnCopySig">Copy signature</button>
+    </div>
+    <div class="card">
+      <h3>③ Submit on-chain</h3>
+      <div class="hint">Once you've collected every seat's signature, anyone submits them to settle the net on-chain.</div>
+      <label>Collected signatures — one per line</label>
+      <textarea id="allSigs" rows="3" placeholder="0xsig1…&#10;0xsig2…"></textarea>
+      <button class="btn btn-primary" id="btnSubmitClose" disabled>Submit cooperative close</button>
+    </div>
+  </div>
+</div>
+
 <div class="section-title">Activity</div>
 <div class="log" id="log"></div>
 
@@ -322,6 +355,9 @@ function render () {
   $('btnSimulate').style.display = (S.mode === 'demo' && !S.settled) ? '' : 'none'
   $('btnNew').style.display = (S.settled && S.mode === 'demo') ? '' : 'none'
   $('liveConfig').style.display = S.mode === 'live' ? '' : 'none'
+  $('settleSection').style.display = S.mode === 'live' ? '' : 'none'
+  $('btnSign').disabled = !(S.mode === 'live' && S.connected && S.signer)
+  $('btnSubmitClose').disabled = !(S.mode === 'live' && S.connected && S.signer)
   $('btnDemo').style.borderColor = S.mode === 'demo' ? 'var(--cyan)' : ''
   $('btnLive').style.borderColor = S.mode === 'live' ? 'var(--cyan)' : ''
   renderStepper()
@@ -451,6 +487,41 @@ async function liveWithdraw () {
   catch (e) { log('withdraw failed: ' + (e.shortMessage || e.message), 'err') }
 }
 
+// ── cooperative settlement (live) ─────────────────────────────
+function parseSettlement () {
+  const payees = $('setPayees').value.split(',').map(s => s.trim()).filter(Boolean)
+  const balances = $('setBalances').value.split(',').map(s => s.trim()).filter(Boolean).map(v => BigInt(Math.round(parseFloat(v) * 1e6)))
+  return { payees, balances }
+}
+// keccak256(abi.encode(bytes32 escrowId, address[] payees, uint256[] balances))
+// — byte-identical to PokerEscrow.cooperativeClose's digest and settle.cjs.
+function coopDigestHex (escrowId, payees, balances) {
+  const enc = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32', 'address[]', 'uint256[]'], [escrowId, payees, balances])
+  return ethers.keccak256(enc)
+}
+async function liveSign () {
+  try {
+    if (!S.signer) return log('connect a wallet first', 'err')
+    const { payees, balances } = parseSettlement()
+    if (!payees.length || payees.length !== balances.length) return log('payees and balances must match', 'err')
+    const escrowId = await S.escrow.escrowId()
+    const sig = await S.signer.signMessage(ethers.getBytes(coopDigestHex(escrowId, payees, balances)))
+    $('mySig').value = sig
+    log('signed the agreed result — share your signature with the table', 'ok')
+  } catch (e) { log('sign failed: ' + (e.shortMessage || e.message), 'err') }
+}
+async function liveSubmitClose () {
+  try {
+    const { payees, balances } = parseSettlement()
+    const sigs = $('allSigs').value.split('\n').map(s => s.trim()).filter(Boolean)
+    if (sigs.length !== payees.length) return log(`need ${payees.length} signature(s), have ${sigs.length}`, 'err')
+    log('submitting cooperative close…')
+    await (await S.escrow.cooperativeClose(payees, balances, sigs)).wait()
+    log('settled on-chain — each seat can now withdraw their net', 'ok')
+    await liveRefresh()
+  } catch (e) { log('settle failed: ' + (e.shortMessage || e.message), 'err') }
+}
+
 // ── wiring ────────────────────────────────────────────────────
 function bootCashier () {
   window.__cashierBooted = true
@@ -462,6 +533,9 @@ function bootCashier () {
   $('btnSimulate').onclick = () => demoSimulate()
   $('btnWithdraw').onclick = () => S.mode === 'demo' ? demoWithdraw() : liveWithdraw()
   $('btnNew').onclick = () => demoNewSession()
+  $('btnSign').onclick = () => liveSign()
+  $('btnSubmitClose').onclick = () => liveSubmitClose()
+  $('btnCopySig').onclick = () => { const v = $('mySig').value; if (v) { try { navigator.clipboard && navigator.clipboard.writeText(v) } catch {} log('signature copied', 'ok') } }
   $('depAmount').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnDeposit').click() })
   log('cashier ready — Demo mode. Connect to begin.')
   render()
