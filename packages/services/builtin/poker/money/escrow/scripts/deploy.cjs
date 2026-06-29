@@ -48,6 +48,26 @@ async function main () {
   console.log('participants:', participants.join(', '))
   console.log('committee:   ', committee.length ? committee.join(', ') : '(none — cooperative settle only)')
   console.log('threshold:   ', threshold)
+
+  // Record the deployment so clients (and the cashier's LIVE mode) have the
+  // addresses to point at. Keyed by chainId; latest deploy per chain wins.
+  const fs = require('fs')
+  const path = require('path')
+  const out = path.join(__dirname, '..', 'deployments.json')
+  let registry = {}
+  try { registry = JSON.parse(fs.readFileSync(out, 'utf8')) } catch { /* first deploy */ }
+  registry[net.chainId.toString()] = {
+    chainId: net.chainId.toString(),
+    escrow: addr,
+    usdt,
+    escrowId,
+    participants,
+    committee,
+    threshold,
+    deployedAt: new Date().toISOString()
+  }
+  fs.writeFileSync(out, JSON.stringify(registry, null, 2) + '\n')
+  console.log('\nwrote', out)
   console.log('\nnext: each participant approve()+deposit() their bankroll, play off-chain,')
   console.log('then cooperativeClose / disputeClose to settle net, and each seat withdraw()s its net.')
 }
