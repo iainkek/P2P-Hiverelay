@@ -24,7 +24,7 @@ test('api dashboard routes: dashboard picks full or Blindspark page', (t) => {
 })
 
 test('api dashboard routes: simple mode redirects full operator tabs', (t) => {
-  for (const path of ['/network', '/docs', '/payments', '/calculator', '/leaderboard', '/catalog', '/cashier']) {
+  for (const path of ['/network', '/docs', '/payments', '/calculator', '/leaderboard', '/catalog', '/cashier', '/table']) {
     t.alike(resolveDashboardGetRoute({
       path,
       uiSimple: true,
@@ -54,6 +54,16 @@ test('api dashboard routes: simple mode redirects full operator tabs', (t) => {
     cacheKey: '_cashierHtml',
     filename: 'cashier.html'
   }, 'full dashboard serves the poker cashier page')
+
+  t.alike(resolveDashboardGetRoute({
+    path: '/table',
+    uiSimple: false,
+    isLocalRequest: true
+  }), {
+    kind: 'serve',
+    cacheKey: '_tableHtml',
+    filename: 'table.html'
+  }, 'full dashboard serves the poker table page')
 })
 
 test('api dashboard routes: wizard remains local unless token exposure is enabled', (t) => {
