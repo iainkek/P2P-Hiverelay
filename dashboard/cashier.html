@@ -159,6 +159,9 @@ input:focus{outline:none;border-color:var(--cyan)}
   </div>
 </div>
 
+<!-- Table-session bridge (populated from the /table demo via localStorage) -->
+<div id="tableHint" style="display:none;align-items:center;gap:.7rem;margin-bottom:1.5rem;font-size:.84rem;color:var(--text);background:rgba(63,185,80,.06);border:1px solid rgba(63,185,80,.25);border-radius:10px;padding:.85rem 1.15rem"></div>
+
 <!-- Lifecycle stepper -->
 <div class="stepper" id="stepper">
   <div class="step" data-step="0"><div class="dot">1</div><div class="lbl">Connect</div></div>
@@ -266,6 +269,19 @@ const $ = (id) => document.getElementById(id)
 const fmt = (bi) => (Number(bi) / 1e6).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '--'
 function log (msg, cls) { const el = $('log'); const ts = new Date().toLocaleTimeString(); el.innerHTML = `<div><span class="t">${ts}</span> <span class="${cls || ''}">${msg}</span></div>` + el.innerHTML }
+
+// Bridge from the /table demo: show the running session net if the player has
+// been at a table this browser (table.html writes these to localStorage).
+function showTableBridge () {
+  try {
+    const hands = parseInt(localStorage.getItem('p2poker.hands') || '0')
+    if (!hands) return
+    const tnet = parseFloat(localStorage.getItem('p2poker.net') || '0')
+    const el = $('tableHint'); el.style.display = 'flex'
+    const col = tnet >= 0 ? 'var(--green)' : 'var(--red)'
+    el.innerHTML = `<span style="font-size:1.2rem">&#127183;</span><span>Your table session: <b style="color:${col}">${tnet >= 0 ? '+' : ''}${tnet} chips</b> over ${hands} hand${hands > 1 ? 's' : ''}. Deposit a USD₮ bankroll and settle to cash a real session out. <a href="/table" style="color:var(--cyan);text-decoration:none">Back to the table &rarr;</a></span>`
+  } catch {}
+}
 
 // Count-up a USD₮ stat value (eased) for a bit of life; settles on the exact value.
 function setNum (el, toBI) {
@@ -438,6 +454,7 @@ async function liveWithdraw () {
 // ── wiring ────────────────────────────────────────────────────
 function bootCashier () {
   window.__cashierBooted = true
+  showTableBridge()
   $('btnDemo').onclick = () => setMode('demo')
   $('btnLive').onclick = () => setMode('live')
   $('btnConnect').onclick = () => S.mode === 'demo' ? demoConnect() : liveConnect()

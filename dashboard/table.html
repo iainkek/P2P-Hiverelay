@@ -188,7 +188,7 @@ const CAT = ['high card', 'a pair', 'two pair', 'trips', 'a straight', 'a flush'
 // ── game state ─────────────────────────────────────────────────────────
 const BUYIN = 1000, SB = 10, BB = 20
 const G = {
-  stacks: { you: BUYIN, bot: BUYIN }, net: 0, boughtIn: BUYIN, winSet: null, button: 'bot',
+  stacks: { you: BUYIN, bot: BUYIN }, net: 0, boughtIn: BUYIN, hands: 0, winSet: null, button: 'bot',
   deck: [], board: [], reveal: 0, holes: { you: [], bot: [] },
   bet: { you: 0, bot: 0 }, committed: { you: 0, bot: 0 }, pot: 0,
   currentBet: 0, minRaise: BB, acted: { you: false, bot: false },
@@ -291,8 +291,18 @@ function awardFold (winner) {
 
 function finishHand (text) {
   G.net = G.stacks.you - G.boughtIn
+  G.hands++
   G.msgText = text
+  persist()
   render()
+}
+// Share the table session with the rest of P2Poker (lobby net, cashier hint).
+function persist () {
+  try {
+    localStorage.setItem('p2poker.net', String(G.net))
+    localStorage.setItem('p2poker.hands', String(G.hands))
+    localStorage.setItem('p2poker.stack', String(G.stacks.you))
+  } catch {}
 }
 function rebuy () {
   if (G.stacks.you <= 0) { G.stacks.you = BUYIN; G.boughtIn += BUYIN }
