@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P2Poker Cashier — USD₮ Escrow</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0e1118;--card:#151a26;--card-border:#222b3e;
+  --green:#3fb950;--orange:#f0a64a;--cyan:#58a6ff;--red:#f47067;--purple:#bc8cff;--yellow:#ffd700;
+  --text:#d6dde8;--text-dim:#8493a8;--text-bright:#fff;
+  --mono:'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+}
+html{font-size:14px}
+body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,transparent);color:var(--text);font-family:var(--sans);min-height:100vh;padding:1rem}
+
+.topbar{background:var(--card);border-bottom:1px solid var(--card-border);padding:1rem 2rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;position:sticky;top:0;z-index:100;margin:-1rem -1rem 1.5rem -1rem}
+.topbar-logo{display:flex;align-items:center;gap:.75rem;text-decoration:none}
+.hive-logo{width:32px;height:32px;flex-shrink:0}
+.topbar h1{font-size:1.2rem;color:var(--text-bright);font-weight:600;letter-spacing:.3px}
+.topbar-brand{display:flex;flex-direction:column;line-height:1.15}
+.topbar-sub{font-size:.58rem;color:var(--text-dim);letter-spacing:.6px;text-transform:uppercase}
+.topbar-nav{display:flex;gap:.25rem;margin-left:1.5rem;flex-wrap:wrap}
+.topbar-nav a{font-size:.8rem;color:var(--text-dim);text-decoration:none;padding:.35rem .75rem;border-radius:6px;transition:color .2s,background .2s}
+.topbar-nav a:hover{color:var(--text-bright);background:rgba(255,255,255,.05)}
+.topbar-nav a.active{color:#10131b;background:#f5c842;font-weight:600}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:1rem}
+
+.mode-badge{font-size:.65rem;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:.25rem .6rem;border-radius:5px}
+.mode-badge.demo{color:var(--orange);background:rgba(240,166,74,.12);border:1px solid rgba(240,166,74,.35)}
+.mode-badge.live{color:var(--green);background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35)}
+
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem}
+.stat-card{background:var(--card);border:1px solid var(--card-border);border-radius:10px;padding:1.2rem;transition:border-color .2s}
+.stat-card:hover{border-color:var(--cyan)}
+.stat-label{font-size:.7rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:.5rem}
+.stat-value{font-size:1.9rem;font-weight:700;font-family:var(--mono);color:var(--text-bright);line-height:1}
+.stat-sub{font-size:.7rem;color:var(--text-dim);margin-top:.4rem;font-family:var(--mono)}
+.stat-value.cyan{color:var(--cyan)}.stat-value.green{color:var(--green)}.stat-value.orange{color:var(--orange)}.stat-value.yellow{color:var(--yellow)}.stat-value.red{color:var(--red)}
+
+.section-title{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin:2rem 0 1rem;padding-bottom:.5rem;border-bottom:1px solid var(--card-border)}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;margin-bottom:1.5rem}
+.card{background:var(--card);border:1px solid var(--card-border);border-radius:10px;padding:1.3rem}
+.card h3{font-size:.95rem;color:var(--text-bright);margin-bottom:.25rem;display:flex;align-items:center;gap:.5rem}
+.card .hint{font-size:.72rem;color:var(--text-dim);margin-bottom:1rem;line-height:1.45}
+.step-no{display:inline-flex;align-items:center;justify-content:center;width:1.4rem;height:1.4rem;border-radius:50%;background:rgba(245,200,66,.15);color:var(--yellow);font-size:.75rem;font-weight:700;font-family:var(--mono)}
+
+label{display:block;font-size:.68rem;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin:.6rem 0 .3rem}
+input{width:100%;background:#0c0f16;border:1px solid var(--card-border);border-radius:7px;padding:.6rem .7rem;color:var(--text);font-family:var(--mono);font-size:.85rem}
+input:focus{outline:none;border-color:var(--cyan)}
+.row{display:flex;gap:.5rem;align-items:flex-end}
+.row>div{flex:1}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;width:100%;border:none;border-radius:7px;padding:.65rem 1rem;font-size:.85rem;font-weight:600;cursor:pointer;font-family:var(--sans);transition:filter .15s,opacity .15s;margin-top:.7rem}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:#f5c842;color:#10131b}
+.btn-primary:hover:not(:disabled){filter:brightness(1.08)}
+.btn-cyan{background:var(--cyan);color:#06101f}
+.btn-cyan:hover:not(:disabled){filter:brightness(1.08)}
+.btn-ghost{background:transparent;border:1px solid var(--card-border);color:var(--text)}
+.btn-ghost:hover:not(:disabled){border-color:var(--cyan);color:var(--text-bright)}
+
+.kv{display:flex;justify-content:space-between;align-items:baseline;padding:.35rem 0;border-bottom:1px dashed var(--card-border);font-size:.82rem}
+.kv:last-child{border-bottom:none}
+.kv .k{color:var(--text-dim)}
+.kv .v{font-family:var(--mono);color:var(--text-bright)}
+.pill{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:.15rem .5rem;border-radius:99px}
+.pill.open{color:var(--cyan);background:rgba(88,166,255,.12)}
+.pill.settled{color:var(--green);background:rgba(63,185,80,.12)}
+
+.log{background:#0c0f16;border:1px solid var(--card-border);border-radius:8px;padding:.8rem;font-family:var(--mono);font-size:.74rem;line-height:1.6;max-height:200px;overflow:auto;color:var(--text-dim)}
+.log .t{color:var(--cyan)}.log .ok{color:var(--green)}.log .err{color:var(--red)}
+
+.banner{margin-bottom:1.5rem;border-color:rgba(88,166,255,.3);background:linear-gradient(135deg,rgba(88,166,255,.04),rgba(245,200,66,.03))}
+.flow{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;font-size:.74rem;color:var(--text-dim);font-family:var(--mono);margin-top:.6rem}
+.flow b{color:var(--text-bright)}.flow .arrow{color:var(--text-dim);opacity:.6}
+
+@media(max-width:900px){.stats-row{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:1fr}.topbar-nav{display:none}}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="/dashboard" class="topbar-logo">
+    <svg class="hive-logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs><linearGradient id="sparkg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffe066"/><stop offset="100%" stop-color="#f5a623"/></linearGradient></defs>
+      <path d="M50 6 C 54.5 36, 61 42.5, 92 50 C 61 57.5, 54.5 64, 50 94 C 45.5 64, 39 57.5, 8 50 C 39 42.5, 45.5 36, 50 6 Z" fill="url(#sparkg)"/>
+    </svg>
+    <div class="topbar-brand"><h1>P2Poker Cashier</h1><div class="topbar-sub">USD₮ escrow · deposit · settle · withdraw</div></div>
+  </a>
+  <nav class="topbar-nav">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/payments">Payments</a>
+    <a href="/cashier" class="active">Cashier</a>
+    <a href="/network">Network</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/docs">Docs</a>
+  </nav>
+  <div class="topbar-right">
+    <span class="mode-badge demo" id="modeBadge">Demo</span>
+    <span style="font-size:.75rem;color:var(--text-dim);font-family:var(--mono)" id="addrBadge">not connected</span>
+  </div>
+</div>
+
+<div class="card banner">
+  <div style="display:flex;align-items:flex-start;gap:1rem">
+    <div style="font-size:1.7rem;line-height:1;flex-shrink:0">&#127183;</div>
+    <div>
+      <div style="font-size:.95rem;font-weight:600;color:var(--cyan);margin-bottom:.35rem">Your bankroll is at risk only during play — you withdraw your NET</div>
+      <div style="font-size:.82rem;color:var(--text);line-height:1.5">
+        Deposit a USD₮ bankroll into the table escrow, play off-chain on the HiveRelay signed log, then settle the
+        <b>net</b> per session (players co-sign, or a relay committee attests on a stall). There is no deposit-refund:
+        you only ever take out your settled net. <b>If you never withdraw, you get nothing.</b>
+      </div>
+      <div class="flow">
+        <b>Deposit</b><span class="arrow">→</span><b>Play (off-chain)</b><span class="arrow">→</span><b>Settle net</b><span class="arrow">→</span><b>Withdraw</b>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="stats-row">
+  <div class="stat-card"><div class="stat-label">USD₮ Wallet</div><div class="stat-value cyan" id="sWallet">--</div><div class="stat-sub" id="sAllow">allowance --</div></div>
+  <div class="stat-card"><div class="stat-label">Your Bankroll</div><div class="stat-value yellow" id="sBankroll">--</div><div class="stat-sub">deposited into escrow</div></div>
+  <div class="stat-card"><div class="stat-label">Session Pot</div><div class="stat-value" id="sPot">--</div><div class="stat-sub" id="sStatus">--</div></div>
+  <div class="stat-card"><div class="stat-label">Your Net (withdrawable)</div><div class="stat-value green" id="sNet">--</div><div class="stat-sub" id="sNetSub">settles at session end</div></div>
+</div>
+
+<div class="section-title">Cashier</div>
+<div class="grid-3">
+  <!-- 1. Connect / configure -->
+  <div class="card">
+    <h3><span class="step-no">1</span> Connect &amp; configure</h3>
+    <div class="hint">Demo mode simulates the full lifecycle locally. Switch to Live and point at a deployed escrow to use real USD₮.</div>
+    <label>Mode</label>
+    <div class="row" style="gap:.4rem">
+      <button class="btn btn-ghost" id="btnDemo" style="margin-top:0">Demo</button>
+      <button class="btn btn-ghost" id="btnLive" style="margin-top:0">Live</button>
+    </div>
+    <div id="liveConfig" style="display:none">
+      <label>Escrow address</label><input id="cfgEscrow" placeholder="0x…">
+      <label>USD₮ token address</label><input id="cfgToken" placeholder="0x…">
+      <label>RPC URL (read-only fallback)</label><input id="cfgRpc" placeholder="https://…sepolia…">
+    </div>
+    <button class="btn btn-primary" id="btnConnect">Connect wallet</button>
+  </div>
+
+  <!-- 2. Deposit -->
+  <div class="card">
+    <h3><span class="step-no">2</span> Deposit bankroll</h3>
+    <div class="hint">Approve (if needed) and deposit USD₮ into the table escrow. You can top up any time before the session settles.</div>
+    <label>Amount (USD₮)</label>
+    <input id="depAmount" type="number" min="0" step="1" value="100">
+    <button class="btn btn-cyan" id="btnDeposit" disabled>Deposit</button>
+  </div>
+
+  <!-- 3. Settle / withdraw -->
+  <div class="card">
+    <h3><span class="step-no">3</span> Settle &amp; cash out</h3>
+    <div class="hint">When the session settles, your net is recorded on-chain. Pull it with Withdraw.</div>
+    <div class="kv"><span class="k">Status</span><span class="v" id="kStatus"><span class="pill open">open</span></span></div>
+    <div class="kv"><span class="k">Pot</span><span class="v" id="kPot">--</span></div>
+    <div class="kv"><span class="k">Your net result</span><span class="v" id="kNet">--</span></div>
+    <button class="btn btn-ghost" id="btnSimulate">Simulate session result (demo)</button>
+    <button class="btn btn-primary" id="btnWithdraw" disabled>Withdraw net</button>
+  </div>
+</div>
+
+<div class="section-title">Activity</div>
+<div class="log" id="log"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js" defer></script>
+<script defer>
+window.addEventListener('DOMContentLoaded', () => { if (!window.__cashierBooted) bootCashier() })
+
+const ESCROW_ABI = [
+  'function deposit(uint256 amount)',
+  'function cooperativeClose(address[] payees, uint256[] balances, bytes[] sigs)',
+  'function withdraw()',
+  'function pot() view returns (uint256)',
+  'function settled() view returns (bool)',
+  'function escrowId() view returns (bytes32)',
+  'function deposited(address) view returns (uint256)',
+  'function withdrawable(address) view returns (uint256)',
+  'function isParticipant(address) view returns (bool)'
+]
+const ERC20_ABI = [
+  'function approve(address,uint256) returns (bool)',
+  'function allowance(address,address) view returns (uint256)',
+  'function balanceOf(address) view returns (uint256)'
+]
+const DEC = 1_000_000n // USD₮ 6 decimals
+
+const S = {
+  mode: 'demo', connected: false, address: null,
+  // demo ledger (BigInt base units)
+  wallet: 1000n * DEC, allowance: 0n, bankroll: 0n, oppBankroll: 100n * DEC,
+  pot: 0n, settled: false, net: 0n, withdrawable: 0n,
+  // live handles
+  provider: null, signer: null, escrow: null, token: null, escrowAddr: null
+}
+
+const $ = (id) => document.getElementById(id)
+const fmt = (bi) => (Number(bi) / 1e6).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '--'
+function log (msg, cls) { const el = $('log'); const ts = new Date().toLocaleTimeString(); el.innerHTML = `<div><span class="t">${ts}</span> <span class="${cls || ''}">${msg}</span></div>` + el.innerHTML }
+
+function render () {
+  $('modeBadge').textContent = S.mode === 'demo' ? 'Demo' : 'Live'
+  $('modeBadge').className = 'mode-badge ' + (S.mode === 'demo' ? 'demo' : 'live')
+  $('addrBadge').textContent = S.connected ? short(S.address) : 'not connected'
+  $('sWallet').textContent = fmt(S.wallet)
+  $('sAllow').textContent = 'allowance ' + fmt(S.allowance)
+  $('sBankroll').textContent = fmt(S.bankroll)
+  $('sPot').textContent = fmt(S.pot)
+  $('sStatus').textContent = S.settled ? 'settled' : 'open'
+  $('sNet').textContent = fmt(S.withdrawable)
+  const netCls = S.net > 0n ? 'green' : S.net < 0n ? 'red' : ''
+  $('sNet').className = 'stat-value ' + (S.settled ? netCls : 'green')
+  $('kStatus').innerHTML = S.settled ? '<span class="pill settled">settled</span>' : '<span class="pill open">open</span>'
+  $('kPot').textContent = fmt(S.pot)
+  $('kNet').textContent = S.settled ? (S.net >= 0n ? '+' : '') + fmt(S.net) : '--'
+  $('btnDeposit').disabled = !S.connected || S.settled
+  $('btnWithdraw').disabled = !S.connected || !S.settled || S.withdrawable === 0n
+  $('btnSimulate').style.display = S.mode === 'demo' ? '' : 'none'
+  $('liveConfig').style.display = S.mode === 'live' ? '' : 'none'
+  $('btnDemo').style.borderColor = S.mode === 'demo' ? 'var(--cyan)' : ''
+  $('btnLive').style.borderColor = S.mode === 'live' ? 'var(--cyan)' : ''
+}
+
+function setMode (m) {
+  S.mode = m; S.connected = false; S.address = null
+  if (m === 'demo') { S.wallet = 1000n * DEC; S.allowance = 0n; S.bankroll = 0n; S.pot = 0n; S.settled = false; S.net = 0n; S.withdrawable = 0n }
+  log('mode → ' + m)
+  render()
+}
+
+// ── demo handlers ─────────────────────────────────────────────
+async function demoConnect () {
+  S.connected = true
+  S.address = '0xDem0' + Math.floor(Math.random() * 1e6).toString(16).padStart(6, '0') + 'aBcDeF0000'
+  S.pot = S.bankroll + S.oppBankroll
+  log('connected (demo wallet ' + short(S.address) + ')', 'ok')
+  render()
+}
+async function demoDeposit (amt) {
+  if (amt > S.wallet) { log('insufficient USD₮ balance', 'err'); return }
+  S.wallet -= amt; S.allowance = 0n; S.bankroll += amt; S.pot = S.bankroll + S.oppBankroll
+  log('deposited ' + fmt(amt) + ' USD₮ → bankroll ' + fmt(S.bankroll), 'ok')
+  render()
+}
+async function demoSimulate () {
+  // Random session outcome: you end between -bankroll and +oppBankroll.
+  const span = Number(S.bankroll + S.oppBankroll)
+  const net = BigInt(Math.floor(Math.random() * span)) - S.bankroll
+  S.net = net; S.settled = true; S.withdrawable = S.bankroll + net
+  if (S.withdrawable < 0n) S.withdrawable = 0n
+  log('session settled — your net ' + (net >= 0n ? '+' : '') + fmt(net) + ' USD₮ (withdrawable ' + fmt(S.withdrawable) + ')', net >= 0n ? 'ok' : 'err')
+  render()
+}
+async function demoWithdraw () {
+  S.wallet += S.withdrawable
+  log('withdrew ' + fmt(S.withdrawable) + ' USD₮ to wallet', 'ok')
+  S.withdrawable = 0n
+  render()
+}
+
+// ── live handlers (ethers) ────────────────────────────────────
+function liveContracts (runner) {
+  S.escrowAddr = $('cfgEscrow').value.trim()
+  const tokenAddr = $('cfgToken').value.trim()
+  S.escrow = new ethers.Contract(S.escrowAddr, ESCROW_ABI, runner)
+  S.token = tokenAddr ? new ethers.Contract(tokenAddr, ERC20_ABI, runner) : null
+}
+async function liveConnect () {
+  if (!window.ethers) { log('ethers not loaded (offline?) — use Demo mode', 'err'); return }
+  if (!$('cfgEscrow').value.trim()) { log('enter an escrow address first', 'err'); return }
+  if (window.ethereum) {
+    S.provider = new ethers.BrowserProvider(window.ethereum)
+    await S.provider.send('eth_requestAccounts', [])
+    S.signer = await S.provider.getSigner()
+    S.address = await S.signer.getAddress()
+    liveContracts(S.signer)
+  } else if ($('cfgRpc').value.trim()) {
+    S.provider = new ethers.JsonRpcProvider($('cfgRpc').value.trim())
+    S.signer = null; S.address = null
+    liveContracts(S.provider)
+    log('read-only (no injected wallet) — connect a wallet to deposit/withdraw', 'err')
+  } else { log('no wallet and no RPC URL', 'err'); return }
+  S.connected = true
+  log('connected to escrow ' + short(S.escrowAddr), 'ok')
+  await liveRefresh()
+}
+async function liveRefresh () {
+  try {
+    const [pot, settled] = await Promise.all([S.escrow.pot(), S.escrow.settled()])
+    S.pot = pot; S.settled = settled
+    if (S.address) {
+      const [dep, wd] = await Promise.all([S.escrow.deposited(S.address), S.escrow.withdrawable(S.address)])
+      S.bankroll = dep; S.withdrawable = wd
+      if (S.token) { S.wallet = await S.token.balanceOf(S.address); S.allowance = await S.token.allowance(S.address, S.escrowAddr) }
+    }
+    render()
+  } catch (e) { log('read failed: ' + (e.shortMessage || e.message), 'err') }
+}
+async function liveDeposit (amt) {
+  try {
+    if (S.token) {
+      const al = await S.token.allowance(S.address, S.escrowAddr)
+      if (al < amt) { log('approving…'); await (await S.token.approve(S.escrowAddr, amt)).wait() }
+    }
+    log('depositing ' + fmt(amt) + '…')
+    await (await S.escrow.deposit(amt)).wait()
+    log('deposit confirmed', 'ok'); await liveRefresh()
+  } catch (e) { log('deposit failed: ' + (e.shortMessage || e.message), 'err') }
+}
+async function liveWithdraw () {
+  try { log('withdrawing…'); await (await S.escrow.withdraw()).wait(); log('withdraw confirmed', 'ok'); await liveRefresh() }
+  catch (e) { log('withdraw failed: ' + (e.shortMessage || e.message), 'err') }
+}
+
+// ── wiring ────────────────────────────────────────────────────
+function bootCashier () {
+  window.__cashierBooted = true
+  $('btnDemo').onclick = () => setMode('demo')
+  $('btnLive').onclick = () => setMode('live')
+  $('btnConnect').onclick = () => S.mode === 'demo' ? demoConnect() : liveConnect()
+  $('btnDeposit').onclick = () => { const amt = BigInt(Math.round((parseFloat($('depAmount').value) || 0) * 1e6)); if (amt <= 0n) return log('enter an amount', 'err'); S.mode === 'demo' ? demoDeposit(amt) : liveDeposit(amt) }
+  $('btnSimulate').onclick = () => demoSimulate()
+  $('btnWithdraw').onclick = () => S.mode === 'demo' ? demoWithdraw() : liveWithdraw()
+  log('cashier ready — Demo mode. Connect to begin.')
+  render()
+}
+</script>
+</body>
+</html>

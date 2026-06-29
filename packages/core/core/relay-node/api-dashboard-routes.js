@@ -4,7 +4,8 @@ const FULL_DASHBOARD_ROUTES = new Map([
   ['/payments', { cacheKey: '_paymentsHtml', filename: 'payments.html' }],
   ['/calculator', { cacheKey: '_calculatorHtml', filename: 'calculator.html' }],
   ['/leaderboard', { cacheKey: '_leaderboardHtml', filename: 'leaderboard.html' }],
-  ['/catalog', { cacheKey: '_catalogHtml', filename: 'catalog.html' }]
+  ['/catalog', { cacheKey: '_catalogHtml', filename: 'catalog.html' }],
+  ['/cashier', { cacheKey: '_cashierHtml', filename: 'cashier.html' }]
 ])
 
 export function resolveDashboardGetRoute ({
