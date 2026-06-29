@@ -95,6 +95,7 @@ the capstone demo). What remains genuinely needs the operator or the live relay:
   built against FRA (with the FRA key), not as a standalone module.
 - **External audit** of `PokerEscrow.sol` + the attestation signature scheme
   (the ADR notes BLS-aggregate as the scale-up) before handling real value. The
-  threat model, invariants, and remaining findings (e.g. F-2 fee-on-transfer
-  accounting) are pre-staged in [escrow/SECURITY.md](escrow/SECURITY.md) to make
-  that audit faster.
+  threat model, invariants, and remaining design-choice findings (F-3 liveness
+  backstop, F-4 deposit-lock) are pre-staged in
+  [escrow/SECURITY.md](escrow/SECURITY.md) to make that audit faster; the token
+  integration (F-1/F-2) and event transparency (F-5) are already fixed + tested.
