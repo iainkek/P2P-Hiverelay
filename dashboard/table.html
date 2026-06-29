@@ -67,6 +67,15 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 .pot b{color:var(--yellow)}
 .board{display:flex;gap:.45rem;min-height:76px}
 .street-tag{font-size:.62rem;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,.5)}
+.pot{transition:transform .1s}
+.pot.bump{animation:potbump .45s cubic-bezier(.2,.8,.25,1)}
+@keyframes potbump{0%{transform:scale(1)}45%{transform:scale(1.18)}100%{transform:scale(1)}}
+.strength{font-size:.74rem;font-family:var(--mono);color:var(--cyan);min-height:1.1rem;background:rgba(0,0,0,.3);padding:.22rem .7rem;border-radius:6px;border:1px solid rgba(88,166,255,.2)}
+.ship{position:absolute;left:50%;top:50%;font-family:var(--mono);font-weight:800;font-size:1.5rem;color:var(--yellow);z-index:5;pointer-events:none;text-shadow:0 2px 12px rgba(0,0,0,.7)}
+.ship.toYou{animation:shipDown 1.05s ease-out forwards}
+.ship.toBot{animation:shipUp 1.05s ease-out forwards}
+@keyframes shipDown{0%{opacity:0;transform:translate(-50%,-50%) scale(.6)}22%{opacity:1}100%{opacity:0;transform:translate(-50%,140px) scale(1.15)}}
+@keyframes shipUp{0%{opacity:0;transform:translate(-50%,-50%) scale(.6)}22%{opacity:1}100%{opacity:0;transform:translate(-50%,-190px) scale(1.15)}}
 
 .actionbar{background:var(--card);border:1px solid var(--card-border);border-radius:12px;padding:1rem 1.2rem;margin-top:1.2rem;display:flex;align-items:center;gap:.7rem;flex-wrap:wrap}
 .btn{border:none;border-radius:8px;padding:.7rem 1.2rem;font-size:.9rem;font-weight:700;cursor:pointer;font-family:var(--sans);transition:filter .15s,transform .08s,opacity .15s}
@@ -129,6 +138,7 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
       <div class="bet" id="betYou"></div>
       <div class="hand" id="handYou"></div>
       <div class="who" id="whoYou"><span class="nm">You</span><span class="st" id="stYou">--</span><span class="dealer" id="dYou" style="display:none">D</span></div>
+      <div class="strength" id="strength"></div>
     </div>
   </div>
 
@@ -183,6 +193,29 @@ function eval5 (cards) {
 const COMBOS = (() => { const o = []; for (let a = 0; a < 7; a++) for (let b = a + 1; b < 7; b++) { const p = []; for (let i = 0; i < 7; i++) if (i !== a && i !== b) p.push(i); o.push(p) } return o })()
 function eval7 (c7) { let best = null; for (const cm of COMBOS) { const r = eval5(cm.map(i => c7[i])); if (best === null || cmp(r, best) > 0) best = r } return best }
 function bestFive7 (c7) { let best = null, bi = COMBOS[0]; for (const cm of COMBOS) { const r = eval5(cm.map(i => c7[i])); if (best === null || cmp(r, best) > 0) { best = r; bi = cm } } return bi.map(i => c7[i]) }
+// Best 5-card rank from any 5..7 cards.
+function kcombos (n, k) { const res = []; const rec = (s, acc) => { if (acc.length === k) { res.push([...acc]); return } for (let i = s; i < n; i++) { acc.push(i); rec(i + 1, acc); acc.pop() } }; rec(0, []); return res }
+function bestRank (cards) { if (cards.length < 5) return null; if (cards.length === 5) return eval5(cards); let best = null; for (const cm of kcombos(cards.length, 5)) { const r = eval5(cm.map(i => cards[i])); if (best === null || cmp(r, best) > 0) best = r } return best }
+const SG = ['Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Jack', 'Queen', 'King', 'Ace']
+const PL = ['Twos', 'Threes', 'Fours', 'Fives', 'Sixes', 'Sevens', 'Eights', 'Nines', 'Tens', 'Jacks', 'Queens', 'Kings', 'Aces']
+function handName (r) {
+  switch (r[0]) {
+    case 8: return 'Straight flush, ' + SG[r[1]] + ' high'
+    case 7: return 'Four ' + PL[r[1]]
+    case 6: return 'Full house, ' + PL[r[1]] + ' over ' + PL[r[2]]
+    case 5: return SG[r[1]] + '-high flush'
+    case 4: return 'Straight, ' + SG[r[1]] + ' high'
+    case 3: return 'Three ' + PL[r[1]]
+    case 2: return 'Two pair, ' + PL[r[1]] + ' & ' + PL[r[2]]
+    case 1: return 'Pair of ' + PL[r[1]]
+    default: return SG[r[1]] + '-high'
+  }
+}
+function preflopName (holes) {
+  const rr = holes.map(cr).sort((a, b) => b - a); const suited = cs(holes[0]) === cs(holes[1])
+  if (rr[0] === rr[1]) return 'Pair of ' + PL[rr[0]]
+  return SG[rr[0]] + '-' + SG[rr[1]] + (suited ? ' suited' : ' offsuit')
+}
 const CAT = ['high card', 'a pair', 'two pair', 'trips', 'a straight', 'a flush', 'a full house', 'quads', 'a straight flush']
 
 // ── game state ─────────────────────────────────────────────────────────
@@ -293,8 +326,18 @@ function finishHand (text) {
   G.net = G.stacks.you - G.boughtIn
   G.hands++
   G.msgText = text
+  if ((G.result === 'you' || G.result === 'bot') && G.pot > 0) shipPot(G.result, G.pot)
   persist()
   render()
+}
+// "Ship the pot": a +amount that flies from the center toward the winner's seat.
+function shipPot (winner, amount) {
+  const felt = document.querySelector('.felt'); if (!felt) return
+  const s = document.createElement('div')
+  s.className = 'ship ' + (winner === 'you' ? 'toYou' : 'toBot')
+  s.textContent = '+' + amount
+  felt.appendChild(s)
+  setTimeout(() => s.remove(), 1100)
 }
 // Share the table session with the rest of P2Poker (lobby net, cashier hint).
 function persist () {
@@ -354,7 +397,10 @@ function emptyCard () { const d = document.createElement('div'); d.className = '
 
 function render () {
   $('stYou').textContent = G.stacks.you; $('stBot').textContent = G.stacks.bot
-  $('pot').textContent = G.pot
+  const potEl = $('pot')
+  if (G.pot > (G._lastPot || 0)) { potEl.classList.remove('bump'); void potEl.offsetWidth; potEl.classList.add('bump') }
+  G._lastPot = G.pot
+  potEl.textContent = G.pot
   $('net').textContent = (G.net >= 0 ? '+' : '') + G.net
   $('net').style.color = G.net > 0 ? 'var(--green)' : G.net < 0 ? 'var(--red)' : 'var(--text-bright)'
   $('dYou').style.display = G.button === 'you' ? '' : 'none'
@@ -378,6 +424,13 @@ function render () {
   // turn highlight
   $('whoYou').className = 'who' + (G.toAct === 'you' && G.phase === 'betting' ? ' turn' : '') + (showdownNow && G.result === 'you' ? ' win' : '')
   $('whoBot').className = 'who' + (G.toAct === 'bot' && G.phase === 'betting' ? ' turn' : '') + (showdownNow && G.result === 'bot' ? ' win' : '')
+  // hand-strength readout for the player
+  let strength = ''
+  if (G.phase !== 'idle' && G.holes.you.length) {
+    const cards = [...G.holes.you, ...G.board.slice(0, G.reveal)]
+    strength = 'You have: ' + (cards.length >= 5 ? handName(bestRank(cards)) : preflopName(G.holes.you))
+  }
+  $('strength').textContent = strength
   renderControls()
   const m = $('msg')
   m.textContent = G.msgText || (G.toAct === 'you' ? 'Your move.' : 'Villain is thinking…')
