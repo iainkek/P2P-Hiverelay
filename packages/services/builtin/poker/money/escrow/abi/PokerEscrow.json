@@ -13,6 +13,6 @@
   "function participants(uint256 i) view returns (address)",
   "event Opened(bytes32 escrowId)",
   "event Funded(address seat, uint256 amount)",
-  "event Settled(string kind)",
+  "event Settled(string kind, address[] payees, uint256[] balances)",
   "event Withdrawn(address seat, uint256 amount)"
 ]

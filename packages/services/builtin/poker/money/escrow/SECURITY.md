@@ -62,7 +62,7 @@ Invariants the contract maintains (and tests assert):
 | T-3 | Reentrancy on payout | CEI (zero before transfer) + `nonReentrant`; closes make no external calls | Covered by `reentrancy.test.cjs` |
 | T-4 | Forged/replayed settlement | EIP-191 sigs over `keccak256(abi.encode(escrowId, …))`; `escrowId` domain-separates per escrow; `settled` blocks replay | Cross-escrow replay test covers it |
 | T-5 | Submitter substitutes a different result | All signatures are over the exact `(payees, balances)`; conservation + payee-is-seat enforced | **If players sign more than one settlement, whoever submits first wins.** Clients MUST sign exactly one final result. No on-chain nonce on the cooperative path (single-settle makes it moot once one lands). |
-| T-6 | **Non-standard / fee-on-transfer token** | **FIXED (no-return):** `_safeTransfer`/`_safeTransferFrom` tolerate no-return tokens (mainnet USDT) and revert on explicit `false`. `deposited += amount` still uses the requested amount | Fee-on-transfer accounting (F-2) still open — low risk for fee-0 USDT. |
+| T-6 | **Non-standard / fee-on-transfer token** | **FIXED:** `_safeTransfer`/`_safeTransferFrom` tolerate no-return tokens (mainnet USDT) and revert on explicit `false`; `deposit` credits the **measured** balance delta, so fee-on-transfer can't strand funds | Both covered by tests (no-return + 1%-fee token). |
 | T-7 | **Malicious committee quorum** | Strictly-increasing signer check prevents double-counting; only `isCommittee` signers count | A dishonest quorum CAN settle to any *conserving* distribution → reassign the pot among seats. Mitigate with independent relays, a high threshold, stake/reputation. This is the oracle trust boundary. |
 | T-8 | Signature malleability | `ecrecover`; recovered address is matched against an expected set | Not exploitable (a malleable variant recovers the *same* address; the increasing-signer check rejects dupes). `s`-low / `v∈{27,28}` not enforced — note for auditor. |
 | T-9 | Late deposit griefs a pending close | `deposit` allowed until `settled` | A deposit landing before a close changes `pot()`, so the close fails `NOT_CONSERVED` and must be re-signed against the new pot. Minor griefing/UX. Consider a deposit-lock phase. |
@@ -77,10 +77,11 @@ Invariants the contract maintains (and tests assert):
   no-return token and reverts on an explicit `false`), and covered by
   `test/no-return-token.test.cjs` against a `NoReturnToken` that mimics mainnet
   USDT. The bool-returning `MockUSDT` path still passes too.
-- **F-2 (Medium): fee-on-transfer accounting.** `deposit` credits the *requested*
-  amount. With a fee-charging token, `pot()` would exceed the real balance and the
-  last withdrawal could fail. Credit the *measured* balance delta
-  (`balanceOf` before/after). Low risk for fee-0 USDT but a correctness fix.
+- **F-2 (Medium → FIXED): fee-on-transfer accounting.** `deposit` now credits the
+  **measured** `balanceOf` delta (before/after the transfer) and emits the received
+  amount, so a fee-charging token can never make `pot()` exceed the real balance.
+  Covered by `test/fee-token.test.cjs` (1%-fee token: `pot` == real balance, the
+  escrow drains to exactly zero, nothing stranded).
 - **F-3 (Low): liveness backstop is a deliberate omission.** Document loudly that a
   threshold-0 escrow has no liveness guarantee. If operators want one without a
   committee, that is a design change (a timeout that settles to deposits), which
@@ -88,8 +89,9 @@ Invariants the contract maintains (and tests assert):
   explicitly.
 - **F-4 (Low): deposit-lock phase.** Optionally freeze deposits (a `funded` flag or
   a per-session deadline) before settlement to remove T-9.
-- **F-5 (Info): emit `(payees, balances)` on settle** for cheaper indexing/audit
-  trails (currently only a `kind` string is emitted; the data is in calldata).
+- **F-5 (Info → FIXED): emit `(payees, balances)` on settle.** `Settled` now emits
+  `(string kind, address[] payees, uint256[] balances)` for cheap indexing/audit
+  trails; asserted in `test/fee-token.test.cjs`.
 - **F-6 (Info): `lastEpoch`/`epoch` is vestigial** under single-settle — it only
   enforces `epoch > 0` and domain-separates the digest. Keep for a future
   checkpointing revision or drop for clarity.
@@ -104,7 +106,7 @@ Invariants the contract maintains (and tests assert):
    choices, not bugs; confirm they match operator intent.
 5. Reentrancy / CEI on `withdraw` (believed sound; confirm).
 
-## 7. Test coverage (local, `npx hardhat test` → 27 passing)
+## 7. Test coverage (local, `npx hardhat test` → 28 passing)
 
 Covers: deposit→cooperative settle→withdraw; conservation + missing-sig rejection;
 dispute/committee close (quorum, non-committee, stale-epoch); the withdraw-net
@@ -112,6 +114,7 @@ model (loser pulls net-not-deposit, double-withdraw, no-payout-before-settle,
 no-deposit/re-settle-after-settle); reentrancy on withdraw; cross-escrow signature
 replay; payee-not-seat rejection; the multi-hand session settle; the
 arbitration/cheat path on-chain; the `EscrowClient` orchestration; WDK signer
-interop; and a **no-return ERC-20 (mainnet-USDT-like)** end-to-end (F-1).
-**Not covered:** fee-on-transfer accounting (F-2) — add before using a fee-charging
-token.
+interop; a **no-return ERC-20 (mainnet-USDT-like)** end-to-end (F-1); and a
+**fee-on-transfer token** with the Settled-event payload (F-2/F-5). Remaining
+findings (F-3 liveness, F-4 deposit-lock, F-6 vestigial epoch) are design choices,
+not bugs — confirm against operator intent during audit.

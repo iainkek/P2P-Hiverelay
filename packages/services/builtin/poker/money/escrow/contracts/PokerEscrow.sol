@@ -24,6 +24,7 @@ pragma solidity ^0.8.24;
 interface IERC20 {
     function transferFrom(address f, address t, uint256 a) external returns (bool);
     function transfer(address t, uint256 a) external returns (bool);
+    function balanceOf(address a) external view returns (uint256);
 }
 
 contract PokerEscrow {
@@ -42,7 +43,7 @@ contract PokerEscrow {
 
     event Opened(bytes32 escrowId);
     event Funded(address seat, uint256 amount);
-    event Settled(string kind);
+    event Settled(string kind, address[] payees, uint256[] balances);
     event Withdrawn(address seat, uint256 amount);
 
     // Reentrancy guard (defense-in-depth; deposit/withdraw also follow CEI).
@@ -81,9 +82,14 @@ contract PokerEscrow {
     function deposit(uint256 amount) external nonReentrant {
         require(!settled, "SETTLED");
         require(isParticipant[msg.sender], "NOT_SEAT");
+        // Credit the MEASURED balance delta, not the requested amount, so a
+        // fee-on-transfer token can never make pot() exceed the real balance
+        // (which would otherwise strand the last withdrawal).
+        uint256 balBefore = token.balanceOf(address(this));
         _safeTransferFrom(msg.sender, address(this), amount);
-        deposited[msg.sender] += amount;
-        emit Funded(msg.sender, amount);
+        uint256 received = token.balanceOf(address(this)) - balBefore;
+        deposited[msg.sender] += received;
+        emit Funded(msg.sender, received);
     }
 
     // Settle to NET balances. No payout here — seats pull via withdraw().
@@ -98,7 +104,7 @@ contract PokerEscrow {
         require(_allParticipantsSigned(digest, sigs), "NOT_ALL_SIGNED");
         _record(payees, balances);
         settled = true;
-        emit Settled("cooperative");
+        emit Settled("cooperative", payees, balances);
     }
 
     function disputeClose(
@@ -116,7 +122,7 @@ contract PokerEscrow {
         lastEpoch = epoch;
         _record(payees, balances);
         settled = true;
-        emit Settled("dispute");
+        emit Settled("dispute", payees, balances);
     }
 
     // Pull your settled net. CEI: zero before transfer; nonReentrant on top.
