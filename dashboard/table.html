@@ -56,7 +56,11 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 .cardx.back{background:repeating-linear-gradient(45deg,#2a3550,#2a3550 6px,#1f2840 6px,#1f2840 12px);color:transparent;border:1px solid #3a466a}
 .cardx.empty{background:rgba(255,255,255,.04);box-shadow:none;border:1px dashed rgba(255,255,255,.12);animation:none}
 .cardx.muck{opacity:.4;transform:scale(.92)}
+.cardx.winhi{box-shadow:0 0 0 2px var(--green),0 0 18px -2px rgba(63,185,80,.85);transform:translateY(-6px);z-index:3}
 @keyframes deal{from{opacity:0;transform:translateY(-14px) scale(.9)}to{opacity:1;transform:none}}
+.qbtn{background:#222b3e;color:var(--text);border:none;border-radius:6px;padding:.45rem .6rem;font-size:.72rem;font-weight:700;cursor:pointer;font-family:var(--mono);transition:background .15s}
+.qbtn:hover:not(:disabled){background:#2c3850;color:var(--text-bright)}
+.qbtn:disabled{opacity:.3;cursor:not-allowed}
 
 .center{display:flex;flex-direction:column;align-items:center;gap:.7rem;z-index:2}
 .pot{font-family:var(--mono);font-size:1rem;color:var(--text-bright);background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.1);border-radius:99px;padding:.35rem 1.1rem}
@@ -134,9 +138,13 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
       <button class="btn btn-raise" id="bRaise">Bet</button>
       <input type="range" id="raiseSlider" min="0" max="100" value="50">
       <span class="raise-amt" id="raiseAmt">0</span>
+      <button class="qbtn" id="qHalf">½ pot</button>
+      <button class="qbtn" id="qPot">pot</button>
+      <button class="qbtn" id="qMax">max</button>
     </div>
     <button class="btn btn-allin" id="bAllin">All-in</button>
     <button class="btn btn-raise" id="bNext" style="display:none">Next hand →</button>
+    <button class="btn btn-call" id="bRebuy" style="display:none">Re-buy &amp; continue</button>
     <span class="msg" id="msg">Your move.</span>
   </div>
 
@@ -173,12 +181,13 @@ function eval5 (cards) {
 }
 const COMBOS = (() => { const o = []; for (let a = 0; a < 7; a++) for (let b = a + 1; b < 7; b++) { const p = []; for (let i = 0; i < 7; i++) if (i !== a && i !== b) p.push(i); o.push(p) } return o })()
 function eval7 (c7) { let best = null; for (const cm of COMBOS) { const r = eval5(cm.map(i => c7[i])); if (best === null || cmp(r, best) > 0) best = r } return best }
+function bestFive7 (c7) { let best = null, bi = COMBOS[0]; for (const cm of COMBOS) { const r = eval5(cm.map(i => c7[i])); if (best === null || cmp(r, best) > 0) { best = r; bi = cm } } return bi.map(i => c7[i]) }
 const CAT = ['high card', 'a pair', 'two pair', 'trips', 'a straight', 'a flush', 'a full house', 'quads', 'a straight flush']
 
 // ── game state ─────────────────────────────────────────────────────────
 const BUYIN = 1000, SB = 10, BB = 20
 const G = {
-  stacks: { you: BUYIN, bot: BUYIN }, net: 0, button: 'bot',
+  stacks: { you: BUYIN, bot: BUYIN }, net: 0, boughtIn: BUYIN, winSet: null, button: 'bot',
   deck: [], board: [], reveal: 0, holes: { you: [], bot: [] },
   bet: { you: 0, bot: 0 }, committed: { you: 0, bot: 0 }, pot: 0,
   currentBet: 0, minRaise: BB, acted: { you: false, bot: false },
@@ -201,6 +210,7 @@ function startHand () {
   G.bet = { you: 0, bot: 0 }; G.committed = { you: 0, bot: 0 }; G.pot = 0
   G.inHand = { you: true, bot: true }; G.allIn = { you: false, bot: false }
   G.acted = { you: false, bot: false }
+  G.winSet = null
   G.streetIdx = 0; G.phase = 'betting'; G.result = ''
   const sb = G.button, bb = other(G.button)
   put(sb, SB); put(bb, BB)
@@ -267,9 +277,9 @@ function showdown () {
   const ry = eval7([...G.holes.you, ...G.board]); const rb = eval7([...G.holes.bot, ...G.board])
   const c = cmp(ry, rb)
   let winText
-  if (c > 0) { G.stacks.you += G.pot; G.result = 'you'; winText = `You win ${G.pot} with ${CAT[ry[0]]}` }
-  else if (c < 0) { G.stacks.bot += G.pot; G.result = 'bot'; winText = `Villain wins ${G.pot} with ${CAT[rb[0]]}` }
-  else { const h = Math.floor(G.pot / 2); G.stacks.you += G.pot - h; G.stacks.bot += h; G.result = 'split'; winText = `Split pot — both have ${CAT[ry[0]]}` }
+  if (c > 0) { G.stacks.you += G.pot; G.result = 'you'; G.winSet = new Set(bestFive7([...G.holes.you, ...G.board])); winText = `You win ${G.pot} with ${CAT[ry[0]]}` }
+  else if (c < 0) { G.stacks.bot += G.pot; G.result = 'bot'; G.winSet = new Set(bestFive7([...G.holes.bot, ...G.board])); winText = `Villain wins ${G.pot} with ${CAT[rb[0]]}` }
+  else { const h = Math.floor(G.pot / 2); G.stacks.you += G.pot - h; G.stacks.bot += h; G.result = 'split'; G.winSet = new Set(bestFive7([...G.holes.you, ...G.board])); winText = `Split pot — both have ${CAT[ry[0]]}` }
   finishHand(winText)
 }
 
@@ -279,9 +289,14 @@ function awardFold (winner) {
 }
 
 function finishHand (text) {
-  G.net = G.stacks.you - BUYIN
+  G.net = G.stacks.you - G.boughtIn
   G.msgText = text
   render()
+}
+function rebuy () {
+  if (G.stacks.you <= 0) { G.stacks.you = BUYIN; G.boughtIn += BUYIN }
+  if (G.stacks.bot <= 0) { G.stacks.bot = BUYIN }
+  startHand()
 }
 
 function endSession () {
@@ -317,10 +332,10 @@ function botAct () {
 }
 
 // ── render ─────────────────────────────────────────────────────────────
-function cardEl (c, faceUp) {
+function cardEl (c, faceUp, hi) {
   const d = document.createElement('div')
   if (!faceUp) { d.className = 'cardx back'; return d }
-  d.className = 'cardx' + (isRed(cs(c)) ? ' red' : '')
+  d.className = 'cardx' + (isRed(cs(c)) ? ' red' : '') + (hi ? ' winhi' : '')
   d.innerHTML = `<span class="corner">${RANKS[cr(c)]}${SUITS[cs(c)]}</span>${SUITS[cs(c)]}`
   return d
 }
@@ -340,12 +355,13 @@ function render () {
   const hy = $('handYou'); hy.innerHTML = ''
   const hb = $('handBot'); hb.innerHTML = ''
   const showdownNow = G.phase === 'showdown' || G.phase === 'over'
-  if (G.holes.you.length) { G.holes.you.forEach(c => hy.appendChild(cardEl(c, true))) }
-  if (G.holes.bot.length) { G.holes.bot.forEach(c => hb.appendChild(cardEl(c, showdownNow && G.result !== 'youfoldhidden'))) }
-  if (showdownNow && G.result === 'bot') { /* villain wins shown */ }
+  const hiSet = showdownNow && G.winSet ? G.winSet : null
+  const hi = (c) => !!(hiSet && hiSet.has(c))
+  if (G.holes.you.length) { G.holes.you.forEach(c => hy.appendChild(cardEl(c, true, hi(c)))) }
+  if (G.holes.bot.length) { G.holes.bot.forEach(c => hb.appendChild(cardEl(c, showdownNow, hi(c)))) }
   // board
   const bd = $('board'); bd.innerHTML = ''
-  for (let i = 0; i < 5; i++) { bd.appendChild(i < G.reveal ? cardEl(G.board[i], true) : emptyCard()) }
+  for (let i = 0; i < 5; i++) { bd.appendChild(i < G.reveal ? cardEl(G.board[i], true, hi(G.board[i])) : emptyCard()) }
   const tags = ['Pre-flop', 'Flop', 'Turn', 'River']
   $('streetTag').textContent = G.phase === 'idle' ? '—' : (showdownNow ? 'Showdown' : tags[G.streetIdx])
   // turn highlight
@@ -374,9 +390,25 @@ function renderControls () {
   if (+sl.value < +sl.min || +sl.value > +sl.max) sl.value = Math.min(maxR, minR)
   $('raiseAmt').textContent = canRaise ? sl.value : '0'
   $('bAllin').disabled = !yourTurn || G.stacks.you === 0
-  $('bNext').style.display = over ? '' : 'none'
+  ;['qHalf', 'qPot', 'qMax'].forEach(id => { $(id).disabled = !canRaise })
+  const busted = G.stacks.you <= 0 || G.stacks.bot <= 0
+  $('bNext').style.display = (over && !busted) ? '' : 'none'
+  $('bRebuy').style.display = (over && busted) ? '' : 'none'
   ;['bFold', 'bCall', 'bRaise', 'bAllin'].forEach(id => { $(id).style.display = over ? 'none' : '' })
   $('raiseSlider').parentElement.style.display = over ? 'none' : ''
+}
+
+function quickRaise (kind) {
+  const sl = $('raiseSlider'); const max = +sl.max, min = +sl.min
+  let v
+  if (kind === 'max') v = max
+  else {
+    const frac = kind === 'half' ? 0.5 : 1
+    const raiseBy = Math.round((G.pot * frac) / BB) * BB
+    v = (G.currentBet === 0 ? 0 : G.currentBet) + raiseBy
+  }
+  v = Math.max(min, Math.min(max, v))
+  sl.value = v; $('raiseAmt').textContent = v
 }
 
 function bootTable () {
@@ -386,6 +418,10 @@ function bootTable () {
   $('bRaise').onclick = () => act('you', G.currentBet === 0 ? 'bet' : 'raise', +$('raiseSlider').value)
   $('bAllin').onclick = () => act('you', 'allin')
   $('bNext').onclick = () => startHand()
+  $('bRebuy').onclick = () => rebuy()
+  $('qHalf').onclick = () => quickRaise('half')
+  $('qPot').onclick = () => quickRaise('pot')
+  $('qMax').onclick = () => quickRaise('max')
   $('raiseSlider').oninput = () => { $('raiseAmt').textContent = $('raiseSlider').value }
   $('blinds').textContent = SB + ' / ' + BB
   startHand()
