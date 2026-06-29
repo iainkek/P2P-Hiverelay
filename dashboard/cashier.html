@@ -234,7 +234,8 @@ function render () {
 
 function setMode (m) {
   S.mode = m; S.connected = false; S.address = null
-  if (m === 'demo') { S.wallet = 1000n * DEC; S.allowance = 0n; S.bankroll = 0n; S.pot = 0n; S.settled = false; S.net = 0n; S.withdrawable = 0n }
+  S.allowance = 0n; S.bankroll = 0n; S.pot = 0n; S.settled = false; S.net = 0n; S.withdrawable = 0n
+  S.wallet = m === 'demo' ? 1000n * DEC : 0n // demo faucet; live reads the chain on connect
   log('mode → ' + m)
   render()
 }
