@@ -1,0 +1,18 @@
+[
+  "function deposit(uint256 amount)",
+  "function cooperativeClose(address[] payees, uint256[] balances, bytes[] sigs)",
+  "function disputeClose(bytes32 sessionHash, uint256 epoch, address[] payees, uint256[] balances, bytes[] committeeSigs)",
+  "function withdraw()",
+  "function pot() view returns (uint256)",
+  "function settled() view returns (bool)",
+  "function escrowId() view returns (bytes32)",
+  "function committeeThreshold() view returns (uint256)",
+  "function deposited(address seat) view returns (uint256)",
+  "function withdrawable(address seat) view returns (uint256)",
+  "function isParticipant(address seat) view returns (bool)",
+  "function participants(uint256 i) view returns (address)",
+  "event Opened(bytes32 escrowId)",
+  "event Funded(address seat, uint256 amount)",
+  "event Settled(string kind)",
+  "event Withdrawn(address seat, uint256 amount)"
+]
