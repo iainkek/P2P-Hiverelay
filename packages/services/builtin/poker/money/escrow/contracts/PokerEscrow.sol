@@ -81,7 +81,7 @@ contract PokerEscrow {
     function deposit(uint256 amount) external nonReentrant {
         require(!settled, "SETTLED");
         require(isParticipant[msg.sender], "NOT_SEAT");
-        require(token.transferFrom(msg.sender, address(this), amount), "XFER");
+        _safeTransferFrom(msg.sender, address(this), amount);
         deposited[msg.sender] += amount;
         emit Funded(msg.sender, amount);
     }
@@ -125,7 +125,7 @@ contract PokerEscrow {
         uint256 amt = withdrawable[msg.sender];
         require(amt > 0, "NOTHING");
         withdrawable[msg.sender] = 0;
-        require(token.transfer(msg.sender, amt), "WITHDRAW");
+        _safeTransfer(msg.sender, amt);
         emit Withdrawn(msg.sender, amt);
     }
 
@@ -172,6 +172,18 @@ contract PokerEscrow {
             if (isCommittee[signer]) count++;
         }
         return count >= committeeThreshold;
+    }
+
+    // SafeERC20-style transfers: tolerate non-standard tokens (e.g. mainnet
+    // USDT) that return no value, while still reverting on an explicit `false`.
+    function _safeTransfer(address to, uint256 amount) internal {
+        (bool ok, bytes memory data) = address(token).call(abi.encodeWithSelector(token.transfer.selector, to, amount));
+        require(ok && (data.length == 0 || abi.decode(data, (bool))), "TRANSFER_FAILED");
+    }
+
+    function _safeTransferFrom(address from, address to, uint256 amount) internal {
+        (bool ok, bytes memory data) = address(token).call(abi.encodeWithSelector(token.transferFrom.selector, from, to, amount));
+        require(ok && (data.length == 0 || abi.decode(data, (bool))), "TRANSFER_FROM_FAILED");
     }
 
     function _recover(bytes32 digest, bytes calldata sig) internal pure returns (address) {
