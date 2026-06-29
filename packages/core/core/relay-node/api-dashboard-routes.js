@@ -6,7 +6,8 @@ const FULL_DASHBOARD_ROUTES = new Map([
   ['/leaderboard', { cacheKey: '_leaderboardHtml', filename: 'leaderboard.html' }],
   ['/catalog', { cacheKey: '_catalogHtml', filename: 'catalog.html' }],
   ['/cashier', { cacheKey: '_cashierHtml', filename: 'cashier.html' }],
-  ['/table', { cacheKey: '_tableHtml', filename: 'table.html' }]
+  ['/table', { cacheKey: '_tableHtml', filename: 'table.html' }],
+  ['/lobby', { cacheKey: '_lobbyHtml', filename: 'lobby.html' }]
 ])
 
 export function resolveDashboardGetRoute ({
