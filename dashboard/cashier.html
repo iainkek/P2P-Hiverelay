@@ -78,7 +78,42 @@ input:focus{outline:none;border-color:var(--cyan)}
 .flow{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;font-size:.74rem;color:var(--text-dim);font-family:var(--mono);margin-top:.6rem}
 .flow b{color:var(--text-bright)}.flow .arrow{color:var(--text-dim);opacity:.6}
 
-@media(max-width:900px){.stats-row{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:1fr}.topbar-nav{display:none}}
+/* lifecycle stepper */
+.stepper{display:flex;align-items:center;background:var(--card);border:1px solid var(--card-border);border-radius:12px;padding:1.1rem 1.6rem;margin-bottom:1.5rem}
+.step{display:flex;flex-direction:column;align-items:center;gap:.5rem;flex:0 0 auto}
+.step .dot{width:2.3rem;height:2.3rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.9rem;font-weight:700;background:#0c0f16;border:2px solid var(--card-border);color:var(--text-dim);transition:all .4s cubic-bezier(.4,0,.2,1)}
+.step .lbl{font-size:.66rem;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);transition:color .4s;white-space:nowrap}
+.step.done .dot{background:rgba(63,185,80,.15);border-color:var(--green);color:var(--green)}
+.step.done .lbl{color:var(--green)}
+.step.active .dot{background:rgba(245,200,66,.18);border-color:var(--yellow);color:var(--yellow);animation:pulse 1.9s infinite}
+.step.active .lbl{color:var(--text-bright);font-weight:600}
+.step-line{flex:1 1 auto;height:2px;background:var(--card-border);margin:0 .65rem;position:relative;top:-.85rem;border-radius:2px;transition:background .4s}
+.step-line.done{background:var(--green)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,215,0,.5)}70%{box-shadow:0 0 0 .55rem rgba(255,215,0,0)}100%{box-shadow:0 0 0 0 rgba(255,215,0,0)}}
+
+/* settle result banner */
+.result{display:none;align-items:center;gap:1.1rem;border-radius:12px;padding:1.1rem 1.5rem;margin-bottom:1.5rem;border:1px solid var(--card-border)}
+.result.show{display:flex;animation:popin .5s cubic-bezier(.2,.8,.25,1)}
+.result.win{background:linear-gradient(135deg,rgba(63,185,80,.14),rgba(63,185,80,.02));border-color:rgba(63,185,80,.45)}
+.result.loss{background:linear-gradient(135deg,rgba(244,112,103,.12),rgba(244,112,103,.02));border-color:rgba(244,112,103,.4)}
+.result.even{background:rgba(132,147,168,.08)}
+.result .ico{font-size:2rem;line-height:1}
+.result .big{font-size:1.7rem;font-weight:800;font-family:var(--mono);line-height:1.05}
+.result.win .big{color:var(--green)}.result.loss .big{color:var(--red)}.result.even .big{color:var(--text-bright)}
+.result .sub{font-size:.78rem;color:var(--text-dim);margin-top:.2rem}
+@keyframes popin{from{opacity:0;transform:translateY(-8px) scale(.98)}to{opacity:1;transform:none}}
+
+/* micro-interactions */
+.stat-card{transition:border-color .2s,transform .2s,box-shadow .2s}
+.stat-card:hover{transform:translateY(-2px);box-shadow:0 6px 20px -8px rgba(0,0,0,.5)}
+.btn{transition:filter .15s,opacity .15s,transform .08s,box-shadow .2s}
+.btn:active:not(:disabled){transform:scale(.97)}
+.btn-primary:hover:not(:disabled){box-shadow:0 0 18px -4px rgba(245,200,66,.5)}
+.btn.is-connected{background:rgba(63,185,80,.15)!important;color:var(--green)!important;border:1px solid rgba(63,185,80,.4);opacity:1!important;cursor:default}
+.stat-value{transition:color .3s;font-variant-numeric:tabular-nums}
+.card{transition:border-color .2s}
+
+@media(max-width:900px){.stats-row{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:1fr}.topbar-nav{display:none}.stepper{overflow-x:auto}.step .lbl{font-size:.6rem}}
 </style>
 </head>
 <body>
@@ -119,6 +154,26 @@ input:focus{outline:none;border-color:var(--cyan)}
         <b>Deposit</b><span class="arrow">→</span><b>Play (off-chain)</b><span class="arrow">→</span><b>Settle net</b><span class="arrow">→</span><b>Withdraw</b>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Lifecycle stepper -->
+<div class="stepper" id="stepper">
+  <div class="step" data-step="0"><div class="dot">1</div><div class="lbl">Connect</div></div>
+  <div class="step-line" data-line="0"></div>
+  <div class="step" data-step="1"><div class="dot">2</div><div class="lbl">Deposit</div></div>
+  <div class="step-line" data-line="1"></div>
+  <div class="step" data-step="2"><div class="dot">3</div><div class="lbl">Settle</div></div>
+  <div class="step-line" data-line="2"></div>
+  <div class="step" data-step="3"><div class="dot">4</div><div class="lbl">Cash out</div></div>
+</div>
+
+<!-- Settle result banner -->
+<div class="result" id="result">
+  <div class="ico" id="resultIco">&#127881;</div>
+  <div>
+    <div class="big" id="resultBig">--</div>
+    <div class="sub" id="resultSub">--</div>
   </div>
 </div>
 
@@ -167,6 +222,7 @@ input:focus{outline:none;border-color:var(--cyan)}
     <div class="kv"><span class="k">Your net result</span><span class="v" id="kNet">--</span></div>
     <button class="btn btn-ghost" id="btnSimulate">Simulate session result (demo)</button>
     <button class="btn btn-primary" id="btnWithdraw" disabled>Withdraw net</button>
+    <button class="btn btn-cyan" id="btnNew" style="display:none">Start new session</button>
   </div>
 </div>
 
@@ -209,27 +265,75 @@ const fmt = (bi) => (Number(bi) / 1e6).toLocaleString(undefined, { minimumFracti
 const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '--'
 function log (msg, cls) { const el = $('log'); const ts = new Date().toLocaleTimeString(); el.innerHTML = `<div><span class="t">${ts}</span> <span class="${cls || ''}">${msg}</span></div>` + el.innerHTML }
 
+// Count-up a USD₮ stat value (eased) for a bit of life; settles on the exact value.
+function setNum (el, toBI) {
+  const to = Number(toBI) / 1e6
+  const from = parseFloat((el.textContent || '').replace(/,/g, '')) || 0
+  if (Math.abs(from - to) < 0.005) { el.textContent = fmt(toBI); return }
+  const t0 = performance.now(), dur = 420
+  function step (t) {
+    const k = Math.min(1, (t - t0) / dur)
+    const e = 0.5 - Math.cos(Math.PI * k) / 2
+    el.textContent = (from + (to - from) * e).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    if (k < 1) requestAnimationFrame(step); else el.textContent = fmt(toBI)
+  }
+  requestAnimationFrame(step)
+}
+
 function render () {
   $('modeBadge').textContent = S.mode === 'demo' ? 'Demo' : 'Live'
   $('modeBadge').className = 'mode-badge ' + (S.mode === 'demo' ? 'demo' : 'live')
   $('addrBadge').textContent = S.connected ? short(S.address) : 'not connected'
-  $('sWallet').textContent = fmt(S.wallet)
+  setNum($('sWallet'), S.wallet)
   $('sAllow').textContent = 'allowance ' + fmt(S.allowance)
-  $('sBankroll').textContent = fmt(S.bankroll)
-  $('sPot').textContent = fmt(S.pot)
+  setNum($('sBankroll'), S.bankroll)
+  setNum($('sPot'), S.pot)
   $('sStatus').textContent = S.settled ? 'settled' : 'open'
-  $('sNet').textContent = fmt(S.withdrawable)
+  setNum($('sNet'), S.withdrawable)
   const netCls = S.net > 0n ? 'green' : S.net < 0n ? 'red' : ''
   $('sNet').className = 'stat-value ' + (S.settled ? netCls : 'green')
   $('kStatus').innerHTML = S.settled ? '<span class="pill settled">settled</span>' : '<span class="pill open">open</span>'
   $('kPot').textContent = fmt(S.pot)
   $('kNet').textContent = S.settled ? (S.net >= 0n ? '+' : '') + fmt(S.net) : '--'
+  // buttons
+  $('btnConnect').disabled = S.connected
+  $('btnConnect').classList.toggle('is-connected', S.connected)
+  $('btnConnect').textContent = S.connected ? 'Connected ✓' : (S.mode === 'demo' ? 'Connect (demo wallet)' : 'Connect wallet')
   $('btnDeposit').disabled = !S.connected || S.settled
   $('btnWithdraw').disabled = !S.connected || !S.settled || S.withdrawable === 0n
-  $('btnSimulate').style.display = S.mode === 'demo' ? '' : 'none'
+  $('btnSimulate').style.display = (S.mode === 'demo' && !S.settled) ? '' : 'none'
+  $('btnNew').style.display = (S.settled && S.mode === 'demo') ? '' : 'none'
   $('liveConfig').style.display = S.mode === 'live' ? '' : 'none'
   $('btnDemo').style.borderColor = S.mode === 'demo' ? 'var(--cyan)' : ''
   $('btnLive').style.borderColor = S.mode === 'live' ? 'var(--cyan)' : ''
+  renderStepper()
+  renderResult()
+}
+
+// Lifecycle stepper: Connect → Deposit → Settle → Cash out.
+function renderStepper () {
+  const done = [S.connected, S.bankroll > 0n, S.settled, S.settled && S.withdrawable === 0n]
+  let active = done.findIndex(d => !d); if (active < 0) active = 3
+  document.querySelectorAll('.step').forEach((el, i) => {
+    el.classList.toggle('done', done[i])
+    el.classList.toggle('active', !done[i] && i === active)
+  })
+  document.querySelectorAll('.step-line').forEach((el, i) => el.classList.toggle('done', done[i]))
+}
+
+// Settle payoff banner: celebrate a win, soften a loss.
+function renderResult () {
+  const el = $('result')
+  if (!S.settled) { el.className = 'result'; return }
+  const kind = S.net > 0n ? 'win' : S.net < 0n ? 'loss' : 'even'
+  el.className = 'result show ' + kind
+  $('resultIco').innerHTML = kind === 'win' ? '&#127881;' : kind === 'loss' ? '&#128184;' : '&#129309;'
+  $('resultBig').textContent = (S.net >= 0n ? '+' : '') + fmt(S.net) + ' USD₮'
+  $('resultSub').textContent = kind === 'win'
+    ? 'Nice session — withdraw ' + fmt(S.withdrawable) + ' USD₮ to your wallet.'
+    : kind === 'loss'
+      ? 'Tough session. Your withdrawable net is ' + fmt(S.withdrawable) + ' USD₮.'
+      : 'Broke even — withdraw your ' + fmt(S.withdrawable) + ' USD₮ bankroll.'
 }
 
 function setMode (m) {
@@ -267,6 +371,11 @@ async function demoWithdraw () {
   S.wallet += S.withdrawable
   log('withdrew ' + fmt(S.withdrawable) + ' USD₮ to wallet', 'ok')
   S.withdrawable = 0n
+  render()
+}
+function demoNewSession () {
+  S.bankroll = 0n; S.pot = S.oppBankroll; S.settled = false; S.net = 0n; S.withdrawable = 0n
+  log('new session — table reset; your wallet (winnings) carries over', 'ok')
   render()
 }
 
@@ -333,6 +442,8 @@ function bootCashier () {
   $('btnDeposit').onclick = () => { const amt = BigInt(Math.round((parseFloat($('depAmount').value) || 0) * 1e6)); if (amt <= 0n) return log('enter an amount', 'err'); S.mode === 'demo' ? demoDeposit(amt) : liveDeposit(amt) }
   $('btnSimulate').onclick = () => demoSimulate()
   $('btnWithdraw').onclick = () => S.mode === 'demo' ? demoWithdraw() : liveWithdraw()
+  $('btnNew').onclick = () => demoNewSession()
+  $('depAmount').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnDeposit').click() })
   log('cashier ready — Demo mode. Connect to begin.')
   render()
 }
