@@ -49,6 +49,7 @@ full deposit to escape a loss). If you never withdraw, you get nothing.
 | `escrow/wallet/wdk-signer.cjs` | 07 | Tether **WDK** player wallet (escrow-compatible sigs) | (in escrow suite) |
 | `escrow/scripts/full-demo.cjs` | — | end-to-end capstone: betting → reduce → settle in USD₮ (both close paths) | runnable |
 | `fra/play-on-fra.mjs` | — | drive the REAL relay's signed log → reducer | ready (needs FRA key) |
+| `dashboard/{lobby,table,cashier}.html` | — | player-facing UI: lobby · playable table · USD₮ cashier + live co-sign — see [dashboard/POKER.md](../../../../../dashboard/POKER.md) | headless-verified |
 
 **All three settlement paths are proven on-chain:** cooperative (players co-sign), stall
 (relay attestation), and cheat (arbitration → forfeit). Run the suites:
