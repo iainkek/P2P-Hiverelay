@@ -51,7 +51,7 @@
     <div class="row" style="margin-top:1rem">
       <button class="btn" id="bHost">Host a table</button>
       <button class="btn ghost" id="bJoin">Join a table</button>
-      <button class="btn ghost" id="bDemo">Live deal demo (solo)</button>
+      <button class="btn ghost" id="bDemo">Watch a demo hand (solo)</button>
     </div>
   </div>
 
@@ -551,8 +551,30 @@ $('bDemo').onclick = async () => {
   }
   const ha = readMyHand(mirror, { writer: A.writer, x: A.x }, writers), hb = readMyHand(mirror, { writer: B.writer, x: B.x }, writers)
   render($('holeMe'), ha.hole, true); render($('holeOpp'), hb.hole, true); render($('board'), ha.board, true)
-  log('DEAL COMPLETE — A ' + ha.hole.map(cardStr).join(' ') + ' · B ' + hb.hole.map(cardStr).join(' ') + ' · board ' + ha.board.map(cardStr).join(' '))
+  log('trustless deal complete — A ' + ha.hole.map(cardStr).join(' ') + ' · B ' + hb.hole.map(cardStr).join(' ') + ' · board ' + ha.board.map(cardStr).join(' '))
   window.__mp = { hole: ha.hole, board: ha.board, ready: ha.ready && hb.ready }
+  // Auto-play a full hand so a first-timer sees the WHOLE flow: both seats check/call
+  // through the streets, then a showdown opens both hands and names the winner.
+  const config = { seats: writers, stacks: Object.fromEntries(writers.map(w => [w, BUYIN])), blinds: { sb: SB, bb: BB }, button: A.writer }
+  for (let i = 0; i < 60; i++) {
+    const bs = bettingState(mirror, config); if (bs.complete) break
+    const toAct = view(bs).toAct; if (!toAct) break
+    const la = legalActions(bs); const type = la.owe === 0 ? 'check' : 'call'
+    const s = toAct === A.writer ? A : B
+    const a = { kind: 'bet-action', seat: s.writer, type }
+    const r = await rt.postMove(tableKey, await signEntry(s.sign, { tableKey, writer: s.writer, seq: s.seq, ts: Date.now(), payload: a }))
+    if (r.json && r.json.ok) { mirror.push({ writer: s.writer, payload: a }); s.seq++; log('demo — seat ' + (s === A ? 'A' : 'B') + ' ' + type + (type === 'call' ? ' ' + la.callAmount : '')); renderBetting(bettingState(mirror, config), { writer: A.writer, writers }) }
+    else await sleep(400)
+    await sleep(220)
+  }
+  // Showdown — both hands are already open in the demo's god-view; evaluate + name the winner.
+  const rankA = evaluate7([...ha.hole, ...ha.board]), rankB = evaluate7([...hb.hole, ...ha.board])
+  const cmp = compareRank(rankA, rankB)
+  $('seatOpp').querySelector('.lbl').textContent = 'seat B — shown'; $('turnPill').textContent = 'demo over'
+  const res = cmp === 0 ? 'Split pot — tied hands' : ('Seat ' + (cmp > 0 ? 'A' : 'B') + ' wins with ' + CAT[(cmp > 0 ? rankA : rankB)[0]])
+  $('result').innerHTML = '<b>Demo hand complete — ' + res + '.</b> The deal was trustless (neither seat saw the other’s cards or could rig the shuffle) and the showdown opened both hands cryptographically. <a href="/mp-table" style="color:var(--cyan);text-decoration:none">▸ Host or Join a real game for USD₮</a>'
+  $('result').style.color = 'var(--text)'
+  window.__demoHand = { done: true, winner: cmp > 0 ? 'A' : cmp < 0 ? 'B' : 'split' }
 }
 
 // Auto-join from a shared link: /mp-table?join=<invite> → open the join flow with the

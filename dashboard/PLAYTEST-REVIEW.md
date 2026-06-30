@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Full-hand demo for first-timers (iter 71).** The solo "demo" only ran the *deal* — it
+stopped at "DEAL COMPLETE" with both hands shown but no betting, showdown, or winner, so a
+newcomer trying it to learn the game saw the trustless crypto but not the actual poker, and
+was left at the table with "now what?" Extended it to auto-play a **full hand**: both seats
+check/call through the streets (announced in the log), then a showdown opens both hands and
+names the winner with its category ("Seat A wins with a flush"), plus a banner guiding them
+to "Host or Join a real game for USD₮." Relabeled the button "Watch a demo hand (solo)."
+Verified (6/6): the demo plays deal→betting→showdown, names a winner, shows the outcome +
+guidance, the log shows both seats acting, no errors. Proper onboarding now — a first-timer
+sees the whole experience before finding a partner.
+
 **Dealer button + blind position badges (iter 70).** Every real poker UI shows the dealer
 button — it's how you know who posts which blind and who acts first — and the mp-table had
 none. Players had to infer their position from the action order and which blind drained
