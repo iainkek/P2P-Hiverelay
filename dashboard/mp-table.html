@@ -449,7 +449,15 @@ async function playSession (rt, baseTableKey, me, writers, oppWriter, isHost) {
     }
     show('toCashier') // net is bridged after every hand — a player can stop & settle anytime
     if (isHost) {
-      await waitNextHandClick()
+      // wait for the host to deal the next hand, OR detect the opponent ending the session
+      let dealt = false, oppLeft = false
+      waitNextHandClick().then(() => { dealt = true })
+      while (!dealt && !oppLeft) {
+        await sleep(700)
+        const lg = await rt.readLog(tableKey)
+        if (((lg.json && lg.json.entries) || []).find(x => (x.payload || x).kind === 'session-over')) { oppLeft = true; if (nextHandResolve) nextHandResolve = null; hide('nextHand') }
+      }
+      if (oppLeft) { $('result').textContent = 'Your opponent ended the session. Settle your net (' + (stacks[me.writer] - BUYIN >= 0 ? '+' : '') + (stacks[me.writer] - BUYIN) + ') in the Cashier.'; show('toCashier'); window.__sessionOver = true; log('opponent ended the session — settle your net'); return }
       const nextKey = (await createSeat()).pub
       const ct = await rt.createTable(nextKey, writers)
       if (ct.status !== 201) { log('could not start the next hand: ' + ct.status); return }

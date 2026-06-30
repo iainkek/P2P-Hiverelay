@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Symmetric session-end — host also detects the joiner leaving (iter 75).** Iter 74's
+session-over signal was one-directional: the host leaving notified the joiner (who's
+polling), but if the *joiner* left, the host sat at "Deal next hand" (not polling) and
+wouldn't notice — it would deal the next hand and stall waiting for an absent opponent.
+Made it symmetric: while the host waits to deal, it now also polls the current table for a
+`session-over` signal (racing the "Deal next hand" click against the poll), and if the
+opponent left it ends with the same clear message + Settle button. Verified: the host
+detects the joiner ending the session within seconds (no deal-into-a-stall), and the normal
+"Deal next hand" continue path is unaffected (4/4). Either seat can now end a session
+gracefully and the other knows immediately.
+
 **Graceful session-end signal (iter 74).** A real session-end rough edge: when the host
 stopped and clicked "Settle in the Cashier," the joiner had no idea — it kept polling for
 the next hand for **~20 minutes** before giving up. Now the leaver posts a `session-over`
