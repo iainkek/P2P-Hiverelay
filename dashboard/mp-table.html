@@ -274,6 +274,7 @@ async function runBetting (sess, me, writers, config) {
       const act = await awaitAction(S, me)
       const ok = await sess.post({ kind: 'bet-action', seat: me.writer, type: act.type, amount: act.amount })
       if (ok) { postedAtCount = count; log('you → ' + act.type + (act.amount ? ' ' + act.amount : '')) }
+      else { log('⚠ couldn’t reach the relay — your ' + act.type + ' didn’t post. Check your connection and act again.'); $('turnPill').textContent = 'relay unreachable — retry' }
     } else {
       // waiting on the opponent — if they're past the deadline (relay-ts of the last
       // entry + grace), let me claim the pot (handles a full disconnect, browser closed).

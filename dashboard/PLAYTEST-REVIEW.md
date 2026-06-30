@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Mobile play reviewed + relay-unreachable feedback (iter 55).** Real testers use phones,
+so I drove a full game on a 390×844 mobile viewport and screenshotted the in-hand UI: the
+host handshake (numbered steps, a Copy button so no fiddly text-selection, disabled-until-
+ready start) and the betting screen (both seats, pot, turn clock, full board, and
+Fold/Call/Raise + slider) **all fit and are tappable** — mobile holds up. Separately,
+traced a real robustness gap on any platform: if a bet post exhausts its 40 retries
+(relay unreachable ~20s) it returned `false` and the loop silently re-prompted — the
+player clicks Call, nothing visibly happens. Added explicit feedback (a log line + a
+"relay unreachable — retry" turn pill) so a flaky network is legible, not mysterious.
+Verified a full contested hand still completes (7/7), no regressions.
+
 **Accidental-leave guard mid-session (iter 54).** A real edge a human will hit: refreshing
 or closing the tab mid-session. The seat keys (Ed25519 sign keypair + ElGamal decryption
 scalar, `makeSeat()`) live **only in memory** and the writer set is fixed at table
