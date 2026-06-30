@@ -94,6 +94,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Hosted-relay deployment verified end-to-end (iter 88).** Applied the iter-87 "test the
+deployment you'll actually run" lens to the rest of the stack and confirmed no other
+hosted-relay blocker: the **dashboard pages** (`/mp-table`, `/cashier`) and **`/poker-engine/*`
+JS modules are open** (no auth) so remote players can load them, and the modules set
+`Cache-Control: max-age=300` so the ~50-module cold load (under the 60/min cap, per-IP) is
+fine and reloads use the cache — no page-load throttling. Then proved the **full multiplayer
+flow** works on a **keyed (hosted-like) relay** (`HIVERELAY_API_KEY` set + `openPokerTables`):
+host creates the table without a key → complete handshake → deal → betting → showdown →
+settle (13/13). So with the one flag, a real hosted HTTPS relay supports remote human play
+end-to-end — the iter-87 fix unblocks the whole flow, not just `createTable`.
+
 **Deployment blocker: remote players couldn't host a game (iter 87).** A critical find that
 *only* showed up by reasoning about a hosted deployment (my tests all run on localhost, which
 masked it). `POST /api/poker/tables` (host creates a game) requires `_requireAuth` — which on
