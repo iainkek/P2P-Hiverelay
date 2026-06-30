@@ -43,6 +43,20 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Dispute-settlement recourse proven on-chain — but not yet enabled in the UI (iter 60).**
+Found the disconnect that makes iter-56's "claim against a cheater" currently theoretical:
+the cashier's `Deploy a test escrow` passes `committee=[], threshold=0`, so the escrow
+reverts `disputeClose` with `DISPUTE_DISABLED`. The recourse mechanism is real in the
+contract but turned off on every test escrow. Proved the full path works end-to-end on a
+local EVM (8/8): an escrow deployed **with** a committee → the committee attests the
+reducer's balances (B wins, A forfeits for cheating) → `disputeClose` → **B withdraws 1300
+without A's cooperation**, A penalized to 700, escrow drained, conservation held; and a
+**non-committee signature is rejected** (`NO_QUORUM`) so only the real committee can attest.
+So `reduceMpHand` (iter 56) → committee sig → `disputeClose` → honest claim is now a proven
+chain. The honest gap that remains is purely operational wiring: the cashier should deploy
+test escrows with the relay's committee key, and the relay should expose an attest endpoint
+that runs the reducer + threshold-signs. Test at `test/integration/dispute-close.test.cjs`.
+
 **No-show / no-refund guidance at the deposit step (iter 59).** Reviewed the escrow's
 refund semantics: `PokerEscrow.sol` is explicit that there is **no unilateral
 deposit-refund** — funds come back only via `cooperativeClose` (all seats sign) or
