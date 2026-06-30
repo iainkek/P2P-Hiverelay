@@ -4,6 +4,27 @@ A deep review of every user flow from the perspective of a real human sitting do
 to play and to test the real-money rail on testnet. Living doc — updated as the
 review loop runs.
 
+## Multiplayer substrate — PROVEN on a local relay (iteration 16)
+
+The remaining frontier (two humans, on-chain settlement) needs a relay table that
+both players write to. Enabled the relay's built-in **poker service** locally
+(`services.json: {enabled:true, plugins:["poker"]}` in `~/.hiverelay/storage`, which
+expands to poker+vrf+arbitration+zk) and ran the relay-integration smoke
+(`fra/play-on-fra.mjs`) against the **local** relay:
+
+- `POST /api/poker/tables` (two writers) → **201**.
+- Both seats `POST /api/poker/<key>/move` signed entries → **200** (log indices 0,1).
+- `GET /api/poker/<key>/log` → 2 entries → `reduce()` → **`illegal: null`**,
+  deterministic `sessionHash`, balances `{alice:+30, bob:−30}` → on-chain final
+  **alice 130 / bob 70 USD₮**.
+
+So a hand on the relay's signed log **reduces to exactly the settlement the escrow
+pays** — the whole substrate (relay table API → signed log → reducer → on-chain
+balances) works end-to-end locally. **What's left for real two-human play is the
+browser table client** (post each action as a signed move + render from the shared
+log instead of local bots); the relay API, the reducer, the escrow, and the settle
+UI are all proven.
+
 ## Verified against a REAL relay node (iteration 15)
 
 Everything before this was tested against a mocked static server. Booted an actual
