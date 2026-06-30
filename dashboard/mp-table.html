@@ -117,8 +117,9 @@ import * as DK from '/poker-engine/crypto/elgamal-deck.js'
 import { nextDealAction, readMyHand } from '/poker-engine/crypto/mp-deal-driver.js'
 import { createHand, applyAction, legalActions, view } from '/poker-engine/betting.js'
 import { evaluate7, compareRank } from '/poker-engine/hand-eval.js'
-import { dealStateFromLog, sharesForPosition, msgShare, unhex } from '/poker-engine/crypto/hand-deal-protocol.js'
+import { dealStateFromLog, sharesForPosition, msgShare, unhex, hex, ctBytes, canonicalDeck } from '/poker-engine/crypto/hand-deal-protocol.js'
 import { dealLayout, openBoard } from '/poker-engine/crypto/mental-deal.js'
+import { verifyShuffle } from '/poker-engine/crypto/reencrypt-shuffle.js'
 
 const RANKS = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'], SUITS = ['♠','♥','♦','♣']
 const CAT = ['high card', 'a pair', 'two pair', 'three of a kind', 'a straight', 'a flush', 'a full house', 'quads', 'a straight flush']
@@ -283,7 +284,7 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
   const v = view(S); const contrib = v.contributions || {}
   const folded = new Set(v.folded || [])
   if (forfeitAgainst) folded.add(forfeitAgainst) // a timed-out seat forfeits = treated as folded
-  const live = writers.filter(w => !folded.has(w))
+  let live = writers.filter(w => !folded.has(w))
   const pubBy = (w) => { const e = sess.localLog.find(x => x.writer === w && (x.payload || x).kind === 'mp-key'); return e ? unhex((e.payload || e).pub) : null }
   const sign = (n) => (n >= 0 ? '+' : '') + n
   let outStacks = null
@@ -321,8 +322,34 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
   }
   // Uncontested: everyone but one folded → that seat wins the pot, no cards shown.
   if (live.length === 1) { settle(live[0], hand.board); return { newStacks: outStacks } }
-  // Contested: publish my own hole-card shares so my hand can be opened by all.
+  // Contested: publish my hole-card shares so my hand can be opened, AND reveal my
+  // shuffle params so the opponent can replay-verify I never substituted a card.
   for (const pos of hole[myIdx]) await sess.post(msgShare(pos, DK.decryptShare(me.x, deck[pos].C1)))
+  if (me.mem && me.mem.shuffles && me.mem.shuffles.posted) await sess.post({ kind: 'shuffle-reveal', perm: me.mem.shuffles.perm, rands: me.mem.shuffles.rands.map(hex) })
+  // Replay-verify every seat's shuffle against its pre-committed hash (cheat-evidence):
+  // an invalid shuffle (a substituted card) ⇒ that seat forfeits. Returns the cheater,
+  // {pending} until all reveals are in, or {ok}.
+  const verifyShuffles = () => {
+    try {
+      const H = st.H, deck0 = canonicalDeck(H)
+      const sEntries = sess.localLog.filter(e => ((e.payload || e).kind) === 'mp-shuffle')
+      const reveals = {}; sess.localLog.forEach(e => { const p = e.payload || e; if (p.kind === 'shuffle-reveal') reveals[e.writer] = p })
+      const decks = [deck0]; for (const se of sEntries) decks.push((se.payload || se).deck.map(ctBytes))
+      for (let i = 0; i < sEntries.length; i++) {
+        const w = sEntries[i].writer, rev = reveals[w]
+        if (!rev) return { pending: true, missing: w }
+        const r = verifyShuffle({ input: decks[i], output: decks[i + 1], H, perm: rev.perm, rands: rev.rands.map(unhex), commitment: (sEntries[i].payload || sEntries[i]).commit })
+        if (!r.valid) return { cheater: w, reason: r.reason }
+      }
+      return { ok: true }
+    } catch (e) { return { ok: true, error: e.message } } // never block settlement on a verify glitch
+  }
+  const winByForfeit = (cheater, boardCards, why) => {
+    log('⚠ ' + short(cheater) + ' ' + why + ' — pot awarded to you'); folded.add(cheater); live = writers.filter(w => !folded.has(w))
+    settle(me.writer, boardCards); if (window.__hand) window.__hand.cheatClaim = { cheater, why }
+    return { newStacks: outStacks }
+  }
+  let allUpSinceG = -1
   for (let g = 0; g < 4000; g++) {
     await sleep(300); await sess.sync()
     const shown = {}; let allUp = true
@@ -330,11 +357,15 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
     const boardCards = board.map(pos => openBoard(deck[pos], sharesForPosition(sess.localLog, pos, deck, pubBy)))
     if (boardCards.some(c => c === null)) allUp = false
     if (!allUp) continue
+    if (allUpSinceG < 0) allUpSinceG = g
+    const vr = verifyShuffles()
+    if (vr.cheater && vr.cheater !== me.writer) return winByForfeit(vr.cheater, boardCards, 'cheated the shuffle (' + vr.reason + ')')
+    if (vr.pending) { if (g - allUpSinceG < 24) continue; if (vr.missing && vr.missing !== me.writer) return winByForfeit(vr.missing, boardCards, 'would not reveal its shuffle'); continue }
     const oppW = writers[1 - myIdx]
     render($('holeOpp'), shown[oppW] || [0, 0], true); $('seatOpp').querySelector('.lbl').textContent = 'shown'
     let winner = live[0], best = evaluate7([...shown[live[0]], ...boardCards])
     for (const w of live.slice(1)) { const r = evaluate7([...shown[w], ...boardCards]); if (compareRank(r, best) > 0) { best = r; winner = w } }
-    settle(winner, boardCards, best[0])
+    settle(winner, boardCards, best[0]); if (window.__hand) window.__hand.shufflesVerified = (vr.ok === true && !vr.error)
     return { newStacks: outStacks }
   }
   return { newStacks: outStacks }

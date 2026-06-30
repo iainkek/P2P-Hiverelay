@@ -43,6 +43,20 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Shuffle cheat-evidence wired into showdown (iter 49).** Another protocol-invariant gap:
+the table opened cards at showdown but never *verified the shuffles*. The re-encryption
+shuffle is plaintext-preserving only if honest — a malicious client could post an invalid
+shuffle that substitutes its hole card for a better one buried in the unopened deck (a
+plain distinct-cards check wouldn't catch it). The `reencrypt-shuffle` commit-reveal
+exists for exactly this but wasn't used. Now at showdown each seat **reveals its shuffle
+params** (`perm`/`rands`, pre-committed at deal time) and **replay-verifies every seat's
+shuffle**; an invalid shuffle (or a withheld reveal) forfeits the cheater. Verified:
+`verifyShuffle` catches substituted cards / lying about params / non-permutations (4/4
+isolation); honest two-browser play replay-verifies both shuffles with no false forfeit
+and correct zero-sum settle (7/7); the disconnect-forfeit path stays intact (8/8). The
+cheat→forfeit branch is covered by composition (proven `verifyShuffle` + proven
+forfeit-settle path) rather than an end-to-end adversarial browser.
+
 **Uncalled-bet refund — cooperative == dispute settle (iter 48).** A deep-protocol bug
 that carried stacks made reachable: with unequal stacks a seat can be all-in for *less*
 than the opponent's bet, leaving an **uncalled bet**. The settle did winner-takes-
