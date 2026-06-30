@@ -221,6 +221,7 @@ input[readonly]{color:var(--cyan);cursor:text}
   <div class="card">
     <h3><span class="step-no">2</span> Deposit bankroll</h3>
     <div class="hint">Approve (if needed) and deposit USD₮ into the table escrow. You can top up any time before the session settles.</div>
+    <div class="hint" style="color:var(--orange);border:1px solid rgba(240,166,74,.3);border-radius:6px;padding:.5rem .6rem;background:rgba(240,166,74,.06)">⚠ <b>Deposit only once your opponent is also ready.</b> The escrow has <b>no unilateral refund</b> — your deposit comes back only by settling (both seats sign the agreed net) or a committee dispute, so if the other seat never shows, funds stay locked until then. On <b>testnet</b> the USD₮ is faucetable, so this is low-stakes while testing.</div>
     <label>Amount (USD₮)</label>
     <input id="depAmount" type="number" min="0" step="1" value="100">
     <button class="btn btn-cyan" id="btnDeposit" disabled>Deposit</button>

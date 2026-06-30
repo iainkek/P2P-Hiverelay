@@ -43,6 +43,18 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**No-show / no-refund guidance at the deposit step (iter 59).** Reviewed the escrow's
+refund semantics: `PokerEscrow.sol` is explicit that there is **no unilateral
+deposit-refund** — funds come back only via `cooperativeClose` (all seats sign) or
+`disputeClose` (committee). So the real "opponent never shows after I deposit" scenario
+locks a tester's deposit until one of those paths runs. The top banner already states the
+no-refund rule, but the actionable advice was missing at the moment of risk. Added a
+prominent warning in the Deposit card: **"Deposit only once your opponent is also ready"** —
+explaining the no-refund, how funds do come back, and that testnet USD₮ is faucetable so
+it's low-stakes while testing. Verified (4/4): warning present, accurate, no errors. (A
+real pre-game refund/timeout is a contract change with griefing subtleties — intentionally
+left as a careful follow-up rather than an autonomous edit.)
+
 **Real 2-player shared-escrow settlement verified through the UI (iter 58).** Iter 57
 proved the *solo* cashier flow; the actual game settles on a **shared 2-player escrow**, so
 I extended the harness to two mock wallets (hardhat accts 0/1) and drove the real
