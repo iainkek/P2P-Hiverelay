@@ -4,6 +4,26 @@ A deep review of every user flow from the perspective of a real human sitting do
 to play and to test the real-money rail on testnet. Living doc — updated as the
 review loop runs.
 
+## Verified against a REAL relay node (iteration 15)
+
+Everything before this was tested against a mocked static server. Booted an actual
+local relay (`p2p-hiverelay start --port 8790`) and confirmed the whole money-rail
+surface works when served by the **real `api.js`**, not a mock:
+
+- `/lobby` `/table` `/cashier` all serve 200; the real CSP is
+  `script-src 'self' 'unsafe-inline'` / `connect-src 'self' ws: wss:`.
+- `/poker-engine/{betting.js, hand-eval.js, ethers.umd.min.js, poker-artifacts.json}`
+  all serve 200 (artifacts as `application/json`); `/poker-engine/api.js` correctly
+  404s — the whitelist holds against the real route.
+- In a browser on the real relay: **ethers loads same-origin under the real CSP**
+  (zero violations), artifacts fetch + parse, the self-serve **Deploy** button is
+  wired, and the co-sign digest is **byte-valid** via real-relay-served ethers. So
+  M2 (F10), the artifacts (F11), and the cashier live flow are confirmed in
+  production-equivalent conditions, not just under the mock.
+- **Local relay boots cleanly here** — so the multiplayer build *can* be developed +
+  verified against a local relay (no need to touch the live FRA relay). That's the
+  unblock for the remaining frontier.
+
 ## Certification (iteration 10 — full regression sweep)
 
 Everything reviewed across 10 iterations is green together, no regressions:
