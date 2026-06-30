@@ -356,6 +356,15 @@ F5. The action bar stacks full-width.
   overwrites a multi-party entry or an amount you typed. Verified: solo fills to
   100.00, "60,40" untouched, "999" not clobbered.
 
+- **F14 — testnet USD₮ faucet for new players.** Added a **"Get 1,000 test USD₮"**
+  button to the cashier's Live mode: it mints MockUSDT (permissionless `mint`) to the
+  connected wallet on Base Sepolia, so a newcomer has chips to play with without
+  deploying their own escrow (and can claim again to top up). The "Deploy a test
+  escrow" button already mints 1,000 on deploy; the faucet covers the case of playing
+  against an existing escrow. Verified: button present/wired/graceful (no token → clear
+  instruction, no crash, no CSP violations), and the mint via the cashier's `ERC20_ABI`
+  funds a wallet on a real EVM (1,000, then 2,000 on a second claim).
+
 ## Open / minor
 
 _None outstanding from the demo-surface + on-chain-path review._ The only remaining

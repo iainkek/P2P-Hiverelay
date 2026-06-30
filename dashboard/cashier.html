@@ -208,8 +208,9 @@ input[readonly]{color:var(--cyan);cursor:text}
       <label>Escrow address</label><input id="cfgEscrow" placeholder="0x…">
       <label>USD₮ token address</label><input id="cfgToken" placeholder="0x…">
       <label>RPC URL (read-only fallback)</label><input id="cfgRpc" placeholder="https://…sepolia…">
-      <div class="hint" style="margin-top:.7rem;border-top:1px solid var(--card-border);padding-top:.7rem">No escrow yet? With MetaMask on <b>Base Sepolia</b>, deploy your own test escrow and mint test USD₮ — fully self-served, nothing to set up.</div>
+      <div class="hint" style="margin-top:.7rem;border-top:1px solid var(--card-border);padding-top:.7rem">New here? On <b>Base Sepolia</b>: deploy your own test escrow (mints 1,000 USD₮), or grab test USD₮ from the faucet to play with an existing one.</div>
       <button class="btn btn-cyan" id="btnDeployTest" style="margin-top:.4rem">Deploy a test escrow + mint USD₮</button>
+      <button class="btn btn-ghost" id="btnFaucet" style="margin-top:.4rem">Get 1,000 test USD₮</button>
     </div>
     <button class="btn btn-primary" id="btnConnect">Connect wallet</button>
   </div>
@@ -287,7 +288,8 @@ const ESCROW_ABI = [
 const ERC20_ABI = [
   'function approve(address,uint256) returns (bool)',
   'function allowance(address,address) view returns (uint256)',
-  'function balanceOf(address) view returns (uint256)'
+  'function balanceOf(address) view returns (uint256)',
+  'function mint(address,uint256)' // MockUSDT testnet faucet (permissionless)
 ]
 const DEC = 1_000_000n // USD₮ 6 decimals
 
@@ -498,6 +500,31 @@ async function liveDeployTest () {
   } catch (e) { log('deploy failed: ' + (e.shortMessage || e.message), 'err') }
   btn.disabled = false
 }
+// Testnet faucet — mint MockUSDT test tokens to the player so they have chips to play
+// with (MockUSDT.mint is permissionless; real USD₮ has no faucet). Works against any
+// MockUSDT-based escrow's token, so a new user can grab funds without deploying.
+async function liveFaucet () {
+  if (!window.ethers || !window.ethereum) { log('install MetaMask + select Base Sepolia first', 'err'); return }
+  const tokenAddr = $('cfgToken').value.trim()
+  if (!tokenAddr) { log('no USD₮ token set — deploy a test escrow first, or paste a MockUSDT address', 'err'); return }
+  const btn = $('btnFaucet')
+  try {
+    btn.disabled = true
+    if (!S.signer) {
+      const provider = new ethers.BrowserProvider(window.ethereum)
+      await provider.send('eth_requestAccounts', [])
+      if (Number((await provider.getNetwork()).chainId) !== 84532) { log('switch MetaMask to Base Sepolia (84532)', 'err'); btn.disabled = false; return }
+      S.provider = provider; S.signer = await provider.getSigner(); S.address = await S.signer.getAddress()
+      S.escrowAddr = $('cfgEscrow').value.trim(); liveContracts(S.signer); S.connected = true
+    }
+    const token = new ethers.Contract(tokenAddr, ERC20_ABI, S.signer)
+    log('minting 1,000 test USD₮ to ' + short(S.address) + '… (confirm in MetaMask)')
+    await (await token.mint(S.address, 1000n * DEC)).wait()
+    log('1,000 test USD₮ minted — you have chips to play with', 'ok')
+    await liveRefresh()
+  } catch (e) { log('faucet failed: ' + (e.shortMessage || e.message), 'err') }
+  btn.disabled = false
+}
 async function liveRefresh () {
   try {
     const [pot, settled] = await Promise.all([S.escrow.pot(), S.escrow.settled()])
@@ -581,6 +608,7 @@ function bootCashier () {
   $('btnLive').onclick = () => setMode('live')
   $('btnConnect').onclick = () => S.mode === 'demo' ? demoConnect() : liveConnect()
   $('btnDeployTest').onclick = () => liveDeployTest()
+  $('btnFaucet').onclick = () => liveFaucet()
   $('btnDeposit').onclick = () => { const amt = BigInt(Math.round((parseFloat($('depAmount').value) || 0) * 1e6)); if (amt <= 0n) return log('enter an amount', 'err'); S.mode === 'demo' ? demoDeposit(amt) : liveDeposit(amt) }
   $('btnSimulate').onclick = () => demoSimulate()
   $('btnWithdraw').onclick = () => S.mode === 'demo' ? demoWithdraw() : liveWithdraw()
