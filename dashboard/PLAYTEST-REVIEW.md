@@ -52,6 +52,29 @@ review loop runs.
   propagate after approve, like the proven scripts). Matters directly for real
   testnet testing.
 
+- **F7 — a bad bot decision can no longer hang the table.** `botStep` applied
+  `botDecide`'s action without checking the result; if it ever emitted an illegal
+  action (future edit / unforeseen edge), the same seat would be asked forever and
+  the table would hang — the worst live-testing experience. Now falls back to a
+  guaranteed-legal action (check / call / all-in). Defensive; `botDecide` is legal
+  today (bet/raise clamped to `[minRaiseTo, maxRaiseTo]`).
+
+## Table edge cases (verified)
+
+- **Out-of-turn clicks are safe** — force-dispatching a click on an action button
+  when it isn't your turn is a no-op (handlers guard on `toAct === 'you'`; the pot is
+  unchanged). Disabled buttons don't fire anyway.
+- **Result messages are correct** for both paths: contested showdown → "X wins N with
+  `<category>`" (+ winning-card glow); uncontested → "X takes N — everyone folded".
+  No empty/NaN/negative amounts seen.
+- **Controls match poker rules** — `bCall` is always enabled on your turn (labelled
+  "Check" when you owe nothing, "Call N" otherwise); `bFold` is correctly disabled in
+  check spots (no folding when checking is free). The table correctly waits for the
+  human ("Your move.").
+- **Demo cashier math is sound** — top-ups accumulate; a session can never lose more
+  than its bankroll (`net ≥ -bankroll` ⇒ `withdrawable ≥ 0`); winnings carry to the
+  next session.
+
 ## Mobile
 
 6-max and heads-up play cleanly on a 390px phone (no clipped/overlapping seats,

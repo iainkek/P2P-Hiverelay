@@ -332,8 +332,13 @@ function botStep (g) {
   if (v.toAct === 'you') { render(); return }
   const seat = v.toAct
   const la = legalActions(T.S)
-  const d = botDecide(seat, la, v)
-  applyAction(T.S, { seat, type: d.type, amount: d.amount })
+  let d = botDecide(seat, la, v)
+  let r = applyAction(T.S, { seat, type: d.type, amount: d.amount })
+  if (r && r.illegal) {
+    // A bot decision must never stall the table — fall back to a guaranteed-legal action.
+    d = la.owe === 0 ? { type: 'check' } : (la.callAmount < T.S.stack[seat] ? { type: 'call' } : { type: 'allin' })
+    applyAction(T.S, { seat, type: d.type, amount: d.amount })
+  }
   const [cls, label] = actLabel(d.type, d.amount, la && la.callAmount)
   flashAction(seat, cls, label)
   afterAction()
