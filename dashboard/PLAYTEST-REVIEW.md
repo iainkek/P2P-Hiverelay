@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Betting-rule correctness review + min-raise userflow (iter 66).** Audited the core poker
+rules a knowledgeable tester would scrutinize, and they're **correct**: heads-up posts the
+button as the small blind (`sbIdx = bIdx`), SB/button acts first preflop and BB first
+postflop, and the mp-table rotates the button each hand so blinds alternate; `legalActions`
+computes the proper min-raise (`min(currentBet + minRaise, allIn)`); the Check button
+correctly resolves type `check` not `call` (the engine rejects a `call` with nothing owed);
+and a full raise re-opens the betting (`acted` reset) while an incomplete all-in does not.
+Also tested the one untested userflow — a **min-raise** (slider at its minimum, a partial
+raise, not all-in): hand settles cleanly (6/6, slider spans [40…1000], pot 80, zero-sum).
+No bug — the right outcome for a rules audit. Test at `test/integration/mp-minraise.test.cjs`.
+
 **Settle guards — wrong wallet + non-conservation (iter 65).** Hardened the money-critical
 settle against two real confusions. (1) If you settle with a wallet that isn't a seat in
 the escrow (e.g. connected the wrong MetaMask account), `liveFromMp` used to silently
