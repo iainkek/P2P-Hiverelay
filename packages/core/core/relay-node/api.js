@@ -1558,7 +1558,12 @@ export class RelayAPI extends EventEmitter {
     // UMD bundle the cashier's live (on-chain) mode loads same-origin — keeps the
     // dashboard CSP at script-src 'self' (no CDN, no CSP relaxation).
     const allowed = new Set(['betting.js', 'hand-eval.js', 'ethers.umd.min.js', 'poker-artifacts.json', 'relay-table-client.js'])
-    if (!allowed.has(name)) {
+    // The vendored noble ESM tree (curves + hashes) for the browser mental-poker
+    // crypto: serve the whole /poker-engine/noble/** subtree, resolved client-side via
+    // an import map. Path-traversal guarded; .js only. Files are unmodified upstream
+    // noble, so the crypto is byte-for-byte what the Node/relay side runs.
+    const isNoble = name.startsWith('noble/') && name.endsWith('.js') && !name.includes('..')
+    if (!allowed.has(name) && !isNoble) {
       res.writeHead(404)
       res.end('not found')
       return
@@ -1581,7 +1586,9 @@ export class RelayAPI extends EventEmitter {
   }
 
   async _readPokerEngineFile (name) {
-    const rel = ['packages', 'services', 'builtin', 'poker', 'money', name]
+    // noble/* lives under money/vendor/; everything else directly under money/.
+    const sub = name.startsWith('noble/') ? ['vendor', ...name.split('/')] : [name]
+    const rel = ['packages', 'services', 'builtin', 'poker', 'money', ...sub]
     const candidates = [join(__dirname, '..', '..', '..', '..', ...rel)]
     if (this._dashboardDir) candidates.push(join(this._dashboardDir, '..', ...rel))
     let lastErr

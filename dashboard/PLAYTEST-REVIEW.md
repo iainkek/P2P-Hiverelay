@@ -57,6 +57,17 @@ then the table UI.
 5. Table UI driving 1–4 (post moves, replay via `betting.js`, render) — ⬜ wiring
 6. Reduce → settle → escrow — ✅ proven (iter 16 + earlier)
 
+**Browser crypto now actually loads (iter 25).** The recurring blocker — the mental-
+poker modules import noble (`@noble/curves`, `@noble/hashes`), unbundlable here — is
+solved without a bundler: vendored the noble `.js` trees under `money/vendor/noble/`
+and extended the `/poker-engine/` route to serve the `noble/**` subtree (`.js`-only,
+traversal-guarded), resolved client-side by an **import map**. Verified the browser
+loads the full 24-file noble graph (relative + cross-package imports all resolve) and
+a point op matches Node byte-for-byte; the real relay serves it (200) while blocking
+traversal + non-js (404). So `ed25519-noble`/`chaum-pedersen-browser`/`elgamal-deck`/
+`reencrypt-shuffle` can now run in-browser. Remaining: serve those crypto modules
+(straightforward whitelist) + deal/reveal orchestration + table UI.
+
 ## Browser table client — module BUILT + verified (iteration 18)
 
 Wrote `money/relay-table-client.js` (served same-origin via `/poker-engine`) — the
