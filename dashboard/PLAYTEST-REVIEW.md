@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Uncalled-bet refund — cooperative == dispute settle (iter 48).** A deep-protocol bug
+that carried stacks made reachable: with unequal stacks a seat can be all-in for *less*
+than the opponent's bet, leaving an **uncalled bet**. The settle did winner-takes-
+sum(contributions), which over-pays the winner *and disagrees with the reducer's
+`settleHand`* (the dispute path) — so a player could get a better result one way than the
+other (not trustless). Fixed with effective-pot accounting (contested pot capped at 2×
+the smaller live contribution; the over-bettor's excess refunded). Verified the
+cooperative settle now **equals** `settleHand` across scenarios incl. the uncalled case
+(5/5): A over-bets, B all-in 50, B wins → `{a:-50,b:+50}` (A's 50 refunded), matching the
+reducer exactly. Normal contested hand intact (13/13).
+
 **One-click settle from the net (iter 47).** Co-signing the cooperative close required
 both seats to manually enter the *same* balances — error-prone. Added a **"Fill balances
 from my multiplayer net"** button to the cashier settle: it reads the bridged session net
