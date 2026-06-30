@@ -213,6 +213,8 @@ input[readonly]{color:var(--cyan);cursor:text}
       <label>Opponent address — optional, for a shared 2-player escrow</label><input id="cfgOpponent" placeholder="0x… (leave blank for a solo test)">
       <button class="btn btn-cyan" id="btnDeployTest" style="margin-top:.4rem">Deploy a test escrow + mint USD₮</button>
       <button class="btn btn-ghost" id="btnFaucet" style="margin-top:.4rem">Get 1,000 test USD₮</button>
+      <button class="btn btn-cyan" id="btnShareEscrow" style="margin-top:.4rem;display:none">Copy escrow link for your opponent →</button>
+      <input id="escrowLink" readonly style="display:none;margin-top:.4rem;font-size:.66rem;color:var(--text-dim)">
     </div>
     <button class="btn btn-primary" id="btnConnect">Connect wallet</button>
   </div>
@@ -516,7 +518,8 @@ async function liveDeployTest () {
     $('cfgEscrow').value = escrowAddr; $('cfgToken').value = usdtAddr
     $('setPayees').value = participants.join(',') // settle payees (solo auto-fills your balance after deposit)
     if (participants.length > 1) {
-      log('shared escrow ready — share its address with your opponent so they can deposit. After playing, each enters the agreed net balances (sum = total deposits), signs, and one submits the cooperative close.', 'ok')
+      $('btnShareEscrow').style.display = 'block' // one-click link to send the opponent
+      log('shared escrow ready — click "Copy escrow link for your opponent" to send it (or share its address). After playing, each enters the agreed net balances (sum = total deposits), signs, and one submits the cooperative close.', 'ok')
     } else {
       log('test escrow ready — you are the sole seat. Deposit a bankroll, then Sign → Submit → Withdraw (settle is pre-filled).', 'ok')
     }
@@ -653,6 +656,23 @@ function bootCashier () {
   $('btnDeployTest').onclick = () => liveDeployTest()
   $('btnFaucet').onclick = () => liveFaucet()
   $('btnFromMp').onclick = () => liveFromMp()
+  $('btnShareEscrow').onclick = () => {
+    const esc = $('cfgEscrow').value.trim(), tok = $('cfgToken').value.trim()
+    if (!esc || !tok) return log('deploy a shared escrow first', 'err')
+    const link = location.origin + '/cashier?escrow=' + esc + '&token=' + tok
+    $('escrowLink').value = link; $('escrowLink').style.display = 'block'
+    try { navigator.clipboard && navigator.clipboard.writeText(link) } catch {}
+    log('escrow link copied — send it to your opponent so they can deposit in one click', 'ok')
+  }
+  // Opponent opened a shared-escrow link → auto-fill the escrow + token and switch to Live.
+  try {
+    const q = new URLSearchParams(location.search)
+    const esc = q.get('escrow'), tok = q.get('token')
+    if (esc && tok) {
+      setMode('live'); $('cfgEscrow').value = esc; $('cfgToken').value = tok; $('btnShareEscrow').style.display = 'block'
+      log('escrow loaded from your opponent’s link — Connect, get test USD₮ from the faucet, then deposit your buy-in', 'ok')
+    }
+  } catch {}
   $('btnDeposit').onclick = () => { const amt = BigInt(Math.round((parseFloat($('depAmount').value) || 0) * 1e6)); if (amt <= 0n) return log('enter an amount', 'err'); S.mode === 'demo' ? demoDeposit(amt) : liveDeposit(amt) }
   $('btnSimulate').onclick = () => demoSimulate()
   $('btnWithdraw').onclick = () => S.mode === 'demo' ? demoWithdraw() : liveWithdraw()

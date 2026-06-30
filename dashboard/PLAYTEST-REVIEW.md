@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Shareable escrow link — cut the setup coordination (iter 62).** The biggest real barrier
+to a tester completing a game is coordination, and one rough edge was the opponent having
+to manually copy **two addresses** (escrow + token) to connect to a shared escrow. Mirrored
+the mp-table's join link (iter 44): after a shared deploy, a **"Copy escrow link for your
+opponent →"** button generates `/cashier?escrow=…&token=…`; opening that link auto-fills
+both addresses, switches to Live, and prompts "Connect, faucet, deposit." Verified (8/8):
+opponent link auto-fills escrow+token and switches to Live with a helpful prompt; the host
+share button builds the correct link; plain `/cashier` doesn't auto-fill and the button
+stays hidden until a shared escrow exists; no errors. One fewer manual copy-paste in the
+real two-human setup.
+
 **Nav health-check + the play screen was a dead-end (iter 61).** Health-checked all 11
 nav-reachable pages (dashboard, payments, network, leaderboard, catalog, calculator,
 cashier, lobby, mp-table, docs, table): **all load with no JS errors and render content** —
