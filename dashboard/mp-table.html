@@ -96,6 +96,7 @@
         <button class="btn" id="bRaise">Raise</button>
       </div>
       <div id="result" style="text-align:center;margin-top:1rem;font-weight:700"></div>
+      <div style="text-align:center;margin-top:.8rem"><button class="btn hide" id="nextHand">Deal next hand →</button><span class="pill hide" id="waitNext">waiting for the host to deal the next hand…</span></div>
     </div>
   </div>
 
@@ -255,7 +256,8 @@ async function runShowdown (sess, me, writers, hand, S) {
     $('result').textContent = (iWon ? 'You win the ' + pot + ' pot! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + pot + '). ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet)
     $('result').style.color = myNet >= 0 ? 'var(--green)' : 'var(--red)'
     log('hand over — winner ' + short(winner) + ', pot ' + pot + ', your net ' + sign(myNet))
-    window.__hand = { done: true, iWon, pot, winner, myNet, sessionNet, uncontested: live.length === 1, myHole: hand.hole, board: boardCards }
+    window.__handsPlayed = (window.__handsPlayed || 0) + 1
+    window.__hand = { done: true, iWon, pot, winner, myNet, sessionNet, hands: window.__handsPlayed, uncontested: live.length === 1, myHole: hand.hole, board: boardCards }
   }
   // Uncontested: everyone but one folded → that seat wins the pot, no cards shown.
   if (live.length === 1) { settle(live[0], hand.board); return }
@@ -285,7 +287,43 @@ async function runFullHand (rt, tableKey, me, writers, oppWriter) {
   if (!S) { log('betting failed'); return }
   await runShowdown(sess, me, writers, hand, S)
 }
-const runSeat = runFullHand // host/join call this
+// "Deal next hand" gate (host) — resolved by the button.
+let nextHandResolve = null
+$('nextHand').onclick = () => { if (nextHandResolve) { const r = nextHandResolve; nextHandResolve = null; hide('nextHand'); r() } }
+const waitNextHandClick = () => new Promise((res) => { nextHandResolve = res; show('nextHand') })
+
+// A multi-hand session over the relay. Each hand is its own append-only relay table
+// (keys/identities reused, no re-handshake): after a hand, the host creates a fresh
+// table and announces its key on the current table's log; the joiner reads it. Seq is
+// per (writer, table), so it resets each hand. Session net accumulates across hands.
+async function playSession (rt, baseTableKey, me, writers, oppWriter, isHost) {
+  let tableKey = baseTableKey
+  for (let hand = 0; hand < 1000; hand++) {
+    me.seq = 0; me.mem = {} // fresh per table/hand
+    $('result').textContent = ''; hide('nextHand'); hide('waitNext')
+    await runFullHand(rt, tableKey, me, writers, oppWriter)
+    if (isHost) {
+      await waitNextHandClick()
+      const nextKey = (await createSeat()).pub
+      const ct = await rt.createTable(nextKey, writers)
+      if (ct.status !== 201) { log('could not start the next hand: ' + ct.status); return }
+      const sess = makeSession(rt, tableKey, me)
+      await sess.post({ kind: 'next-table', tableKey: nextKey }) // announce on the current table
+      tableKey = nextKey
+    } else {
+      show('waitNext')
+      let nextKey = null
+      for (let i = 0; i < 2400 && !nextKey; i++) { // ~20 min patience
+        const lg = await rt.readLog(tableKey)
+        const e = (lg.json && lg.json.entries || []).find(x => (x.payload || x).kind === 'next-table')
+        if (e) nextKey = (e.payload || e).tableKey; else await sleep(500)
+      }
+      hide('waitNext')
+      if (!nextKey) { log('session ended (opponent left)'); return }
+      tableKey = nextKey
+    }
+  }
+}
 
 function enterTable (myWriter, oppWriter) {
   hide('landing'); hide('hostUi'); hide('joinUi'); show('tableUi'); hide('controls')
@@ -312,7 +350,7 @@ $('startHost').onclick = async () => {
   const ct = await rt.createTable(hostTableKey, writers)
   if (ct.status !== 201) { log('createTable failed: ' + ct.status); return }
   log('table created — dealing…'); enterTable(hostSeat.writer, joiner.j)
-  await runSeat(rt, hostTableKey, hostSeat, writers, joiner.j)
+  await playSession(rt, hostTableKey, hostSeat, writers, joiner.j, true)
 }
 
 // ── JOIN ──
@@ -331,7 +369,7 @@ $('acceptInvite').onclick = async () => {
     // otherwise we'd race ahead of table creation and our moves would be rejected.
     if (lg.status === 200 && lg.json && Array.isArray(lg.json.entries) && lg.json.entries.length > 0) {
       log('host started the table — dealing…'); enterTable(joinSeat.writer, joinInvite.h)
-      await runSeat(rt, joinInvite.t, joinSeat, writers, joinInvite.h)
+      await playSession(rt, joinInvite.t, joinSeat, writers, joinInvite.h, false)
       return
     }
     await sleep(500)

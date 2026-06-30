@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Multi-hand sessions + clean folds (iter 37–38).** `/mp-table` now plays a *session*,
+not a single hand: after each hand the host clicks **"Deal next hand"** and a fresh
+relay table is created (keys/identities reused — no re-handshake; the new key is
+announced on the prior table's log for the joiner to pick up), with the session net
+accumulating across hands and bridged to the Cashier for one settlement. Verified
+two-browser over a 2-hand session (7/7): both play exactly 2 hands, the session net
+evolves (host −20 then 0) and stays zero-sum. Also fixed folds (iter 37): an
+uncontested win takes the pot with **no card reveal** (and survives the folder
+disconnecting) — verified 10/10. Both showdown paths green (contested 13/13, fold 10/10).
+
 **Shared 2-player escrow — the on-chain settle for two humans (iter 35).** The cashier's
 self-serve deploy only made a *solo* escrow; added an optional **opponent-address** field
 so a host deploys a shared escrow with both EVM addresses as participants (validated;
