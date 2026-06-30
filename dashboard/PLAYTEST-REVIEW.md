@@ -4,6 +4,33 @@ A deep review of every user flow from the perspective of a real human sitting do
 to play and to test the real-money rail on testnet. Living doc — updated as the
 review loop runs.
 
+## Trustless dealing — verifiable shuffle PROVEN browser-side (iteration 19)
+
+The hard part of multiplayer poker is dealing without a trusted dealer on a
+card-blind relay. The foundation already exists and is browser-pure: `hand-seed.js`
++ `vrf/ecvrf.js` (noble-based VRF) + `vrf/sortition.js`. Verified the full deal-seed
+flow (7/7):
+
+- Both seats derive the same `alpha` (`handSeedAlpha(tableKey, handId)`).
+- Each seat VRF-`prove`s over alpha → 80-byte proof + 64-byte beta; `verifyHandSeed`
+  confirms each under its pubkey; a proof under the **wrong** pubkey is rejected.
+- `combineBetas` XOR-combines the betas → a seed **no single seat controls**;
+  `handDeckOrder` turns it into a valid 52-card permutation, and XOR being
+  order-independent means **both seats agree on the same deck**.
+
+So the **verifiable, unbiasable shared shuffle is done and runs browser-side.** The
+one remaining cryptographic piece is **mental-poker hole-card privacy** (commutative
+re-encryption layered on this public deck order) so opponents can't see your cards —
+that's the last unsolved primitive; everything else in the stack is proven.
+
+### Multiplayer stack status
+1. Relay table / shared signed log — ✅ proven (iter 16)
+2. Browser signing + identity (`relay-table-client.js`) — ✅ built + proven (iter 18)
+3. Verifiable shared shuffle (VRF deal-seed) — ✅ proven browser-side (iter 19)
+4. Mental-poker hole-card privacy — ⬜ the last crypto piece
+5. Table UI driving 1–4 (post moves, replay via `betting.js`, render) — ⬜ wiring
+6. Reduce → settle → escrow — ✅ proven (iter 16 + earlier)
+
 ## Browser table client — module BUILT + verified (iteration 18)
 
 Wrote `money/relay-table-client.js` (served same-origin via `/poker-engine`) — the
