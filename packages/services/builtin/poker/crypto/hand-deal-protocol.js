@@ -12,7 +12,7 @@
 import * as DK from './elgamal-deck.js'
 import * as SH from './reencrypt-shuffle.js'
 
-const hex = (u) => Buffer.from(u).toString('hex')
+const hex = (u) => { let s = ''; const a = new Uint8Array(u); for (let i = 0; i < a.length; i++) s += a[i].toString(16).padStart(2, '0'); return s }
 const unhex = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)))
 const ctHex = (ct) => ({ C1: hex(ct.C1), C2: hex(ct.C2) })
 const ctBytes = (c) => ({ C1: unhex(c.C1), C2: unhex(c.C2) })

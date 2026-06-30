@@ -1563,7 +1563,10 @@ export class RelayAPI extends EventEmitter {
     // an import map. Path-traversal guarded; .js only. Files are unmodified upstream
     // noble, so the crypto is byte-for-byte what the Node/relay side runs.
     const isNoble = name.startsWith('noble/') && name.endsWith('.js') && !name.includes('..')
-    if (!allowed.has(name) && !isNoble) {
+    // The browser mental-poker modules (money/crypto/*.js): served same-origin so the
+    // multiplayer table can import them; they pull noble via the import map above.
+    const isCrypto = name.startsWith('crypto/') && name.endsWith('.js') && !name.includes('..')
+    if (!allowed.has(name) && !isNoble && !isCrypto) {
       res.writeHead(404)
       res.end('not found')
       return

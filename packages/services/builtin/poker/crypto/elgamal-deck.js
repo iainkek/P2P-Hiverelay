@@ -22,8 +22,9 @@ export function cardPoint (i) {
   if (!Number.isInteger(i) || i < 0 || i >= DECK_SIZE) throw new Error('elgamal-deck: bad card index ' + i)
   return ed.pointMulBase(scalarOfSmall(i + 1))
 }
-const _toIdx = (() => { const m = new Map(); for (let i = 0; i < DECK_SIZE; i++) m.set(Buffer.from(cardPoint(i)).toString('hex'), i); return m })()
-export function pointToCard (P) { const i = _toIdx.get(Buffer.from(P).toString('hex')); return i === undefined ? null : i }
+const _hex = (u) => { let s = ''; const a = new Uint8Array(u); for (let i = 0; i < a.length; i++) s += a[i].toString(16).padStart(2, '0'); return s }
+const _toIdx = (() => { const m = new Map(); for (let i = 0; i < DECK_SIZE; i++) m.set(_hex(cardPoint(i)), i); return m })()
+export function pointToCard (P) { const i = _toIdx.get(_hex(P)); return i === undefined ? null : i }
 
 // Joint public key from per-seat pubkeys (H = ΣH_i).
 export function jointKey (pubkeys) {

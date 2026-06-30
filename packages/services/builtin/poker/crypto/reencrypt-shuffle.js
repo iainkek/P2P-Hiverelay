@@ -43,7 +43,9 @@ export function commitShuffle (perm, rands) {
   for (const r of rands) parts.push(r)
   const n = parts.reduce((s, a) => s + a.length, 0); const buf = new Uint8Array(n); let i = 0
   for (const p of parts) { buf.set(p, i); i += p.length }
-  return Buffer.from(blake2b(buf, { dkLen: 32 })).toString('hex')
+  const h = blake2b(buf, { dkLen: 32 }); let s = ''
+  for (let k = 0; k < h.length; k++) s += h[k].toString(16).padStart(2, '0')
+  return s
 }
 
 const eqPt = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])

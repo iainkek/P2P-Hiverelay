@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**The whole engine now runs IN-BROWSER via the relay (iter 29).** Extended the
+`/poker-engine/` route to serve the `crypto/**` subtree, made the browser crypto
+modules Node-free (replaced `Buffer` hex with pure-JS in `elgamal-deck`,
+`hand-deal-protocol`, `reencrypt-shuffle`), and verified a full 2-seat deal runs in a
+real browser loading only relay-served `/poker-engine/crypto/*` + the noble import map
+(6/6): both seats hold private hole cards, the board is public, 9 distinct cards,
+**privacy holds in-browser**, zero load failures. So every layer — transport, crypto,
+deal, settlement — is now browser-executable. The only remaining piece is the table
+**UI** that drives it for two humans (a thin `relay-table-client.postMove` wrapper +
+the screen). Suites green (off-chain 85/85, routes 5/5).
+
 **A COMPLETE trustless hand is now built + in the test suite (iter 28).**
 `poker-mental-multiplayer.test.js` plays a full 2-seat hand purely by replaying a
 shared message log: deal (private hole cards, opponent can't see them) → betting
