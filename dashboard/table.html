@@ -57,7 +57,7 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 .seat .hand{display:flex;gap:.25rem}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,215,0,.5)}70%{box-shadow:0 0 0 .5rem rgba(255,215,0,0)}100%{box-shadow:0 0 0 0 rgba(255,215,0,0)}}
 
-.cardx{width:40px;height:56px;border-radius:6px;background:#f6f7fb;color:#111;position:relative;box-shadow:0 3px 8px -3px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.25rem;animation:deal .3s backwards}
+.cardx{width:40px;height:56px;border-radius:6px;background:#f6f7fb;color:#111;position:relative;box-shadow:0 3px 8px -3px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.25rem}
 .cardx.big{width:50px;height:70px;font-size:1.55rem}
 .cardx.red{color:#d23b3b}
 .cardx .corner{position:absolute;top:3px;left:4px;font-size:.6rem;font-weight:800;line-height:1}
@@ -65,7 +65,17 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 .cardx.empty{background:rgba(255,255,255,.05);box-shadow:none;border:1px dashed rgba(255,255,255,.13)}
 .cardx.muck{opacity:.4}
 .cardx.winhi{box-shadow:0 0 0 2px var(--green),0 0 16px -2px rgba(63,185,80,.85);transform:translateY(-5px);z-index:4}
-@keyframes deal{from{opacity:0;transform:translateY(-12px) scale(.9)}to{opacity:1;transform:none}}
+.cardx.flip{animation:flip .45s ease-out backwards}
+@keyframes flip{0%{transform:rotateY(90deg) scale(.92);opacity:0}55%{opacity:1}100%{transform:rotateY(0) scale(1);opacity:1}}
+.actbadge{position:absolute;top:-13px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:.62rem;font-weight:800;letter-spacing:.5px;padding:.12rem .42rem;border-radius:5px;white-space:nowrap;z-index:6;pointer-events:none;animation:badgepop 1.3s ease-out forwards}
+.actbadge.fold{background:#33404f;color:#cdd}
+.actbadge.check{background:rgba(88,166,255,.22);color:var(--cyan)}
+.actbadge.call{background:rgba(88,166,255,.28);color:var(--cyan)}
+.actbadge.bet,.actbadge.raise{background:rgba(245,200,66,.28);color:var(--yellow)}
+.actbadge.allin{background:linear-gradient(135deg,rgba(244,112,103,.6),rgba(192,57,43,.6));color:#fff}
+@keyframes badgepop{0%{opacity:0;transform:translateX(-50%) translateY(6px) scale(.8)}14%{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}80%{opacity:1}100%{opacity:0;transform:translateX(-50%) translateY(-9px)}}
+.sndbtn{background:#0c0f16;border:1px solid var(--card-border);color:var(--text-dim);border-radius:6px;padding:.3rem .5rem;font-size:.82rem;cursor:pointer;line-height:1}
+.sndbtn.on{color:var(--yellow);border-color:rgba(245,200,66,.4)}
 .strength{font-size:.7rem;font-family:var(--mono);color:var(--cyan);background:rgba(0,0,0,.4);padding:.18rem .55rem;border-radius:5px;border:1px solid rgba(88,166,255,.25);white-space:nowrap}
 .ship{position:absolute;font-family:var(--mono);font-weight:800;font-size:1.3rem;color:var(--yellow);z-index:6;pointer-events:none;text-shadow:0 2px 12px rgba(0,0,0,.7);transition:all 1s ease-out}
 
@@ -103,6 +113,7 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
   </nav>
   <div class="topbar-right">
     <span class="tag">Demo</span>
+    <button class="sndbtn" id="soundBtn" title="Toggle sound">&#128263;</button>
     <select class="seatsel" id="seatSel" title="Table size"><option value="2">Heads-up</option><option value="6" selected>6-max</option><option value="9">9-max</option></select>
     <span id="blinds">10 / 20</span>
   </div>
@@ -176,6 +187,50 @@ function preflopName (holes) {
 }
 const CAT = ['high card', 'a pair', 'two pair', 'three of a kind', 'a straight', 'a flush', 'a full house', 'quads', 'a straight flush']
 
+// ── sound (WebAudio, synthesized — no assets; off by default, gesture-gated) ──
+let AC = null
+let soundOn = false
+function ensureAC () { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)() } catch {} } if (AC && AC.state === 'suspended') AC.resume() }
+function blip (freq, dur, type, gain) {
+  if (!soundOn || !AC) return
+  try {
+    const o = AC.createOscillator(); const g = AC.createGain()
+    o.type = type || 'sine'; o.frequency.value = freq; g.gain.value = gain || 0.04
+    o.connect(g); g.connect(AC.destination)
+    const t = AC.currentTime; o.start(t)
+    g.gain.setValueAtTime(gain || 0.04, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+    o.stop(t + dur)
+  } catch {}
+}
+const SND = {
+  fold: () => blip(196, 0.12, 'sine', 0.025),
+  check: () => blip(330, 0.06, 'sine', 0.025),
+  call: () => blip(440, 0.07, 'sine', 0.04),
+  bet: () => blip(523, 0.07, 'sine', 0.045),
+  raise: () => blip(587, 0.08, 'sine', 0.05),
+  allin: () => { blip(330, 0.1, 'sawtooth', 0.04); setTimeout(() => blip(660, 0.14, 'sawtooth', 0.04), 90) },
+  deal: () => blip(900, 0.04, 'triangle', 0.02),
+  win: () => { blip(660, 0.13, 'triangle', 0.05); setTimeout(() => blip(880, 0.2, 'triangle', 0.05), 120) }
+}
+
+// Pop a transient action badge over a seat (and play its sound).
+function flashAction (seat, cls, label) {
+  if (SND[cls]) SND[cls]()
+  const el = document.getElementById('seat-' + seat); if (!el) return
+  el.querySelectorAll('.actbadge').forEach(b => b.remove())
+  const b = document.createElement('div'); b.className = 'actbadge ' + cls; b.textContent = label
+  el.appendChild(b); setTimeout(() => { b.remove() }, 1300)
+}
+function actLabel (type, amount, callAmt) {
+  if (type === 'fold') return ['fold', 'FOLD']
+  if (type === 'check') return ['check', 'CHECK']
+  if (type === 'call') return ['call', 'CALL ' + (callAmt || '')]
+  if (type === 'bet') return ['bet', 'BET ' + amount]
+  if (type === 'raise') return ['raise', 'RAISE ' + amount]
+  if (type === 'allin') return ['allin', 'ALL-IN']
+  return ['', type]
+}
+
 // ── side-pot distribution at showdown (mirrors money/reducer.js settleHand;
 //    inlined because reducer.js pulls in sodium and isn't browser-importable) ──
 function distribute (contrib, folded, holes, board) {
@@ -218,7 +273,7 @@ const NAMES = ['You', 'Ivy', 'Max', 'Nova', 'Rex', 'Zoe', 'Cole', 'Pax', 'Юki']
 const T = {
   numSeats: 6, seatIds: [], stacks: {}, boughtIn: BUYIN, net: 0, hands: 0,
   buttonIdx: 0, S: null, holes: {}, board: [], deck: [],
-  phase: 'idle', winSet: null, msgText: '', result: null, _lastPot: 0, _booted: false, gen: 0
+  phase: 'idle', winSet: null, msgText: '', result: null, _lastPot: 0, _lastReveal: 0, _booted: false, gen: 0
 }
 
 function shuffle () { const d = [...Array(52).keys()]; for (let i = 51; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[d[i], d[j]] = [d[j], d[i]] } return d }
@@ -245,7 +300,8 @@ function startHand () {
   const stacks = {}; T.seatIds.forEach(s => { stacks[s] = T.stacks[s] })
   T.S = createHand({ seats: T.seatIds, stacks, blinds: { sb: SB, bb: BB }, button: T.seatIds[T.buttonIdx] })
   if (T.S.illegal) { T.phase = 'over'; T.msgText = 'deal error: ' + T.S.illegal.reason; render(); return }
-  T.phase = 'betting'; T.winSet = null; T.result = null; T.msgText = ''
+  T.phase = 'betting'; T.winSet = null; T.result = null; T.msgText = ''; T._lastReveal = 0
+  SND.deal()
   render()
   if (T.S.complete) { finishBetting(); return }
   if (view(T.S).toAct !== 'you') { const g = T.gen; setTimeout(() => botStep(g), 700) }
@@ -260,8 +316,11 @@ function afterAction () {
 
 function humanAction (type, amount) {
   if (T.phase !== 'betting' || view(T.S).toAct !== 'you') return
+  const la = legalActions(T.S)
   const r = applyAction(T.S, { seat: 'you', type, amount })
   if (r && r.illegal) return
+  const [cls, label] = actLabel(type, amount, la && la.callAmount)
+  flashAction('you', cls, label)
   afterAction()
 }
 
@@ -274,6 +333,8 @@ function botStep (g) {
   const la = legalActions(T.S)
   const d = botDecide(seat, la, v)
   applyAction(T.S, { seat, type: d.type, amount: d.amount })
+  const [cls, label] = actLabel(d.type, d.amount, la && la.callAmount)
+  flashAction(seat, cls, label)
   afterAction()
 }
 
@@ -325,6 +386,7 @@ function finishBetting () {
     T.msgText = (topW === 'you' ? 'You take ' : nameOf(topW) + ' takes ') + topA + ' — everyone folded'
   }
   if (topW && topA > 0) shipPot(topW, topA)
+  if (topW === 'you') SND.win()
   persist(); render()
 }
 
@@ -354,10 +416,10 @@ function buildSeats () {
   })
 }
 
-function cardEl (c, faceUp, hi, big) {
+function cardEl (c, faceUp, hi, big, flip) {
   const d = document.createElement('div')
   if (!faceUp) { d.className = 'cardx back' + (big ? ' big' : ''); return d }
-  d.className = 'cardx' + (big ? ' big' : '') + (isRed(cs(c)) ? ' red' : '') + (hi ? ' winhi' : '')
+  d.className = 'cardx' + (big ? ' big' : '') + (isRed(cs(c)) ? ' red' : '') + (hi ? ' winhi' : '') + (flip ? ' flip' : '')
   d.innerHTML = `<span class="corner">${RANKS[cr(c)]}${SUITS[cs(c)]}</span>${SUITS[cs(c)]}`
   return d
 }
@@ -376,9 +438,11 @@ function render () {
   if (pot > (T._lastPot || 0)) { potEl.classList.remove('bump'); void potEl.offsetWidth; potEl.classList.add('bump') }
   T._lastPot = pot
   potEl.innerHTML = 'Pot <b>' + pot + '</b>'
-  // board
+  // board (flip only the cards revealed THIS render — no per-render re-animation)
+  const prevReveal = T._lastReveal || 0
   const bd = $('board'); bd.innerHTML = ''
-  for (let i = 0; i < 5; i++) bd.appendChild(i < reveal ? cardEl(T.board[i], true, hi(T.board[i])) : emptyCard())
+  for (let i = 0; i < 5; i++) bd.appendChild(i < reveal ? cardEl(T.board[i], true, hi(T.board[i]), false, i >= prevReveal && i < reveal) : emptyCard())
+  T._lastReveal = reveal
   const tags = ['Pre-flop', 'Flop', 'Turn', 'River']
   $('streetTag').textContent = T.phase === 'idle' ? '—' : (over ? (v && v.showdown ? 'Showdown' : 'Hand over') : (v ? tags[v.streetIdx] : '—'))
   // seats
@@ -468,6 +532,7 @@ function boot () {
   $('qMax').onclick = () => quickRaise('max')
   $('raiseSlider').oninput = () => { $('raiseAmt').textContent = $('raiseSlider').value }
   $('seatSel').onchange = () => setupTable(+$('seatSel').value)
+  $('soundBtn').onclick = () => { soundOn = !soundOn; ensureAC(); const el = $('soundBtn'); el.classList.toggle('on', soundOn); el.innerHTML = soundOn ? '&#128266;' : '&#128263;' }
   $('blinds').textContent = SB + ' / ' + BB
   const fromUrl = +new URLSearchParams(location.search).get('seats')
   const n = [2, 6, 9].includes(fromUrl) ? fromUrl : 6
