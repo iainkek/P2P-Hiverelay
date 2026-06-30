@@ -11,7 +11,7 @@ an on-chain escrow, never an operator.
 |---|---|---|
 | `/dashboard` | `index.html` | Relay dashboard. Carries a **P2Poker hub tile** (top of page) linking to Lobby / Play / Cashier. |
 | `/lobby` | `lobby.html` | Table browser — a demo stakes ladder (Satoshi Micro → High Roller) plus any **live** tables from `GET /api/poker/tables`. Open/full/in-hand badges, seat dots, your session net, create-table. |
-| `/table` | `table.html` | Playable **heads-up No-Limit Hold'em** vs a bot. Full betting (fold/check/call/bet/raise/all-in + quick-bet ½·pot·max), street-by-street board, re-buy, hand-strength readout, winning-card glow, pot-ship. |
+| `/table` | `table.html` | Playable **No-Limit Hold'em, 2–9 seats** (`?seats=2\|6\|9` or the selector) vs bots. Full betting (fold/check/call/bet/raise/all-in + quick-bet ½·pot·max), street-by-street board, side pots, re-buy, hand-strength readout, winning-card glow, pot-ship. Imports the **real** engine over `/poker-engine`. |
 | `/cashier` | `cashier.html` | The USD₮ escrow: **deposit → settle net → withdraw**, a lifecycle stepper, win/loss payoff banner, and (live) the **cooperative co-sign** settlement flow. |
 
 Routing lives in `packages/core/core/relay-node/api-dashboard-routes.js`
@@ -54,11 +54,15 @@ cashier shows a table-session bridge.
   in-browser — `keccak256(abi.encode(bytes32 escrowId, address[] payees,
   uint256[] balances))` — is **byte-identical** to the contract and `settle.cjs`,
   so UI-produced EIP-191 signatures verify on-chain.
-- **Table ↔ hand evaluation.** `table.html` inlines a faithful port of the
-  money-layer evaluator (`money/hand-eval.js`: `eval5`/`eval7`) to decide
-  showdowns and name hands. It is a **demo** — the authoritative game runs
-  server-side on `money/betting.js` (betting engine) and `money/reducer.js`
-  (settlement) over the HiveRelay signed log.
+- **Table ↔ the real engine (no duplicate).** `table.html` **imports** the actual
+  `money/betting.js` (its interactive API — `createHand`/`legalActions`/
+  `applyAction`/`view`) and `money/hand-eval.js`, served by the relay at
+  `/poker-engine/<file>.js` (whitelisted, read-only; `api.js`'s `_servePokerEngine`).
+  So the demo table runs the **same tested betting engine** the relay uses — not a
+  reimplementation — for any table size 2–9. The only inlined piece is the
+  showdown side-pot split (mirrors `reducer.js`'s `settleHand`; `reducer.js` itself
+  isn't browser-importable because it pulls in `sodium`). It is still a local
+  demo: the authoritative game runs server-side over the HiveRelay signed log.
 - **Settlement paths.** All three exist end-to-end: cooperative (players co-sign,
   drivable from the cashier UI), committee dispute (`disputeClose` + `attest.cjs`),
   and arbitration/cheat (`arbitration-bridge.js`). See `money/README.md`.

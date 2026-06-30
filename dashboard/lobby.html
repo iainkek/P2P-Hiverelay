@@ -60,7 +60,7 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 .badge.inhand{color:var(--orange);background:rgba(240,166,74,.12)}
 .badge.live{color:var(--cyan);background:rgba(88,166,255,.12)}
 .tbl .meta{display:flex;justify-content:space-between;font-size:.76rem;color:var(--text-dim);font-family:var(--mono)}
-.seats{display:flex;gap:.35rem}
+.seats{display:flex;gap:.35rem;flex-wrap:wrap}
 .seats .s{width:1.5rem;height:1.5rem;border-radius:50%;border:2px solid var(--card-border);display:flex;align-items:center;justify-content:center;font-size:.7rem}
 .seats .s.filled{background:rgba(88,166,255,.18);border-color:var(--cyan);color:var(--cyan)}
 .tbl .sit{margin-top:auto}
@@ -116,11 +116,11 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
 window.addEventListener('DOMContentLoaded', () => { if (!window.__lobbyBooted) bootLobby() })
 
 const DEMO = [
-  { name: 'Satoshi Micro', sb: 5, bb: 10, buyin: 1000, seated: 1, max: 2, status: 'open' },
-  { name: 'Bronze', sb: 10, bb: 20, buyin: 2000, seated: 2, max: 2, status: 'full' },
-  { name: 'Silver', sb: 25, bb: 50, buyin: 5000, seated: 0, max: 2, status: 'open' },
-  { name: 'Gold', sb: 50, bb: 100, buyin: 10000, seated: 1, max: 2, status: 'open' },
-  { name: 'High Roller', sb: 100, bb: 200, buyin: 20000, seated: 1, max: 2, status: 'inhand' }
+  { name: 'Satoshi Heads-Up', sb: 5, bb: 10, buyin: 1000, seated: 1, max: 2, status: 'open' },
+  { name: 'Bronze 6-max', sb: 10, bb: 20, buyin: 2000, seated: 4, max: 6, status: 'open' },
+  { name: 'Silver 6-max', sb: 25, bb: 50, buyin: 5000, seated: 6, max: 6, status: 'full' },
+  { name: 'Gold 9-max', sb: 50, bb: 100, buyin: 10000, seated: 3, max: 9, status: 'open' },
+  { name: 'High Roller HU', sb: 100, bb: 200, buyin: 20000, seated: 1, max: 2, status: 'inhand' }
 ]
 const $ = (id) => document.getElementById(id)
 const fmtK = (n) => n >= 1000 ? (n / 1000) + 'k' : '' + n
@@ -138,7 +138,7 @@ function tableCard (t) {
     <div class="meta"><span>Seats</span><span>${t.seated}/${t.max}</span></div>
     <div class="seats">${seats}</div>
     <div class="sit"><button class="btn btn-sit" ${can ? '' : 'disabled'}>${can ? 'Sit down →' : 'Table full'}</button></div>`
-  if (can) el.querySelector('button').onclick = () => { window.location.href = '/table' }
+  if (can) el.querySelector('button').onclick = () => { window.location.href = '/table?seats=' + (t.max || 2) }
   return el
 }
 

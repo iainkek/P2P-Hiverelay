@@ -684,6 +684,13 @@ export class RelayAPI extends EventEmitter {
         const dashboardRoute = await this._resolveDashboardGetRoute(req, path)
         if (dashboardRoute) return this._sendDashboardGetRoute(res, dashboardRoute)
 
+        // Poker engine modules — serve the real money-layer JS (whitelisted) so
+        // the dashboard table imports the SAME tested engine instead of shipping
+        // a duplicate front-end one. Pure, dependency-free, public assets.
+        if (path.startsWith('/poker-engine/')) {
+          return this._servePokerEngine(res, path.slice('/poker-engine/'.length))
+        }
+
         if (path === '/api/health-detail') {
           if (!this._requireAuth(req, res, 'Unauthorized — API key required for /api/health-detail')) return
           const result = buildHealthDetailPayload({ node: this.node })
@@ -1542,6 +1549,42 @@ export class RelayAPI extends EventEmitter {
       } catch (err) {
         lastErr = err
       }
+    }
+    throw lastErr
+  }
+
+  async _servePokerEngine (res, name) {
+    // Only the pure, dependency-free engine modules the dashboard table imports.
+    const allowed = new Set(['betting.js', 'hand-eval.js'])
+    if (!allowed.has(name)) {
+      res.writeHead(404)
+      res.end('not found')
+      return
+    }
+    this._pokerEngineCache = this._pokerEngineCache || {}
+    if (!this._pokerEngineCache[name]) {
+      try {
+        this._pokerEngineCache[name] = await this._readPokerEngineFile(name)
+      } catch {
+        res.writeHead(404)
+        res.end('not found')
+        return
+      }
+    }
+    res.setHeader('Content-Type', 'text/javascript; charset=utf-8')
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Cache-Control', 'public, max-age=300')
+    res.writeHead(200)
+    res.end(this._pokerEngineCache[name])
+  }
+
+  async _readPokerEngineFile (name) {
+    const rel = ['packages', 'services', 'builtin', 'poker', 'money', name]
+    const candidates = [join(__dirname, '..', '..', '..', '..', ...rel)]
+    if (this._dashboardDir) candidates.push(join(this._dashboardDir, '..', ...rel))
+    let lastErr
+    for (const f of candidates) {
+      try { return await readFile(f, 'utf-8') } catch (err) { lastErr = err }
     }
     throw lastErr
   }
