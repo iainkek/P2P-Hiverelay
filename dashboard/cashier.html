@@ -478,8 +478,14 @@ async function liveRefresh () {
 async function liveDeposit (amt) {
   try {
     if (S.token) {
-      const al = await S.token.allowance(S.address, S.escrowAddr)
-      if (al < amt) { log('approving…'); await (await S.token.approve(S.escrowAddr, amt)).wait() }
+      let al = await S.token.allowance(S.address, S.escrowAddr)
+      if (al < amt) {
+        log('approving…'); await (await S.token.approve(S.escrowAddr, amt)).wait()
+        // Public testnet RPCs lag read-after-write; wait for the new allowance to
+        // propagate before depositing, else deposit's gas estimate sees a stale
+        // allowance and reverts (TRANSFER_FROM_FAILED).
+        for (let i = 0; i < 12 && al < amt; i++) { await new Promise(r => setTimeout(r, 1200)); try { al = await S.token.allowance(S.address, S.escrowAddr) } catch {} }
+      }
     }
     log('depositing ' + fmt(amt) + '…')
     await (await S.escrow.deposit(amt)).wait()

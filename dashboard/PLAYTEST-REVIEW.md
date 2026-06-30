@@ -20,6 +20,12 @@ review loop runs.
 - **On-chain escrow** — BOTH settlement paths proven on Base Sepolia (cooperative +
   committee dispute), escrow drains to 0 each time. Suites: 83 off-chain + 31
   on-chain + 5 routing, all green.
+- **Cashier live co-sign is on-chain-valid** — the in-browser `coopDigestHex` is
+  **byte-identical** to `settle.cjs` (verified `0x883c9c90…` for a fixed input), and
+  an EIP-191 signature over it recovers to the signer (matches the contract's
+  `_recover`). So a real tester's cooperative co-sign produced in the browser will
+  verify on-chain. The live deposit/withdraw/connect paths mirror the tested
+  `EscrowClient`, with failures surfaced to the activity log.
 
 ## Bugs found & fixed (this review)
 
@@ -38,6 +44,13 @@ review loop runs.
   the edge at 9-max (6-max + heads-up were fine). **Fixed** (pull seats inward on
   narrow screens — smaller seat radius < 560px). Verified: 0 clipped at 9-max,
   6-max still 0 clipped + playable, 0 JS errors on mobile.
+
+- **F6 — live deposit could revert on a laggy testnet RPC.** `liveDeposit` approved
+  then immediately deposited; on a public RPC that lags read-after-write (the exact
+  failure I hit deploying to Base Sepolia), `deposit`'s gas estimate sees a stale
+  allowance and reverts `TRANSFER_FROM_FAILED`. **Fixed** (poll the allowance to
+  propagate after approve, like the proven scripts). Matters directly for real
+  testnet testing.
 
 ## Mobile
 
