@@ -82,6 +82,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Game→cashier net handoff proven end-to-end (iter 83).** The one integration seam not yet
+tested directly: a player finishes a hand on `/mp-table`, then navigates to `/cashier` to
+settle — does the bridged net survive that handoff? Proved it through the *real* path (6/6):
+two browsers play a real hand (host net −20), the net is written to `localStorage`, the host
+clicks **"Settle in the Cashier"** → navigates to `/cashier` → the exact net (−20) is still
+there and the cashier reads it. A useful side-confirmation: a *raw* `goto('/cashier')` is
+correctly **blocked by the beforeunload guard** (the session is active mid-play); only the
+Settle button (which clears the guard + posts session-over) navigates cleanly. So the trustless
+game and the on-chain money rail are now verified to connect end-to-end. Preserved at
+`test/integration/mp-bridge.test.cjs`.
+
 **Cashier Demo-mode onboarding verified (iter 81).** The cashier's **Demo mode** (learn the
 money flow with no wallet or real funds — the money-rail equivalent of the mp-table demo) was
 an untested userflow. Verified it end-to-end (9/9): loads in Demo mode, Connect → CONNECT
