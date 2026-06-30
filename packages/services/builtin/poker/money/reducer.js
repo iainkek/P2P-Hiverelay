@@ -46,7 +46,7 @@ const isInt = (n) => Number.isInteger(n)
  * { net: {seat:int}, potDistribution: {seat:int}, winners, error }.
  * Handles side pots (all-ins) and uncalled-bet refunds.
  */
-function settleHand (hand, seatSet) {
+export function settleHand (hand, seatSet) {
   const contrib = {}
   for (const seat of seatSet) contrib[seat] = 0
   for (const [seat, amt] of Object.entries(hand.contributions || {})) {

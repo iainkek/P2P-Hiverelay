@@ -138,6 +138,18 @@ instance), so it can't be built+verified in this review loop. Scope below.
   than its bankroll (`net ≥ -bankroll` ⇒ `withdrawable ≥ 0`); winnings carry to the
   next session.
 
+## Side-pot payouts — proven correct (real-money critical)
+
+The table has its **own inline `distribute()`** (the reducer pulls in sodium and
+isn't browser-importable), so when players go all-in for different amounts the
+browser computes the side pots itself — a divergence here would misallocate real
+money. Verified it can't diverge: it aliases the reducer's exact `evaluate7`/
+`compareRank` (same `hand-eval.js`), and an **8000-scenario fuzz** (4671 contested
+multi-level side-pots, plus fold-wins, dead money from folders, uncalled-bet
+refunds, and ties) shows `distribute()` produces **identical payouts to the tested
+`reducer.settleHand` on every scenario — zero mismatches**. (Exported `settleHand`
+for the comparison; off-chain suite stays 83/83.)
+
 ## Mobile
 
 6-max and heads-up play cleanly on a 390px phone (no clipped/overlapping seats,
