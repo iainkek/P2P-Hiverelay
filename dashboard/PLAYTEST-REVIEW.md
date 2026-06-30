@@ -43,6 +43,15 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Disconnect forfeit (iter 41) — the last robustness gap.** A full disconnect (browser
+closed → no local timer) used to trap the opponent. Now when you're waiting on a seat
+that's gone past the deadline (default 60s, anchored on the relay-bounded entry `ts`), a
+**"claim the pot"** button appears; claiming posts a `forfeit` entry and the absent seat
+is settled as folded → you take the pot. Verified two-browser (8/8): the joiner closes
+its browser mid-hand → after the deadline the host sees the claim button → claims → wins
+the 40 pot (net +20), no longer stuck. So an abandoning player can't trap your money —
+the table is now production-shaped for unsupervised play.
+
 **Turn clock (iter 40).** A 30s per-turn countdown (shown in the turn pill) so an AFK
 player can't freeze the game: on expiry it auto-checks if the action is free, else
 auto-folds. Verified two-browser (5/5): with the joiner never clicking, its clock

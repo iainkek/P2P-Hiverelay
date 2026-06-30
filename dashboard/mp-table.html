@@ -100,7 +100,7 @@
         </span>
       </div>
       <div id="result" style="text-align:center;margin-top:1rem;font-weight:700"></div>
-      <div style="text-align:center;margin-top:.8rem"><button class="btn hide" id="nextHand">Deal next hand →</button><span class="pill hide" id="waitNext">waiting for the host to deal the next hand…</span></div>
+      <div style="text-align:center;margin-top:.8rem"><button class="btn hide" id="nextHand">Deal next hand →</button><span class="pill hide" id="waitNext">waiting for the host to deal the next hand…</span><button class="btn hide" id="claimBtn" style="background:var(--red);color:#fff">Opponent timed out — claim the pot</button></div>
     </div>
   </div>
 
@@ -238,33 +238,49 @@ function renderBetting (S, me) {
 async function runBetting (sess, me, writers) {
   me.writers = writers
   const config = bettingConfig(writers)
-  let postedAtCount = -1
+  const oppWriter = writers.find(w => w !== me.writer)
+  const graceMs = window.__forfeitMs || 60000 // disconnect deadline (relay-ts anchored)
+  let postedAtCount = -1, claimArmed = false
+  $('claimBtn').onclick = () => { claimArmed = true }
   for (let g = 0; g < 4000; g++) {
     await sleep(250)
     const entries = await sess.readEntries()
+    // a posted forfeit ends the hand: whoever is claimed against loses, the claimant wins.
+    const ff = entries.find(e => (e.payload || e).kind === 'forfeit')
+    if (ff) { hide('controls'); hide('claimBtn'); return { S: bettingState(entries, config), forfeitAgainst: (ff.payload || ff).against } }
     const S = bettingState(entries, config)
     renderBetting(S, me)
-    if (S.complete) { hide('controls'); return S }
+    if (S.complete) { hide('controls'); hide('claimBtn'); return { S } }
     if (view(S).toAct === me.writer) {
+      hide('claimBtn')
       const count = entries.filter(e => (e.payload || e).kind === 'bet-action').length
       if (postedAtCount === count) { await sleep(300); continue } // my action is still landing — don't double-post
       const act = await awaitAction(S, me)
       const ok = await sess.post({ kind: 'bet-action', seat: me.writer, type: act.type, amount: act.amount })
       if (ok) { postedAtCount = count; log('you → ' + act.type + (act.amount ? ' ' + act.amount : '')) }
-    } else await sleep(300)
+    } else {
+      // waiting on the opponent — if they're past the deadline (relay-ts of the last
+      // entry + grace), let me claim the pot (handles a full disconnect, browser closed).
+      const lastTs = Math.max(0, ...entries.map(e => e.ts || (e.payload || e).ts || 0))
+      const overdue = lastTs && Date.now() > lastTs + graceMs
+      overdue ? show('claimBtn') : hide('claimBtn')
+      if (overdue && claimArmed) { hide('claimBtn'); await sess.post({ kind: 'forfeit', against: oppWriter }); log('opponent timed out — you claim the pot'); return { S, forfeitAgainst: oppWriter } }
+      await sleep(300)
+    }
   }
-  return null
+  return { S: bettingState(await sess.readEntries(), config) }
 }
 
 // SHOWDOWN: award the pot. Uncontested (a fold) wins WITHOUT revealing; a contested
 // showdown reveals both hands (each publishes its own hole-card shares) and compares.
-async function runShowdown (sess, me, writers, hand, S) {
+async function runShowdown (sess, me, writers, hand, S, forfeitAgainst) {
   const st = dealStateFromLog(sess.localLog); const deck = st.deck
   const { hole, board } = dealLayout(writers.length)
   const myIdx = writers.indexOf(me.writer)
   const v = view(S); const contrib = v.contributions || {}
   const pot = Object.values(contrib).reduce((a, b) => a + b, 0)
   const folded = new Set(v.folded || [])
+  if (forfeitAgainst) folded.add(forfeitAgainst) // a timed-out seat forfeits = treated as folded
   const live = writers.filter(w => !folded.has(w))
   const pubBy = (w) => { const e = sess.localLog.find(x => x.writer === w && (x.payload || x).kind === 'mp-key'); return e ? unhex((e.payload || e).pub) : null }
   const sign = (n) => (n >= 0 ? '+' : '') + n
@@ -304,9 +320,9 @@ async function runFullHand (rt, tableKey, me, writers, oppWriter) {
   const sess = makeSession(rt, tableKey, me)
   const hand = await runDeal(sess, me, writers)
   if (!hand) { log('deal failed'); return }
-  const S = await runBetting(sess, me, writers)
-  if (!S) { log('betting failed'); return }
-  await runShowdown(sess, me, writers, hand, S)
+  const bet = await runBetting(sess, me, writers)
+  if (!bet || !bet.S) { log('betting failed'); return }
+  await runShowdown(sess, me, writers, hand, bet.S, bet.forfeitAgainst)
 }
 // "Deal next hand" gate (host) — resolved by the button.
 let nextHandResolve = null
