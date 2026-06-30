@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Regression checkpoint — contracts + settlement green (iter 76).** After 75 iterations of
+changes, re-ran the authoritative suites to confirm nothing regressed in the money-critical
+core. The **escrow contract suite is 31/31**: deposit→cooperativeClose→withdraw, conservation
+enforcement, signature/replay protection (escrowId domain separation), the **dispute path**
+(`disputeClose` via committee, non-committee + stale-epoch rejection), the **reducer→escrow
+integration** (reducer balances drive both cooperative and dispute close, multi-hand
+accumulated net), withdraw rules (net-only, no double-withdraw, no pre-settle), fee-on-transfer
++ no-return tokens, funding lock, reentrancy resistance, and WDK-wallet interop. The
+**settlement matrix is 6/6** (mp-table == reducer across every heads-up outcome). The money
+authority and the cooperative==dispute guarantee are both intact.
+
 **Symmetric session-end — host also detects the joiner leaving (iter 75).** Iter 74's
 session-over signal was one-directional: the host leaving notified the joiner (who's
 polling), but if the *joiner* left, the host sat at "Deal next hand" (not polling) and
