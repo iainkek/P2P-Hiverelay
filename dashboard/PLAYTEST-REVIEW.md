@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Hand net → settlement bridge (iter 34).** The showdown now computes each seat's
+**net** (winnings − contributions — exactly what settles on-chain), accumulates a
+session net across hands, shows it in the result banner ("…Net this hand +20 · session
++20"), and bridges it to `localStorage` (`p2poker.mp.net`) for the Cashier. Verified in
+the two-browser hand (13/13): the two seats' nets are **zero-sum (+20 / −20)**, the
+winner is positive, the session accumulates, and the bridge value matches. The only
+remaining wire to settle a testnet pot for real is the on-chain `cooperativeClose`:
+exchange EVM addresses in the handshake (so the net maps to escrow payees) and co-sign
+the net — the escrow half (`cooperativeClose` + withdraw) is already proven on Base
+Sepolia via the Cashier.
+
 **A COMPLETE playable hand, two browsers — deal → bet → showdown → settle (iter 33).**
 Added betting + showdown to `/mp-table`: after the trustless deal, both seats
 reconstruct `betting.js` state from the relay's bet-action log and act on their turn

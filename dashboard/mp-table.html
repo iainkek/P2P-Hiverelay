@@ -121,6 +121,7 @@ const hide = (id) => $(id).classList.add('hide')
 const b64 = (o) => btoa(JSON.stringify(o)).replace(/=+$/, '')
 const unb64 = (s) => JSON.parse(atob(s.trim()))
 let logLines = []
+let sessionNet = 0 // accumulated net across hands this session (bridged to the Cashier)
 const log = (s) => { logLines.push(s); $('log').textContent = logLines.slice(-30).join('\n'); $('log').scrollTop = 1e9 }
 function cardEl (c, faceUp) {
   const d = document.createElement('div')
@@ -255,12 +256,18 @@ async function runShowdown (sess, me, writers, hand, S) {
     const live = writers.filter(w => !folded.has(w))
     let winner = live[0]
     if (live.length > 1) { let best = evaluate7([...shown[live[0]], ...boardCards]); for (const w of live.slice(1)) { const r = evaluate7([...shown[w], ...boardCards]); if (compareRank(r, best) > 0) { best = r; winner = w } } }
-    const v = view(S); const pot = Object.values(v.contributions || {}).reduce((a, b) => a + b, 0)
+    const v = view(S); const contrib = v.contributions || {}
+    const pot = Object.values(contrib).reduce((a, b) => a + b, 0)
     const iWon = winner === me.writer
-    $('result').textContent = iWon ? ('You win the ' + pot + ' pot!') : (folded.has(me.writer) ? 'You folded.' : 'Opponent wins (' + pot + ').')
-    $('result').style.color = iWon ? 'var(--green)' : 'var(--red)'
-    log('SHOWDOWN — winner ' + short(winner) + ', pot ' + pot)
-    window.__hand = { done: true, iWon, pot, winner, myHole: hand.hole, board: boardCards }
+    // per-seat net (winnings − contributions) — what settles on-chain. Zero-sum.
+    const myNet = (iWon ? pot : 0) - (contrib[me.writer] || 0)
+    sessionNet += myNet
+    try { localStorage.setItem('p2poker.mp.net', String(sessionNet)) } catch {} // bridge to the Cashier
+    const sign = (n) => (n >= 0 ? '+' : '') + n
+    $('result').textContent = (iWon ? 'You win the ' + pot + ' pot! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + pot + '). ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet)
+    $('result').style.color = myNet >= 0 ? 'var(--green)' : 'var(--red)'
+    log('SHOWDOWN — winner ' + short(winner) + ', pot ' + pot + ', your net ' + sign(myNet))
+    window.__hand = { done: true, iWon, pot, winner, myNet, sessionNet, myHole: hand.hole, board: boardCards }
     return
   }
 }
