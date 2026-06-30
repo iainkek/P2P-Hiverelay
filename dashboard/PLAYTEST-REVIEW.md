@@ -30,8 +30,12 @@ touches is built, verified by execution, and resilient to disconnects and networ
   committee, reducer→escrow, reentrancy, fee/no-return tokens, funding lock).
 
 **Deployment requirement:** the relay must be served over **HTTPS** (WebCrypto needs a
-secure context) with the **poker plugin enabled**; the in-app secure-context guard makes a
-plain-HTTP misconfiguration obvious.
+secure context) with the **poker plugin enabled** AND **`openPokerTables`** set
+(`HIVERELAY_OPEN_POKER_TABLES=1`). The last one is non-obvious but **mandatory for
+multiplayer**: a hosted relay needs an API key, the browser client has none, so without the
+flag the host's `createTable` 401s and *nobody can host a game* (iter 87). The flag is
+poker-table-specific (general auth stays intact); creation is still rate-limited +
+maxTables-capped. The in-app secure-context guard makes a plain-HTTP misconfig obvious.
 
 **Remaining capability gap (does NOT block honest play):** the dispute/recourse
 **infrastructure is built and tested**, not a from-scratch build (corrected at iter 84 after
@@ -90,6 +94,21 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Deployment blocker: remote players couldn't host a game (iter 87).** A critical find that
+*only* showed up by reasoning about a hosted deployment (my tests all run on localhost, which
+masked it). `POST /api/poker/tables` (host creates a game) requires `_requireAuth` — which on
+a hosted relay means an API key, OR a localhost request. But the **browser client sends no API
+key**, and remote players **aren't localhost**, and a hosted relay **must** have a key (the
+startup warns otherwise; `trustProxy` requires one). So on the real testnet deployment, the
+host's `createTable` would 401 and **two humans could never start a game** — the flow dies at
+step one. Fixed with an opt-in `openPokerTables` flag (`HIVERELAY_OPEN_POKER_TABLES=1`): when
+set, poker table creation is allowed without the API key (still rate-limited + maxTables-
+capped; the signed log governs all in-game posts), while every other auth route stays gated.
+Default OFF keeps the secure posture. Verified (2+2): default keyed relay → createTable 401;
+flag on → createTable 201; a general auth route still 401s in both. Updated the deployment
+requirement above. The kind of thing that passes every localhost test and breaks the moment
+you deploy.
+
 **Snappier polling now the rate cap allows it (iter 86).** With the poker rate cap raised
 (iter 85), the mp-table's conservative poll intervals were leaving responsiveness on the
 table. Tightened them within the new ~10/s headroom: the deal sync `250+300ms`/idle-tick →

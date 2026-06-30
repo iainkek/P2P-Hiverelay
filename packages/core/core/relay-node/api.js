@@ -232,6 +232,13 @@ export class RelayAPI extends EventEmitter {
     // API key for authenticated endpoints (manage, seed, unseed)
     // Read from opts, env var, or generate a random one
     this._apiKey = opts.apiKey || process.env.HIVERELAY_API_KEY || null
+    // Poker table creation is a PLAYER action (hosting a game), but a hosted relay needs an
+    // API key for security and the browser client has none — so POST /api/poker/tables would
+    // 401 and block remote players from ever hosting. This opt-in flag lets the operator allow
+    // player-hosted tables (still rate-limited + maxTables-capped; the signed append-only log
+    // governs every in-game post). Default OFF keeps the secure posture. Required for a real
+    // multiplayer testnet deployment behind HTTPS.
+    this._openPokerTables = opts.openPokerTables || process.env.HIVERELAY_OPEN_POKER_TABLES === '1' || false
 
     // Per-IP request counts: ip -> { count, resetAt }
     this._rateLimits = new Map()
@@ -618,7 +625,9 @@ export class RelayAPI extends EventEmitter {
         const pk = this._getPokerServiceProvider()
         if (!pk.ok) return this._json(res, { error: pk.error }, pk.status)
         if (req.method === 'POST' && path === '/api/poker/tables') {
-          if (!this._requireAuth(req, res, 'Unauthorized — API key required to create a poker table')) return
+          // Player-hosted tables: when openPokerTables is set, allow creation without the API
+          // key (still rate-limited + maxTables-capped) so remote browsers can host a game.
+          if (!this._openPokerTables && !this._requireAuth(req, res, 'Unauthorized — API key required to create a poker table (set openPokerTables / HIVERELAY_OPEN_POKER_TABLES=1 to allow player-hosted tables)')) return
         }
         if (!this._handlePokerRoute) {
           this._handlePokerRoute = (await import('p2p-hiveservices/builtin/poker/http-adapter.js')).handlePokerRoute
