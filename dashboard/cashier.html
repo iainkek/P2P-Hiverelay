@@ -312,6 +312,14 @@ function log (msg, cls) { const el = $('log'); const ts = new Date().toLocaleTim
 // been at a table this browser (table.html writes these to localStorage).
 function showTableBridge () {
   try {
+    // Prefer the multiplayer (real human-vs-human) session net if present.
+    const mpNet = localStorage.getItem('p2poker.mp.net')
+    if (mpNet !== null && mpNet !== '0') {
+      const n = parseFloat(mpNet); const el = $('tableHint'); el.style.display = 'flex'
+      const col = n >= 0 ? 'var(--green)' : 'var(--red)'
+      el.innerHTML = `<span style="font-size:1.2rem">&#127183;</span><span>Your multiplayer session: <b style="color:${col}">${n >= 0 ? '+' : ''}${n}</b>. To cash out, settle this net on your shared escrow — enter the agreed final balances (each seat's deposit ± net, summing to the pot), sign, and one seat submits the cooperative close. <a href="/mp-table" style="color:var(--cyan);text-decoration:none">Back to the table &rarr;</a></span>`
+      return
+    }
     const hands = parseInt(localStorage.getItem('p2poker.hands') || '0')
     if (!hands) return
     const tnet = parseFloat(localStorage.getItem('p2poker.net') || '0')
