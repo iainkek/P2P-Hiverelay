@@ -33,13 +33,21 @@ touches is built, verified by execution, and resilient to disconnects and networ
 secure context) with the **poker plugin enabled**; the in-app secure-context guard makes a
 plain-HTTP misconfiguration obvious.
 
-**Remaining capability gap (does NOT block honest play):** the dispute/recourse path is
-proven at the reducer (iter 56) and contract (iter 60) levels, but isn't wired into the UI —
-the cashier deploys escrows without a committee and there's no relay attest endpoint, so an
-honest player can't yet *claim* on-chain against a stalling/cheating opponent through the UI.
-This needs the **committee attestation wiring + a writer↔wallet identity binding** (bridging
-the cashier's MetaMask identity to the mp-table's relay seat) — a substantial, multi-tick
-build that touches shared relay infra.
+**Remaining capability gap (does NOT block honest play):** the dispute/recourse
+**infrastructure is built and tested**, not a from-scratch build (corrected at iter 84 after
+investigating it directly). It comprises: a decentralized **arbitration service**
+(`builtin/arbitration-service.js` — relay-node peer voting on `poker/missing-share`,
+`poker/invalid-share`, `poker/refused-reveal`, with a VRF-selected arbitrator panel +
+slashing), the **arbitration-bridge** (`money/arbitration-bridge.js` — a guilty verdict →
+the cheater forfeits the hand → re-reduce), the **reducer** (iter 56), and the escrow's
+**`disputeClose`** — all exercised by `arbitration-to-escrow` + `reducer-to-escrow` in the
+31/31 contract suite. Note in-hand cheating is *also* already handled **cooperatively**: the
+mp-table replay-verifies every shuffle and auto-forfeits a cheater at showdown (proven live,
+iter 50); arbitration is the on-chain backstop for when the cooperative settle can't complete.
+What's actually missing is the **user-facing wiring**: enabling the arbitration ServiceProvider
+on the relay, a UI to submit a dispute with evidence, the cashier deploying escrows with the
+committee/oracle configured, and a writer↔wallet binding (cashier MetaMask ↔ mp-table relay
+seat). Substantial wiring across the relay + UI, but most of the hard logic already exists.
 
 **Gated on explicit approval:** a real **Base Sepolia deploy** (on-chain external action).
 
@@ -82,6 +90,19 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Investigated the dispute infrastructure — more built than assumed (iter 84).** I'd been
+characterizing the dispute/recourse path as a big from-scratch build. Investigated it directly
+(investigate-before-answering) and found it substantially built: a decentralized
+**arbitration service** (peer-adjudicated relay-node voting on the poker dispute classes
+missing-share / invalid-share / refused-reveal, VRF-selected panel, slashing), an
+**arbitration-bridge** that turns a guilty verdict into a corrected settlement (cheater
+forfeits → re-reduce), the **reducer**, and the escrow's **disputeClose** — all exercised by
+`arbitration-to-escrow` + `reducer-to-escrow` in the 31/31 suite. Corrected the synthesis
+above accordingly: the gap is **user-facing wiring** (enable the service, a dispute-submission
+UI, committee-configured escrows, the writer↔wallet binding), not the dispute logic. Also
+re-confirmed: in-hand cheating is already auto-forfeited cooperatively at showdown (iter 50),
+so arbitration is purely the on-chain backstop — honest testers never need it.
+
 **Game→cashier net handoff proven end-to-end (iter 83).** The one integration seam not yet
 tested directly: a player finishes a hand on `/mp-table`, then navigates to `/cashier` to
 settle — does the bridged net survive that handoff? Proved it through the *real* path (6/6):
