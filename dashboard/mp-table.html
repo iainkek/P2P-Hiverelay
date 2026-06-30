@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>P2Poker — multiplayer table (live deal)</title>
-<!-- noble resolved from the relay-served vendor tree; crypto stays byte-identical to the relay -->
+<title>P2Poker — multiplayer table</title>
 <script type="importmap">
 {"imports":{"@noble/curves/":"/poker-engine/noble/@noble/curves/","@noble/hashes/":"/poker-engine/noble/@noble/hashes/"}}
 </script>
@@ -15,39 +14,87 @@
   .top{display:flex;align-items:center;gap:.8rem;padding:.9rem 1.2rem;border-bottom:1px solid var(--line)}
   .top b{color:var(--gold)} .top .sub{color:var(--dim);font-size:.8rem}
   .wrap{max-width:880px;margin:1.2rem auto;padding:0 1rem}
-  .felt{background:radial-gradient(ellipse at 50% 40%,#15402c,#0c2a1c);border:2px solid #1e5c3e;border-radius:140px/90px;padding:2.2rem 1.5rem;min-height:300px;position:relative}
+  .hide{display:none!important}
+  .row{display:flex;gap:.7rem;flex-wrap:wrap}
+  .card-ui{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.2rem;margin-bottom:1rem}
+  .card-ui h3{margin:0 0 .5rem;font-size:1rem}
+  .btn{background:var(--gold);color:#10131b;border:none;border-radius:8px;padding:.7rem 1.3rem;font-weight:700;font-size:.9rem;cursor:pointer}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  textarea,input{width:100%;background:#0a0d13;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:.6rem;font-family:monospace;font-size:.78rem;margin:.3rem 0}
+  textarea{height:62px;resize:vertical}
+  label{font-size:.78rem;color:var(--dim)}
+  .felt{background:radial-gradient(ellipse at 50% 40%,#15402c,#0c2a1c);border:2px solid #1e5c3e;border-radius:140px/90px;padding:2.2rem 1.5rem;min-height:300px}
   .seatrow{display:flex;justify-content:space-around;gap:2rem;flex-wrap:wrap}
   .seat{background:rgba(0,0,0,.32);border:1px solid #2a3550;border-radius:12px;padding:.8rem 1rem;min-width:230px;text-align:center}
-  .seat h3{margin:.1rem 0 .5rem;font-size:.95rem}
+  .seat.me{border-color:var(--gold)} .seat h3{margin:.1rem 0 .5rem;font-size:.95rem}
   .seat .who{color:var(--dim);font-size:.72rem;font-family:monospace;margin-bottom:.5rem}
   .board{display:flex;gap:.4rem;justify-content:center;margin:1.6rem 0 .4rem}
-  .cards{display:flex;gap:.35rem;justify-content:center}
+  .cards{display:flex;gap:.35rem;justify-content:center;min-height:64px}
   .cardx{width:46px;height:64px;border-radius:7px;background:#f6f7fb;color:#10131b;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.15rem;box-shadow:0 2px 6px rgba(0,0,0,.4)}
   .cardx.red{color:var(--red)} .cardx.back{background:linear-gradient(135deg,#2a4d8f,#16213e);color:#6f86b8}
   .lbl{color:var(--gold);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.3rem}
-  .btn{background:var(--gold);color:#10131b;border:none;border-radius:8px;padding:.7rem 1.3rem;font-weight:700;font-size:.9rem;cursor:pointer}
-  .btn:disabled{opacity:.5;cursor:not-allowed}
-  .log{background:#0a0d13;border:1px solid var(--line);border-radius:8px;padding:.7rem;font-family:monospace;font-size:.74rem;color:var(--dim);max-height:170px;overflow:auto;margin-top:1rem;white-space:pre-wrap;line-height:1.5}
-  .note{color:var(--dim);font-size:.82rem;line-height:1.5;margin:.8rem 0}
+  .log{background:#0a0d13;border:1px solid var(--line);border-radius:8px;padding:.7rem;font-family:monospace;font-size:.74rem;color:var(--dim);max-height:150px;overflow:auto;margin-top:1rem;white-space:pre-wrap;line-height:1.5}
+  .note{color:var(--dim);font-size:.82rem;line-height:1.5}
   .pill{display:inline-block;background:rgba(88,166,255,.14);color:var(--cyan);border-radius:20px;padding:.15rem .6rem;font-size:.72rem}
 </style>
 </head>
 <body>
-<div class="top"><b>♠ P2Poker</b> <span>Multiplayer table</span> <span class="sub">— trustless deal over the HiveRelay signed log (mental poker)</span></div>
+<div class="top"><b>♠ P2Poker</b> <span>Multiplayer table</span> <span class="sub">— trustless mental-poker over the HiveRelay signed log</span></div>
 <div class="wrap">
-  <p class="note">This drives a <b>real mental-poker deal over the relay</b>: two seats exchange ElGamal keys, post an encrypted deck, each re-encrypt-shuffles it (so neither controls the order), then publish decryption shares — every step a signed entry on the relay log. Each seat opens only its own hole cards; the board is public. <span class="pill">live deal demo</span></p>
-  <button class="btn" id="run">Deal a live hand over the relay →</button>
-  <div class="felt" style="margin-top:1.1rem">
-    <div class="seatrow" id="seats">
-      <div class="seat"><h3>Seat A</h3><div class="who" id="whoA">—</div><div class="lbl">hole (private to A)</div><div class="cards" id="holeA"></div></div>
-      <div class="seat"><h3>Seat B</h3><div class="who" id="whoB">—</div><div class="lbl">hole (private to B)</div><div class="cards" id="holeB"></div></div>
+
+  <!-- landing -->
+  <div id="landing">
+    <p class="note">Play a real-money hand against another human: the deal is mental poker over the relay's signed log (each seat sees only its own hole cards), and the result settles on-chain via the <a href="/cashier" style="color:var(--cyan)">Cashier</a>. <span class="pill">testnet</span></p>
+    <div class="row" style="margin-top:1rem">
+      <button class="btn" id="bHost">Host a table</button>
+      <button class="btn ghost" id="bJoin">Join a table</button>
+      <button class="btn ghost" id="bDemo">Live deal demo (solo)</button>
     </div>
-    <div class="lbl" style="text-align:center;margin-top:1.4rem">community board</div>
-    <div class="board" id="board"></div>
   </div>
-  <div class="log" id="log">idle — press the button to deal a hand over the relay.</div>
-  <p class="note">Next: a host/invite handshake so two separate browsers join one table (the relay fixes its writer allowlist at table creation), then betting + showdown → on-chain settle via the <a href="/cashier" style="color:var(--cyan)">Cashier</a>.</p>
+
+  <!-- host -->
+  <div id="hostUi" class="hide">
+    <div class="card-ui"><h3>1 · Send this invite to your opponent</h3>
+      <label>Your invite code — copy + send it (chat/DM):</label>
+      <textarea id="inviteOut" readonly></textarea>
+      <button class="btn ghost" id="copyInvite">Copy invite</button>
+    </div>
+    <div class="card-ui"><h3>2 · Paste their join code, then start</h3>
+      <textarea id="joinIn" placeholder="paste your opponent's join code here"></textarea>
+      <button class="btn" id="startHost" disabled>Create table &amp; deal</button>
+    </div>
+  </div>
+
+  <!-- join -->
+  <div id="joinUi" class="hide">
+    <div class="card-ui"><h3>1 · Paste the host's invite code</h3>
+      <textarea id="inviteIn" placeholder="paste the invite code the host sent you"></textarea>
+      <button class="btn" id="acceptInvite">Accept invite</button>
+    </div>
+    <div class="card-ui hide" id="joinStep2"><h3>2 · Send this join code back to the host</h3>
+      <label>Your join code — copy + send it back:</label>
+      <textarea id="joinOut" readonly></textarea>
+      <button class="btn ghost" id="copyJoin">Copy join code</button>
+      <p class="note" id="joinWait">Waiting for the host to start the table…</p>
+    </div>
+  </div>
+
+  <!-- table -->
+  <div id="tableUi" class="hide">
+    <div class="felt">
+      <div class="seatrow">
+        <div class="seat me" id="seatMe"><h3>You</h3><div class="who" id="whoMe">—</div><div class="lbl">your hole cards</div><div class="cards" id="holeMe"></div></div>
+        <div class="seat" id="seatOpp"><h3>Opponent</h3><div class="who" id="whoOpp">—</div><div class="lbl">hidden</div><div class="cards" id="holeOpp"></div></div>
+      </div>
+      <div class="lbl" style="text-align:center;margin-top:1.4rem">community board</div>
+      <div class="board" id="board"></div>
+    </div>
+  </div>
+
+  <div class="log" id="log">choose Host or Join to play a real hand, or run the solo demo.</div>
 </div>
+
 <script type="module">
 import { createSeat, signEntry, RelayTable } from '/poker-engine/relay-table-client.js'
 import * as ed from '/poker-engine/crypto/ed25519-noble.js'
@@ -58,62 +105,137 @@ const RANKS = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'], SUITS = ['�
 const $ = (id) => document.getElementById(id)
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const short = (h) => h.slice(0, 6) + '…' + h.slice(-4)
+const show = (id) => $(id).classList.remove('hide')
+const hide = (id) => $(id).classList.add('hide')
+const b64 = (o) => btoa(JSON.stringify(o)).replace(/=+$/, '')
+const unb64 = (s) => JSON.parse(atob(s.trim()))
 let logLines = []
-const log = (s) => { logLines.push(s); $('log').textContent = logLines.slice(-40).join('\n'); $('log').scrollTop = 1e9 }
+const log = (s) => { logLines.push(s); $('log').textContent = logLines.slice(-30).join('\n'); $('log').scrollTop = 1e9 }
 function cardEl (c, faceUp) {
   const d = document.createElement('div')
   if (!faceUp) { d.className = 'cardx back'; d.textContent = '♠'; return d }
   const r = Math.floor(c / 4), s = c % 4
-  d.className = 'cardx' + (s === 1 || s === 2 ? ' red' : '')
-  d.textContent = RANKS[r] + SUITS[s]
+  d.className = 'cardx' + (s === 1 || s === 2 ? ' red' : ''); d.textContent = RANKS[r] + SUITS[s]
   return d
 }
 const render = (el, cards, faceUp) => { el.innerHTML = ''; for (const c of cards) el.appendChild(cardEl(c, faceUp)) }
+const cardStr = (c) => RANKS[c / 4 | 0] + SUITS[c % 4]
 
-async function dealLiveHand () {
-  $('run').disabled = true; logLines = []; log('connecting to the relay…')
-  const rt = new RelayTable('') // same-origin (served by the relay)
-  // two seats: each a relay-signing seat (log writer) + a private ElGamal secret
-  const mk = async () => { const sign = await createSeat(); return { sign, writer: sign.pub, x: ed.scalarRandom(), mem: {}, seq: 0 } }
-  const A = await mk(), B = await mk()
-  const seats = [A, B], writers = seats.map(s => s.writer)
-  $('whoA').textContent = short(A.writer); $('whoB').textContent = short(B.writer)
-  render($('holeA'), [0, 0], false); render($('holeB'), [0, 0], false); render($('board'), [0, 0, 0, 0, 0], false)
-  // fresh table keyed by a relay-signing pubkey, writers = both seats
+// A seat = relay-signing key (log writer) + a private ElGamal secret.
+async function makeSeat () { const sign = await createSeat(); return { sign, writer: sign.pub, x: ed.scalarRandom(), mem: {}, seq: 0 } }
+
+// Drive ONE seat over the relay log until its hand is dealt. Merges a local mirror with
+// readLog (dedup by writer+kind+pos) so read-after-write lag never re-posts a move.
+async function runSeat (rt, tableKey, me, writers, oppWriter) {
+  const seen = new Map(); const localLog = []
+  const key = (e) => e.writer + '|' + (e.payload || e).kind + '|' + ((e.payload || e).pos ?? '')
+  const ingest = (e) => { const k = key(e); if (!seen.has(k)) { seen.set(k, true); localLog.push({ writer: e.writer, payload: e.payload || e }) } }
+  render($('board'), [0, 0, 0, 0, 0], false); render($('holeMe'), [0, 0], false); render($('holeOpp'), [0, 0], false)
+  for (let guard = 0; guard < 4000; guard++) {
+    await sleep(250) // throttle — stay under the relay rate limit; poker is not latency-critical
+    const lg = await rt.readLog(tableKey); for (const e of (lg.json && lg.json.entries || [])) ingest(e)
+    const action = nextDealAction(localLog, { writer: me.writer, x: me.x }, writers, me.mem)
+    if (action) {
+      const body = { tableKey, writer: me.writer, seq: me.seq, ts: Date.now(), payload: action }
+      const r = await rt.postMove(tableKey, await signEntry(me.sign, body))
+      if (r.status === 200 && r.json && r.json.ok) { me.seq++; ingest({ writer: me.writer, payload: action }); log('you → ' + action.kind + (action.pos !== undefined ? ' #' + action.pos : '')) }
+      else { await sleep(500) } // transient (rate-limit / seq-race / lag) — back off + retry, never give up
+      continue
+    }
+    const h = readMyHand(localLog, { writer: me.writer, x: me.x }, writers)
+    if (h.ready) {
+      render($('holeMe'), h.hole, true); render($('board'), h.board, true)
+      log('DEAL COMPLETE — you hold ' + h.hole.map(cardStr).join(' ') + ' · board ' + h.board.map(cardStr).join(' '))
+      window.__mp = { hole: h.hole, board: h.board, ready: true }
+      return h
+    }
+    await sleep(300) // waiting on the opponent
+  }
+  log('deal timed out'); return null
+}
+
+function enterTable (myWriter, oppWriter) {
+  hide('landing'); hide('hostUi'); hide('joinUi'); show('tableUi')
+  $('whoMe').textContent = short(myWriter); $('whoOpp').textContent = short(oppWriter)
+}
+
+// ── HOST ──
+let hostSeat, hostTableKey
+$('bHost').onclick = async () => {
+  hide('landing'); show('hostUi'); log('hosting — generating your seat…')
+  hostSeat = await makeSeat()
+  hostTableKey = (await createSeat()).pub
+  $('inviteOut').value = b64({ t: hostTableKey, h: hostSeat.writer })
+  log('invite ready — send it to your opponent, then paste their join code.')
+}
+$('joinIn').addEventListener('input', () => { $('startHost').disabled = !$('joinIn').value.trim() })
+$('copyInvite').onclick = () => navigator.clipboard?.writeText($('inviteOut').value)
+$('startHost').onclick = async () => {
+  $('startHost').disabled = true
+  let joiner; try { joiner = unb64($('joinIn').value) } catch { log('invalid join code'); $('startHost').disabled = false; return }
+  const writers = [hostSeat.writer, joiner.j] // host is seat 0
+  const rt = new RelayTable('')
+  const ct = await rt.createTable(hostTableKey, writers)
+  if (ct.status !== 201) { log('createTable failed: ' + ct.status); return }
+  log('table created — dealing…'); enterTable(hostSeat.writer, joiner.j)
+  await runSeat(rt, hostTableKey, hostSeat, writers, joiner.j)
+}
+
+// ── JOIN ──
+let joinSeat, joinInvite
+$('bJoin').onclick = () => { hide('landing'); show('joinUi'); log('join — paste the host’s invite.') }
+$('acceptInvite').onclick = async () => {
+  try { joinInvite = unb64($('inviteIn').value) } catch { log('invalid invite code'); return }
+  joinSeat = await makeSeat()
+  $('joinOut').value = b64({ j: joinSeat.writer })
+  show('joinStep2'); log('join code ready — send it to the host, then wait for the deal.')
+  // wait for the host to create the table, then drive our seat
+  const rt = new RelayTable(''); const writers = [joinInvite.h, joinSeat.writer]
+  for (let i = 0; i < 600; i++) {
+    const lg = await rt.readLog(joinInvite.t)
+    // wait until the host has actually created the table AND posted (entries > 0),
+    // otherwise we'd race ahead of table creation and our moves would be rejected.
+    if (lg.status === 200 && lg.json && Array.isArray(lg.json.entries) && lg.json.entries.length > 0) {
+      log('host started the table — dealing…'); enterTable(joinSeat.writer, joinInvite.h)
+      await runSeat(rt, joinInvite.t, joinSeat, writers, joinInvite.h)
+      return
+    }
+    await sleep(500)
+  }
+  log('timed out waiting for the host')
+}
+$('copyJoin').onclick = () => navigator.clipboard?.writeText($('joinOut').value)
+
+// ── SOLO DEMO (drives both seats locally over the relay) ──
+$('bDemo').onclick = async () => {
+  hide('landing'); log('solo demo — driving both seats over the relay…')
+  const rt = new RelayTable('')
+  const A = await makeSeat(), B = await makeSeat(), writers = [A.writer, B.writer]
   const tableKey = (await createSeat()).pub
   const ct = await rt.createTable(tableKey, writers)
-  if (ct.status !== 201) { log('createTable failed: ' + ct.status + ' ' + JSON.stringify(ct.json)); $('run').disabled = false; return }
-  log('table ' + short(tableKey) + ' created with 2 seats')
-  // drive the deal: local mirror for determinism, every move also posted to the relay
+  if (ct.status !== 201) { log('createTable failed: ' + ct.status); return }
+  enterTable(A.writer, B.writer); $('seatOpp').classList.add('me'); $('seatOpp').querySelector('.lbl').textContent = 'seat B hole'
+  // drive both from one local mirror (demo only)
   const mirror = []
-  const driverSeat = (s) => ({ writer: s.writer, x: s.x })
-  let guard = 0
-  while (guard++ < 400) {
-    let acted = false
-    for (const s of seats) {
-      const action = nextDealAction(mirror, driverSeat(s), writers, s.mem)
-      if (!action) continue
-      const body = { tableKey, writer: s.writer, seq: s.seq, ts: Date.now(), payload: action }
-      const signed = await signEntry(s.sign, body)
-      const r = await rt.postMove(tableKey, signed)
-      if (r.status === 200 && r.json && r.json.ok) { mirror.push({ writer: s.writer, payload: action }); s.seq++; acted = true; log(short(s.writer) + ' → ' + action.kind + (action.pos !== undefined ? ' #' + action.pos : '')); break }
-      log('postMove rejected: ' + r.status + ' ' + JSON.stringify(r.json)); $('run').disabled = false; return
+  for (let g = 0; g < 1200; g++) {
+    let pending = false, acted = false
+    for (const s of [A, B]) {
+      const a = nextDealAction(mirror, { writer: s.writer, x: s.x }, writers, s.mem)
+      if (!a) continue
+      pending = true
+      const r = await rt.postMove(tableKey, await signEntry(s.sign, { tableKey, writer: s.writer, seq: s.seq, ts: Date.now(), payload: a }))
+      if (r.json && r.json.ok) { mirror.push({ writer: s.writer, payload: a }); s.seq++; acted = true; break }
+      await sleep(400) // rate-limited — back off + retry
     }
-    if (!acted) break
+    if (!pending) break        // deal complete
+    if (!acted) await sleep(120) // throttle
   }
-  // confirm the relay has the full log (round-trip), then reveal each hand
-  const lg = await rt.readLog(tableKey)
-  log('relay log holds ' + ((lg.json && lg.json.entries || []).length) + ' signed entries (round-trip ok)')
-  const ha = readMyHand(mirror, driverSeat(A), writers), hb = readMyHand(mirror, driverSeat(B), writers)
-  if (ha.ready && hb.ready) {
-    render($('holeA'), ha.hole, true); render($('holeB'), hb.hole, true); render($('board'), ha.board, true)
-    log('DEAL COMPLETE — A holds ' + ha.hole.map(c => RANKS[c / 4 | 0] + SUITS[c % 4]).join(' ') + ', B holds ' + hb.hole.map(c => RANKS[c / 4 | 0] + SUITS[c % 4]).join(' '))
-    log('each seat opened only its own cards; the board is public. ✓')
-  } else log('deal did not complete (a=' + ha.ready + ' b=' + hb.ready + ')')
-  window.__mp = { aHole: ha.hole, bHole: hb.hole, board: ha.board, ready: ha.ready && hb.ready, entries: (lg.json && lg.json.entries || []).length }
-  $('run').disabled = false
+  const ha = readMyHand(mirror, { writer: A.writer, x: A.x }, writers), hb = readMyHand(mirror, { writer: B.writer, x: B.x }, writers)
+  render($('holeMe'), ha.hole, true); render($('holeOpp'), hb.hole, true); render($('board'), ha.board, true)
+  log('DEAL COMPLETE — A ' + ha.hole.map(cardStr).join(' ') + ' · B ' + hb.hole.map(cardStr).join(' ') + ' · board ' + ha.board.map(cardStr).join(' '))
+  window.__mp = { hole: ha.hole, board: ha.board, ready: ha.ready && hb.ready }
 }
-$('run').onclick = () => dealLiveHand().catch(e => { log('error: ' + e.message); $('run').disabled = false })
+
 window.__mpReady = true
 </script>
 </body>

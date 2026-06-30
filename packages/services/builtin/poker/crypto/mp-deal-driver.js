@@ -64,6 +64,9 @@ export function readMyHand (log, seat, seats) {
   const deck = st.deck
   const { hole, board } = MD.dealLayout(seats.length)
   const myIdx = seats.indexOf(seat.writer)
+  // Called on every wait tick — before the deck/shuffles exist there's nothing to
+  // read yet; degrade gracefully instead of dereferencing a null deck.
+  if (!deck || myIdx < 0 || !st.H) return { hole: [], board: [], ready: false }
   const pubBy = (w) => { const e = log.find((x) => x.writer === w && (x.payload || x).kind === 'mp-key'); return e ? P.unhex((e.payload || e).pub) : null }
   const myHole = hole[myIdx].map((pos) => MD.openCard(deck[pos], seat.x, P.sharesForPosition(log, pos, deck, pubBy)))
   const boardCards = board.map((pos) => MD.openBoard(deck[pos], P.sharesForPosition(log, pos, deck, pubBy)))

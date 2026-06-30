@@ -13,7 +13,7 @@ import * as DK from './elgamal-deck.js'
 import * as SH from './reencrypt-shuffle.js'
 
 const hex = (u) => { let s = ''; const a = new Uint8Array(u); for (let i = 0; i < a.length; i++) s += a[i].toString(16).padStart(2, '0'); return s }
-const unhex = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)))
+const unhex = (h) => { const m = (typeof h === 'string' ? h : '').match(/../g); return m ? Uint8Array.from(m.map((x) => parseInt(x, 16))) : new Uint8Array(0) }
 const ctHex = (ct) => ({ C1: hex(ct.C1), C2: hex(ct.C2) })
 const ctBytes = (c) => ({ C1: unhex(c.C1), C2: unhex(c.C2) })
 
@@ -38,7 +38,7 @@ export function dealStateFromLog (entries) {
   let deck = null
   for (const e of entries) {
     const p = e.payload || e
-    if (p.kind === 'mp-key') keys.push(unhex(p.pub))
+    if (p.kind === 'mp-key') { const k = unhex(p.pub); if (k.length === 32) keys.push(k) } // skip malformed keys (don't crash the reader)
     else if (p.kind === 'mp-deck') deck = p.deck.map(ctBytes)
     else if (p.kind === 'mp-shuffle') deck = p.deck.map(ctBytes)
   }

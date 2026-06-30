@@ -43,6 +43,27 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**TWO HUMANS, TWO BROWSERS — a real trustless deal over the relay (iter 32).** Added a
+host/invite handshake to `/mp-table` (the relay fixes its writer allowlist at table
+creation, so keys are exchanged first via a copy-paste code, WebRTC-style): host shows
+an invite code, joiner returns a join code, host creates the table with both, then each
+browser drives only its own seat with a `runSeat` loop (poll log → `nextDealAction` →
+sign+postMove). Verified with **two separate browser instances** against a booted relay
+(8/8): after exchanging codes, both complete a full mental-poker deal over the relay —
+host holds e.g. 8♠9♣, joiner Q♣T♦, both agree on the board, 9 distinct cards, each sees
+only its own hole cards. This is real human-vs-human trustless dealing.
+
+Two genuine bugs surfaced + fixed (both would have broken live play):
+- **deadlock:** `readMyHand` dereferenced a null deck on every wait tick (before the
+  deck exists) → a waiting seat crashed → deadlock. Now degrades to `{ready:false}`.
+- **rate-limit give-up:** `runSeat` hammered the relay (no throttle) → "Too many
+  requests" → it treated the rejection as fatal and gave up. Now throttles (~250ms;
+  poker isn't latency-critical) and backs off + retries any transient rejection.
+Also hardened `dealStateFromLog`/`unhex` to skip a malformed key entry instead of
+crashing the reader (the relay doesn't validate payload content). Locked in
+`poker-mp-driver.test.js` (readMyHand-early + two-seat runSeat coordination); off-chain
+suite **87/87**. Remaining: betting + showdown UI → on-chain settle.
+
 **First working multiplayer table UI — live deal over the relay (iter 31).** Added
 `/mp-table` (dashboard route) — a page that drives a **real mental-poker deal over the
 real relay** and renders it: two seats exchange ElGamal keys, post an encrypted deck,
