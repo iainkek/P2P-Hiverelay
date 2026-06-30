@@ -46,8 +46,11 @@ then the table UI.
 1. Relay table / shared signed log — ✅ proven (iter 16)
 2. Browser signing + identity (`relay-table-client.js`) — ✅ built + proven (iter 18)
 3. Verifiable shared shuffle (VRF deal-seed) — ✅ proven browser-side (iter 19)
-4. Mental-poker hole-card privacy — ◑ crypto primitive built + production-proven
-   (chaum-pedersen.js); remaining = dealing protocol + browser point-op port
+4. Mental-poker hole-card privacy — ◑ **crypto fully browser-ready**: primitive
+   production-proven (iter 20), `ed25519-noble` byte-identical to sodium (iter 21),
+   and `chaum-pedersen-browser` prove/verify **wire-compatible** with the relay
+   (iter 22 — browser proof verifies under Node + vice-versa, 6/6). Remaining = the
+   dealing **protocol** (deal/reveal orchestration) + serving noble to the browser.
 5. Table UI driving 1–4 (post moves, replay via `betting.js`, render) — ⬜ wiring
 6. Reduce → settle → escrow — ✅ proven (iter 16 + earlier)
 
