@@ -65,7 +65,7 @@ Invariants the contract maintains (and tests assert):
 | T-6 | **Non-standard / fee-on-transfer token** | **FIXED:** `_safeTransfer`/`_safeTransferFrom` tolerate no-return tokens (mainnet USDT) and revert on explicit `false`; `deposit` credits the **measured** balance delta, so fee-on-transfer can't strand funds | Both covered by tests (no-return + 1%-fee token). |
 | T-7 | **Malicious committee quorum** | Strictly-increasing signer check prevents double-counting; only `isCommittee` signers count | A dishonest quorum CAN settle to any *conserving* distribution → reassign the pot among seats. Mitigate with independent relays, a high threshold, stake/reputation. This is the oracle trust boundary. |
 | T-8 | Signature malleability | `ecrecover`; recovered address is matched against an expected set | Not exploitable (a malleable variant recovers the *same* address; the increasing-signer check rejects dupes). `s`-low / `v∈{27,28}` not enforced — note for auditor. |
-| T-9 | Late deposit griefs a pending close | `deposit` allowed until `settled` | A deposit landing before a close changes `pot()`, so the close fails `NOT_CONSERVED` and must be re-signed against the new pot. Minor griefing/UX. Consider a deposit-lock phase. |
+| T-9 | Late deposit griefs a pending close | **Mitigated (opt-in):** any seat may `closeFunding()` once buy-ins are in, freezing deposits so a settlement can't be invalidated by a late top-up | Optional; without it, deposits stay open until `settled` (fine for fixed buy-in). See F-4. |
 | T-10 | Gas griefing on payout | Pull-based (each seat withdraws itself); no loop over external payees | None |
 
 ## 5. Findings & recommended pre-mainnet fixes
@@ -87,8 +87,11 @@ Invariants the contract maintains (and tests assert):
   committee, that is a design change (a timeout that settles to deposits), which
   re-introduces the loss-escape this design intentionally removes — decide
   explicitly.
-- **F-4 (Low): deposit-lock phase.** Optionally freeze deposits (a `funded` flag or
-  a per-session deadline) before settlement to remove T-9.
+- **F-4 (Low → FIXED): deposit-lock.** `closeFunding()` (any seat, opt-in) freezes
+  deposits so a pending settlement can't be invalidated by a late top-up (T-9);
+  settlement and withdraw still work after locking. Covered by
+  `test/funding-lock.test.cjs`. Independent of `settled`; not required for
+  fixed-buy-in tables.
 - **F-5 (Info → FIXED): emit `(payees, balances)` on settle.** `Settled` now emits
   `(string kind, address[] payees, uint256[] balances)` for cheap indexing/audit
   trails; asserted in `test/fee-token.test.cjs`.
@@ -106,7 +109,7 @@ Invariants the contract maintains (and tests assert):
    choices, not bugs; confirm they match operator intent.
 5. Reentrancy / CEI on `withdraw` (believed sound; confirm).
 
-## 7. Test coverage (local, `npx hardhat test` → 28 passing)
+## 7. Test coverage (local, `npx hardhat test` → 31 passing)
 
 Covers: deposit→cooperative settle→withdraw; conservation + missing-sig rejection;
 dispute/committee close (quorum, non-committee, stale-epoch); the withdraw-net
@@ -116,5 +119,5 @@ replay; payee-not-seat rejection; the multi-hand session settle; the
 arbitration/cheat path on-chain; the `EscrowClient` orchestration; WDK signer
 interop; a **no-return ERC-20 (mainnet-USDT-like)** end-to-end (F-1); and a
 **fee-on-transfer token** with the Settled-event payload (F-2/F-5). Remaining
-findings (F-3 liveness, F-4 deposit-lock, F-6 vestigial epoch) are design choices,
+findings (F-3 liveness backstop, F-6 vestigial epoch) are design choices,
 not bugs — confirm against operator intent during audit.

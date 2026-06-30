@@ -40,9 +40,11 @@ contract PokerEscrow {
 
     uint256 public lastEpoch;
     bool public settled;
+    bool public fundingClosed;
 
     event Opened(bytes32 escrowId);
     event Funded(address seat, uint256 amount);
+    event FundingClosed(address by);
     event Settled(string kind, address[] payees, uint256[] balances);
     event Withdrawn(address seat, uint256 amount);
 
@@ -81,6 +83,7 @@ contract PokerEscrow {
 
     function deposit(uint256 amount) external nonReentrant {
         require(!settled, "SETTLED");
+        require(!fundingClosed, "FUNDING_CLOSED");
         require(isParticipant[msg.sender], "NOT_SEAT");
         // Credit the MEASURED balance delta, not the requested amount, so a
         // fee-on-transfer token can never make pot() exceed the real balance
@@ -90,6 +93,18 @@ contract PokerEscrow {
         uint256 received = token.balanceOf(address(this)) - balBefore;
         deposited[msg.sender] += received;
         emit Funded(msg.sender, received);
+    }
+
+    // Opt-in funding lock (threat T-9): once buy-ins are in, any seat may freeze
+    // further deposits so a pending settlement can't be invalidated by a late
+    // top-up. Independent of `settled`; typically called when the relay signals
+    // funding is complete. Not required — without it, deposits stay open until
+    // settlement, which is fine for fixed-buy-in tables.
+    function closeFunding() external {
+        require(isParticipant[msg.sender], "NOT_SEAT");
+        require(!fundingClosed, "ALREADY_CLOSED");
+        fundingClosed = true;
+        emit FundingClosed(msg.sender);
     }
 
     // Settle to NET balances. No payout here — seats pull via withdraw().
