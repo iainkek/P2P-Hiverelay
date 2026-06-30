@@ -53,9 +53,16 @@ params** (`perm`/`rands`, pre-committed at deal time) and **replay-verifies ever
 shuffle**; an invalid shuffle (or a withheld reveal) forfeits the cheater. Verified:
 `verifyShuffle` catches substituted cards / lying about params / non-permutations (4/4
 isolation); honest two-browser play replay-verifies both shuffles with no false forfeit
-and correct zero-sum settle (7/7); the disconnect-forfeit path stays intact (8/8). The
-cheat→forfeit branch is covered by composition (proven `verifyShuffle` + proven
-forfeit-settle path) rather than an end-to-end adversarial browser.
+and correct zero-sum settle (7/7); the disconnect-forfeit path stays intact (8/8).
+
+**Cheat→forfeit proven end-to-end (iter 50).** Upgraded the by-composition coverage to a
+live adversarial test: a deliberately-malicious browser (`window.__cheatShuffle` test
+hook posts a tampered shuffle — two ciphertexts swapped, a card substitution — while
+keeping the real `perm`/`rands`) plays a normal hand against an honest host. The honest
+host reaches showdown, replay-verifies, and **catches it** (`output-mismatch@0`),
+forfeits the cheater, and is awarded the pot (8/8: cheat detected, reason is a shuffle
+cheat, host wins, took the forfeit path not the clean path, UI shows the win). The cheat
+branch is no longer theoretical — a cheating shuffle is caught and auto-forfeited live.
 
 **Uncalled-bet refund — cooperative == dispute settle (iter 48).** A deep-protocol bug
 that carried stacks made reachable: with unequal stacks a seat can be all-in for *less*

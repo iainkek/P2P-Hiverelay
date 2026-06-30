@@ -156,6 +156,13 @@ function makeSession (rt, tableKey, me) {
   const sync = async () => { const lg = await rt.readLog(tableKey); for (const e of (lg.json && lg.json.entries || [])) ingest(e) }
   const readEntries = async () => { const lg = await rt.readLog(tableKey); return (lg.json && lg.json.entries) || [] } // authoritative, ORDERED
   const post = async (payload) => {
+    if (window.__cheatShuffle && payload && payload.kind === 'mp-shuffle' && Array.isArray(payload.deck) && payload.deck.length > 2) {
+      // TEST-ONLY: post a TAMPERED shuffle (swap two ciphertexts = a non-re-encryption /
+      // card substitution) while me.mem keeps the real perm/rands. At showdown the honest
+      // seat replays the revealed params and finds the output doesn't match → cheat caught.
+      payload = { ...payload, deck: payload.deck.slice() };
+      [payload.deck[0], payload.deck[1]] = [payload.deck[1], payload.deck[0]]
+    }
     for (let i = 0; i < 40; i++) {
       const r = await rt.postMove(tableKey, await signEntry(me.sign, { tableKey, writer: me.writer, seq: me.seq, ts: Date.now(), payload }))
       if (r.status === 200 && r.json && r.json.ok) { me.seq++; ingest({ writer: me.writer, payload }); return true }
