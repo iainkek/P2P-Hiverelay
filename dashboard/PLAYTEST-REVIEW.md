@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Settlement matrix certified against the reducer (iter 68).** After fixing the uncalled-bet
+(48) and tie (67) cases, closed the loop by certifying the mp-table's heads-up settlement
+against the canonical reducer across the **full outcome matrix** (6/6): single winner;
+uncalled bet where the over-bettor wins; uncalled bet where the short all-in wins; fold with
+dead money; tie with equal bets; and the last untested combination — **a tie with an
+uncalled bet** (both play the board, one over-bet all-in → contested pot splits, uncalled
+excess refunded → both net 0). Every case matches the reducer exactly and is zero-sum, so
+the cooperative==dispute guarantee holds for every possible showdown outcome. Preserved as
+`test/integration/mp-settle-matrix.test.mjs`.
+
 **Split-pot bug — ties went winner-take-all (iter 67).** A real correctness bug a tie
 would have exposed: the showdown picked a single winner (`if compareRank(r,best) > 0
 winner = w`), so on a **tie** (`=== 0`) `winner` stayed `live[0]` and `winningsFor` awarded
