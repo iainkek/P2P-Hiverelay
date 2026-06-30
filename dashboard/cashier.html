@@ -394,6 +394,10 @@ function setMode (m) {
   S.mode = m; S.connected = false; S.address = null
   S.allowance = 0n; S.bankroll = 0n; S.pot = 0n; S.settled = false; S.net = 0n; S.withdrawable = 0n
   S.wallet = m === 'demo' ? 1000n * DEC : 0n // demo faucet; live reads the chain on connect
+  // Snap the stat displays to the new values so render()'s count-up doesn't
+  // animate down from the previous mode's numbers (flash on demo↔live switch).
+  $('sWallet').textContent = fmt(S.wallet); $('sBankroll').textContent = fmt(S.bankroll)
+  $('sPot').textContent = fmt(S.pot); $('sNet').textContent = fmt(S.withdrawable)
   log('mode → ' + m)
   render()
 }

@@ -31,12 +31,22 @@ review loop runs.
   lingered onto a fresh deal. **Fixed** (cleared at `startHand`). Verified: 0 stale
   elements at a fresh deal.
 - **F3 — bot name "Юki"** had a stray Cyrillic char. **Fixed** → "Quinn".
+- **F4 — cashier live-mode count-up flash.** Demo→live animated the stats down from
+  the demo numbers (~0.4s flash). **Fixed** (snap the displays on mode switch).
+  Verified: live wallet shows 0.00 immediately.
+- **F5 — 9-max clipped a seat on mobile.** On a phone, a side seat's cards ran off
+  the edge at 9-max (6-max + heads-up were fine). **Fixed** (pull seats inward on
+  narrow screens — smaller seat radius < 560px). Verified: 0 clipped at 9-max,
+  6-max still 0 clipped + playable, 0 JS errors on mobile.
+
+## Mobile
+
+6-max and heads-up play cleanly on a 390px phone (no clipped/overlapping seats,
+controls usable, 0 errors). 9-max is inherently tight on a phone but now fits after
+F5. The action bar stacks full-width.
 
 ## Open / minor
 
-- **M1 — live-mode count-up flash.** Switching cashier demo→live animates the stat
-  numbers from the demo values down to 0 (~0.4s), briefly flashing non-zero figures.
-  Cosmetic; settles correctly. (Could snap to 0 on mode switch.)
 - **M2 — cashier Live mode + relay CSP.** The cashier loads `ethers` from a CDN,
   which the dashboard CSP (`script-src 'self' 'unsafe-inline'`) blocks when
   **relay-served**. Live mode works opened directly (file://) but not through the

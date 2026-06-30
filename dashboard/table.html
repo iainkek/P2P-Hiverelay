@@ -398,7 +398,11 @@ function persist () { try { localStorage.setItem('p2poker.net', String(T.net)); 
 // ── layout + render ────────────────────────────────────────────────────
 function seatPos (slot, n) {
   const ang = (90 + slot * 360 / n) * Math.PI / 180
-  return { x: 50 + 43 * Math.cos(ang), y: 50 + 41 * Math.sin(ang) }
+  // Pull seats inward on narrow screens so side seats don't clip off the edge.
+  const narrow = window.innerWidth < 560
+  const rx = narrow ? 36 : 43
+  const ry = narrow ? 40 : 41
+  return { x: 50 + rx * Math.cos(ang), y: 50 + ry * Math.sin(ang) }
 }
 function buildSeats () {
   // remove old seat nodes
