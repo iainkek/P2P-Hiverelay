@@ -4,6 +4,45 @@ A deep review of every user flow from the perspective of a real human sitting do
 to play and to test the real-money rail on testnet. Living doc — updated as the
 review loop runs.
 
+## Testnet readiness — synthesis (as of iter 82)
+
+**Bottom line: ready for honest human play on testnet.** Every user flow a real player
+touches is built, verified by execution, and resilient to disconnects and network jitter.
+
+**Verified by execution (not just reviewed):**
+- **Play** — host / join (link-based handshake) / full-hand solo demo; multi-hand sessions
+  with carried stacks, rotating button, bust; graceful session-end from either seat.
+- **Trustless deal** — mental-poker shuffle/deal, byte-compatible browser crypto; each seat
+  sees only its own holes; the shuffle is replay-verified at showdown — a substituted card
+  is caught and the cheater auto-forfeited (proven live, iter 50).
+- **Settlement** — every heads-up outcome (single / tie / uncalled bet / fold) certified to
+  match the canonical reducer; the cooperative and dispute paths agree by construction.
+- **Money rail through the real cashier UI** — faucet → shared escrow → deposit → one-click
+  settle → withdraw, solo *and* 2-player, against a Base-Sepolia-chainId node (10/10 + 11/11);
+  the lifecycle stepper and both Demo + Live modes verified; settle guarded against wrong
+  wallet / non-conserving balances.
+- **Resilience** — disconnect/jitter handled at *every* phase (handshake 20-min patience,
+  deal 90s-warn/5-min-timeout, betting claim-the-pot, showdown reveal-grace > retry-window,
+  session-over signal both directions). No false forfeits.
+- **Reach & onboarding** — mobile in-hand UI, nav (no dead-ends), `/docs` how-to-play guide,
+  position badges + opponent-action feed, secure-context (HTTPS) guard.
+- **Contracts** — escrow suite 31/31 (deposit/close/withdraw, conservation, dispute via
+  committee, reducer→escrow, reentrancy, fee/no-return tokens, funding lock).
+
+**Deployment requirement:** the relay must be served over **HTTPS** (WebCrypto needs a
+secure context) with the **poker plugin enabled**; the in-app secure-context guard makes a
+plain-HTTP misconfiguration obvious.
+
+**Remaining capability gap (does NOT block honest play):** the dispute/recourse path is
+proven at the reducer (iter 56) and contract (iter 60) levels, but isn't wired into the UI —
+the cashier deploys escrows without a committee and there's no relay attest endpoint, so an
+honest player can't yet *claim* on-chain against a stalling/cheating opponent through the UI.
+This needs the **committee attestation wiring + a writer↔wallet identity binding** (bridging
+the cashier's MetaMask identity to the mp-table's relay seat) — a substantial, multi-tick
+build that touches shared relay infra.
+
+**Gated on explicit approval:** a real **Base Sepolia deploy** (on-chain external action).
+
 ## Trustless dealing — verifiable shuffle PROVEN browser-side (iteration 19)
 
 The hard part of multiplayer poker is dealing without a trusted dealer on a
