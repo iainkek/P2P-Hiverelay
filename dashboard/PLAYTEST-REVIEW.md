@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Cashier lifecycle stepper verified (iter 80).** Confirmed the cashier's central UX element
+— the CONNECT → DEPOSIT → SETTLE → CASH OUT stepper — actually reflects the money state in
+practice, not just in code. Drove the full Live flow through the real UI (mock wallet + local
+84532 node) and asserted the stepper at every stage (6/6): fresh → CONNECT active; after
+deploy/connect → CONNECT done + DEPOSIT active; after deposit → DEPOSIT done + SETTLE active;
+after settle → SETTLE done + CASH OUT active; after withdraw → all four done. A player always
+sees exactly where they are in the money flow. No code change — the stepper was already
+well-built (dynamic `done`/`active` from `S.connected`/`bankroll`/`settled`/`withdrawable`,
+re-rendered after every state change); this is the verification. Preserved at
+`test/integration/cashier-stepper.test.cjs`.
+
 **Deal-phase disconnect timeout + feedback (iter 79).** Unlike betting (which has the
 disconnect claim button), the **deal** phase had no disconnect detection: `runDeal` looped
 up to 4000 ticks (~36 min) showing only "dealing…" the whole time. So if the opponent
