@@ -43,6 +43,22 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Dispute-path reducer — claim against a cheater (iter 56).** The deepest open item:
+until now an honest player could *refuse to co-sign* a cheat (denying the cheater), but
+couldn't *claim* their winnings on-chain if the opponent stalled the cooperative close.
+Built `packages/services/builtin/poker/mp-reducer.js` — the committee/dispute reference:
+given the signed hand log it replay-verifies every shuffle (a cheat or withheld reveal
+forfeits that seat), replays betting via the shared engine, opens the showdown from the
+public decryption shares, and settles via `settleHand` — the same primitives the client
+uses, so cooperative and dispute paths agree by construction. It outputs `balances =
+buy-in ± net` for the escrow's `disputeClose`. Validated against real captured logs from
+two-browser games: on honest play it **reproduces the client's net exactly** (host/joiner
+20/−20, zero-sum, 5/5); on a cheating shuffle it **independently identifies the cheater
+from the log alone** (`output-mismatch@0`), awards the honest seat, and agrees with the
+honest player's own claim (5/5). The iter-50 standoff is resolved — an honest player can
+now claim, not just deny. (Also confirmed the host/join handshake's 2-message exchange is
+*inherent* to the security model — the guest must self-generate keys — not a fixable gap.)
+
 **Mobile play reviewed + relay-unreachable feedback (iter 55).** Real testers use phones,
 so I drove a full game on a 390×844 mobile viewport and screenshotted the in-hand UI: the
 host handshake (numbered steps, a Copy button so no fiddly text-selection, disabled-until-

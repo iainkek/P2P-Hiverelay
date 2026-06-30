@@ -385,6 +385,7 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
 }
 
 async function runFullHand (rt, tableKey, me, writers, oppWriter, config) {
+  window.__sessionInfo = { tableKey, writers: [...writers], config } // the context the dispute committee has (writers order + per-hand config)
   const sess = makeSession(rt, tableKey, me)
   const hand = await runDeal(sess, me, writers)
   if (!hand) { log('deal failed'); return null }
