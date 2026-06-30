@@ -90,6 +90,19 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Rate limit was throttling the deal to a crawl (iter 85).** Root-caused the long-observed
+slow deal (~20–40s + "Too many requests"): the relay's **global rate limit is 60/min (1/s)
+per IP**, applied to *every* request before the path is parsed — so `/api/poker/<table>/move`
+and `/log` were capped at 1/s. But the mp-table polls the log ~4×/s and posts moves in rapid
+bursts during the deal, so it constantly tripped the limit and got throttled to ~1/s via
+backoff. Poker game traffic is high-frequency by design and abuse-bounded by the signed
+append-only log (per-writer monotonic seq rejects spam/replays), so gave the game routes
+(`move`/`log`/`events`) a higher per-IP cap (`POKER_RATE_LIMIT_MAX` = 600/min ≈ 10/s) tracked
+under a distinct key; everything else keeps the strict 1/s limit. **Impact: a full hand now
+completes in ~12s vs ~30–50s.** Verified (2/2): 120 rapid `/log` hits get no 429, the general
+`/tables` route still hits 60/min; a real hand plays in 12s (13/13). A genuinely impactful
+fix — the deal felt sluggish for *every* hand. Test at `test/integration/poker-rate-limit.test.cjs`.
+
 **Investigated the dispute infrastructure — more built than assumed (iter 84).** I'd been
 characterizing the dispute/recourse path as a big from-scratch build. Investigated it directly
 (investigate-before-answering) and found it substantially built: a decentralized

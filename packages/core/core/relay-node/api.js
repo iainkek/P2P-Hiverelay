@@ -49,8 +49,11 @@ import { appendVaryHeader, writeJson, writeText } from './api-response.js'
 import {
   checkApiRateLimit,
   checkEndpointRateLimit,
+  checkFixedWindowRateLimit,
   clientIpFromRequest,
-  sweepRateLimitMap
+  sweepRateLimitMap,
+  API_RATE_LIMIT_WINDOW_MS,
+  POKER_RATE_LIMIT_MAX
 } from './api-rate-limit.js'
 import { runConfigUpdateAction } from './api-config-update.js'
 import {
@@ -389,6 +392,12 @@ export class RelayAPI extends EventEmitter {
     return checkApiRateLimit(this._rateLimits, ip)
   }
 
+  // High-frequency poker game routes get a higher per-IP cap (see POKER_RATE_LIMIT_MAX).
+  // Tracked under a distinct key so it doesn't share the general 1/s budget.
+  _checkPokerRateLimit (ip) {
+    return checkFixedWindowRateLimit(this._rateLimits, ip + '|poker', POKER_RATE_LIMIT_MAX, Date.now(), API_RATE_LIMIT_WINDOW_MS)
+  }
+
   /**
    * Per-endpoint rate-limit gate (closes attack 8.1). For sensitive
    * paths listed in ENDPOINT_RATE_LIMITS, enforce a stricter ceiling
@@ -527,13 +536,16 @@ export class RelayAPI extends EventEmitter {
       return
     }
 
-    // Rate limit check
-    if (!this._checkRateLimit(ip)) {
-      return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
-    }
-
     const url = new URL(req.url, `http://0.0.0.0:${this.port}`)
     const path = url.pathname
+
+    // Rate limit check. Poker game traffic (move/log/events) is high-frequency by design
+    // (polling + rapid deal posts) and abuse-bounded by the signed log, so it gets a higher
+    // per-IP cap than the 1/s general limit — otherwise normal play is throttled to a crawl.
+    const isPokerGame = /^\/api\/poker\/[^/]+\/(move|log|events)$/.test(path)
+    if (isPokerGame ? !this._checkPokerRateLimit(ip) : !this._checkRateLimit(ip)) {
+      return this._json(res, { error: 'Too many requests' }, 429, { 'Retry-After': '60' })
+    }
 
     // Per-endpoint stricter rate limit (closes attack 8.1). Applied
     // after general limit so the general limit still bounds total

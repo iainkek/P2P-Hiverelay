@@ -1,5 +1,11 @@
 export const API_RATE_LIMIT_WINDOW_MS = 60_000
 export const API_RATE_LIMIT_MAX = 60
+// Poker game traffic (/api/poker/<table>/{move,log,events}) is high-frequency by design:
+// clients poll the signed log ~4×/s and post moves in rapid bursts during the deal. The
+// 1/s general cap throttles normal play to a crawl. These routes are abuse-bounded by the
+// signed append-only log (per-writer monotonic seq rejects spam/replays) and cacheable
+// reads, so they get a higher per-IP cap. 600/min ≈ 10/s comfortably covers sustained play.
+export const POKER_RATE_LIMIT_MAX = 600
 
 export const API_ENDPOINT_RATE_LIMITS = Object.freeze({
   '/api/wizard/payout': 10,
