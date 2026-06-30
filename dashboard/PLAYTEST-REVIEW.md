@@ -43,6 +43,15 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Dealer button + blind position badges (iter 70).** Every real poker UI shows the dealer
+button — it's how you know who posts which blind and who acts first — and the mp-table had
+none. Players had to infer their position from the action order and which blind drained
+their stack. Added gold **BTN · SB** / **BB** badges on the seats, driven by `S.bIdx`
+(`config.button`, which rotates each hand) so they swap hand-to-hand. Verified two-browser
+(5/5): the hand-0 button (host) shows BTN · SB on itself and BB on the opponent, the joiner
+the exact mirror, the two seats always have different positions (no double-button). Small
+touch, but it's what makes the table *read* like poker.
+
 **Opponent-action feedback — follow the betting (iter 69).** A real feel gap: the log
 announced *your* actions ("you → call 10") but the **opponent's were silent** — you'd just
 see the pot change and the turn flip, with no idea whether they checked, called, or raised

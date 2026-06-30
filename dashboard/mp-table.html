@@ -37,6 +37,7 @@
   .log{background:#0a0d13;border:1px solid var(--line);border-radius:8px;padding:.7rem;font-family:monospace;font-size:.74rem;color:var(--dim);max-height:150px;overflow:auto;margin-top:1rem;white-space:pre-wrap;line-height:1.5}
   .note{color:var(--dim);font-size:.82rem;line-height:1.5}
   .pill{display:inline-block;background:rgba(88,166,255,.14);color:var(--cyan);border-radius:20px;padding:.15rem .6rem;font-size:.72rem}
+  .posbadge{background:var(--gold);color:#10131b;font-weight:700;font-size:.56rem;vertical-align:middle;letter-spacing:.03em}
 </style>
 </head>
 <body>
@@ -87,8 +88,8 @@
   <div id="tableUi" class="hide">
     <div class="felt">
       <div class="seatrow">
-        <div class="seat me" id="seatMe"><h3>You</h3><div class="who" id="whoMe">—</div><div class="lbl">your hole cards</div><div class="cards" id="holeMe"></div><div class="lbl" style="margin-top:.5rem">stack <b id="stackMe">—</b></div></div>
-        <div class="seat" id="seatOpp"><h3>Opponent</h3><div class="who" id="whoOpp">—</div><div class="lbl">hidden</div><div class="cards" id="holeOpp"></div><div class="lbl" style="margin-top:.5rem">stack <b id="stackOpp">—</b></div></div>
+        <div class="seat me" id="seatMe"><h3>You <span class="pill posbadge" id="posMe" style="display:none"></span></h3><div class="who" id="whoMe">—</div><div class="lbl">your hole cards</div><div class="cards" id="holeMe"></div><div class="lbl" style="margin-top:.5rem">stack <b id="stackMe">—</b></div></div>
+        <div class="seat" id="seatOpp"><h3>Opponent <span class="pill posbadge" id="posOpp" style="display:none"></span></h3><div class="who" id="whoOpp">—</div><div class="lbl">hidden</div><div class="cards" id="holeOpp"></div><div class="lbl" style="margin-top:.5rem">stack <b id="stackOpp">—</b></div></div>
       </div>
       <div style="text-align:center;margin-top:1.2rem"><span class="pill" id="potPill">pot 0</span> <span class="pill" id="turnPill" style="background:rgba(63,185,80,.14);color:var(--green)">dealing…</span></div>
       <div class="lbl" style="text-align:center;margin-top:1.1rem">community board</div>
@@ -246,6 +247,13 @@ function renderBetting (S, me) {
   $('stackMe').textContent = (S.stack && S.stack[me.writer] != null) ? S.stack[me.writer] : '—'
   const opp = (me.writers || []).find(w => w !== me.writer)
   $('stackOpp').textContent = (opp && S.stack && S.stack[opp] != null) ? S.stack[opp] : '—'
+  // dealer button / blind position (heads-up: the button posts the small blind)
+  const btnSeat = S.seats && S.bIdx != null ? S.seats[S.bIdx] : null
+  if (btnSeat) {
+    const badge = (w) => w === btnSeat ? 'BTN · SB' : 'BB'
+    $('posMe').textContent = badge(me.writer); $('posMe').style.display = ''
+    if (opp) { $('posOpp').textContent = badge(opp); $('posOpp').style.display = '' }
+  }
   $('turnPill').textContent = v.complete ? 'hand over' : (v.toAct === me.writer ? 'your turn' : 'opponent’s turn')
 }
 
