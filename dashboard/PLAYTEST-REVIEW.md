@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**One-click settle from the net (iter 47).** Co-signing the cooperative close required
+both seats to manually enter the *same* balances — error-prone. Added a **"Fill balances
+from my multiplayer net"** button to the cashier settle: it reads the bridged session net
++ each payee's on-chain deposit and computes `balance = deposit ± net`. Because the net
+is zero-sum and deposits are on-chain facts, **both seats compute identical balances**, so
+the co-signatures match. Verified (7/7): host (net +300) and joiner (net −300) both
+produce [1300,700], summing to the deposits (conservation), button wired + graceful (no
+net → clear message), no CSP/JS errors. The settle is now: paste both addresses → one
+click → sign → submit.
+
 **Money loop verified + buy-in made explicit (iter 46).** Confirmed the carried-stack
 net settles **exactly** on-chain at the real scale (5/5 on a local EVM): both deposit the
 buy-in (1000) → pot 2000 → a session net of +300 → `cooperativeClose` balances [1300,700]

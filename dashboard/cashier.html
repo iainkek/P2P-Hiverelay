@@ -245,10 +245,11 @@ input[readonly]{color:var(--cyan);cursor:text}
     <div class="card">
       <h3>① Agreed result</h3>
       <div class="hint">The session's final balances (deposit ± net), as everyone agreed. In production these come from the reducer; paste or type them here.</div>
-      <label>Payees — addresses, comma-separated</label>
-      <input id="setPayees" placeholder="0xAlice…,0xBob…">
+      <label>Payees — addresses, comma-separated (same order both seats use)</label>
+      <input id="setPayees" placeholder="0xHost…,0xJoiner…">
       <label>Final balances — USD₮, same order</label>
-      <input id="setBalances" placeholder="150,50">
+      <input id="setBalances" placeholder="1300,700">
+      <button class="btn btn-ghost" id="btnFromMp" style="margin-top:.5rem">Fill balances from my multiplayer net</button>
     </div>
     <div class="card">
       <h3>② Sign your share</h3>
@@ -524,6 +525,25 @@ async function liveDeployTest () {
 // Testnet faucet — mint MockUSDT test tokens to the player so they have chips to play
 // with (MockUSDT.mint is permissionless; real USD₮ has no faucet). Works against any
 // MockUSDT-based escrow's token, so a new user can grab funds without deploying.
+// Fill the cooperative-close balances from the multiplayer session net (bridged from
+// /mp-table) + each seat's on-chain deposit. balance = deposit ± net; sum = the pot, so
+// it conserves. Both seats run this with the same payee order → identical balances →
+// the co-signatures match.
+async function liveFromMp () {
+  const raw = localStorage.getItem('p2poker.mp.net')
+  const net = raw == null ? NaN : parseFloat(raw)
+  if (isNaN(net)) { log('no multiplayer net found — play a session at /mp-table first', 'err'); return }
+  const payees = $('setPayees').value.split(',').map(s => s.trim()).filter(Boolean)
+  if (payees.length !== 2) { log('enter both payee addresses first (host,joiner — same order both seats use)', 'err'); return }
+  if (!S.address || !S.escrow) { log('connect to the shared escrow first', 'err'); return }
+  const me = S.address.toLowerCase()
+  try {
+    const deps = await Promise.all(payees.map(p => S.escrow.deposited(p)))
+    const balances = payees.map((p, i) => (Number(deps[i]) / 1e6) + (p.toLowerCase() === me ? net : -net))
+    $('setBalances').value = balances.map(b => Math.round(b * 100) / 100).join(',')
+    log('filled balances from your net (' + (net >= 0 ? '+' : '') + net + ') + on-chain deposits — both seats compute the same, so the co-sign matches', 'ok')
+  } catch (e) { log('could not read deposits: ' + (e.shortMessage || e.message), 'err') }
+}
 async function liveFaucet () {
   if (!window.ethers || !window.ethereum) { log('install MetaMask + select Base Sepolia first', 'err'); return }
   const tokenAddr = $('cfgToken').value.trim()
@@ -630,6 +650,7 @@ function bootCashier () {
   $('btnConnect').onclick = () => S.mode === 'demo' ? demoConnect() : liveConnect()
   $('btnDeployTest').onclick = () => liveDeployTest()
   $('btnFaucet').onclick = () => liveFaucet()
+  $('btnFromMp').onclick = () => liveFromMp()
   $('btnDeposit').onclick = () => { const amt = BigInt(Math.round((parseFloat($('depAmount').value) || 0) * 1e6)); if (amt <= 0n) return log('enter an amount', 'err'); S.mode === 'demo' ? demoDeposit(amt) : liveDeposit(amt) }
   $('btnSimulate').onclick = () => demoSimulate()
   $('btnWithdraw').onclick = () => S.mode === 'demo' ? demoWithdraw() : liveWithdraw()
