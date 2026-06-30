@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Settle guards — wrong wallet + non-conservation (iter 65).** Hardened the money-critical
+settle against two real confusions. (1) If you settle with a wallet that isn't a seat in
+the escrow (e.g. connected the wrong MetaMask account), `liveFromMp` used to silently
+compute wrong balances and you'd only hit a cryptic `NOT_ALL_SIGNED` revert at submit — now
+it warns immediately: "your connected wallet is not a seat — switch to the one you
+deposited with." (2) Added a conservation pre-check in `liveSubmitClose`: if the balances
+don't sum to the pot, it's blocked with "balances must sum to the total deposits (X)"
+*before* the failed/gas-wasting transaction, instead of an opaque on-chain `NOT_CONSERVED`
+revert. Verified (3/3): wrong wallet caught, valid wallet still auto-fills (1020,980),
+non-conserving balances blocked early — no regressions.
+
 **Settle payees auto-fill from the escrow (iter 64).** The "Fill balances from net" button
 (iter 47) still required the *payees* (both EVM addresses) typed in — auto-filled for the
 deployer but not the joiner. Now if the payees aren't entered, the cashier reads the two

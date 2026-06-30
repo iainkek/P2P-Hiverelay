@@ -550,6 +550,7 @@ async function liveFromMp () {
   }
   if (payees.length !== 2) { log('enter both payee addresses (host,joiner), or connect to a 2-seat shared escrow to auto-fill them', 'err'); return }
   const me = S.address.toLowerCase()
+  if (!payees.some(p => p.toLowerCase() === me)) { log('your connected wallet (' + short(S.address) + ') is not a seat in this escrow — switch to the wallet you deposited with, then try again', 'err'); return }
   try {
     const deps = await Promise.all(payees.map(p => S.escrow.deposited(p)))
     const balances = payees.map((p, i) => (Number(deps[i]) / 1e6) + (p.toLowerCase() === me ? net : -net))
@@ -647,6 +648,12 @@ async function liveSubmitClose () {
     const { payees, balances } = parseSettlement()
     const sigs = $('allSigs').value.split('\n').map(s => s.trim()).filter(Boolean)
     if (sigs.length !== payees.length) return log(`need ${payees.length} signature(s), have ${sigs.length}`, 'err')
+    // conservation pre-check: balances must sum to the pot, or the contract reverts NOT_CONSERVED
+    try {
+      const pot = await S.escrow.pot()
+      const sum = balances.reduce((a, b) => a + b, 0n)
+      if (sum !== pot) return log('balances must sum to the total deposits (' + fmt(pot) + '). Yours sum to ' + fmt(sum) + ' — re-fill from net or fix them before submitting.', 'err')
+    } catch {}
     log('submitting cooperative close…')
     await (await S.escrow.cooperativeClose(payees, balances, sigs)).wait()
     log('settled on-chain — each seat can now withdraw their net', 'ok')
