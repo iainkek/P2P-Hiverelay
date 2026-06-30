@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Real 2-player shared-escrow settlement verified through the UI (iter 58).** Iter 57
+proved the *solo* cashier flow; the actual game settles on a **shared 2-player escrow**, so
+I extended the harness to two mock wallets (hardhat accts 0/1) and drove the real
+multiplayer money rail: A deploys a shared escrow naming B → both deposit 1000 (escrow
+holds 2000) → both co-sign the *same* agreed split [1300,700] → A submits
+`cooperativeClose([A,B],[1300,700],[sigA,sigB])` → both withdraw. On-chain end state: A
+(winner) wallet 1300, B (loser) wallet 700, escrow fully drained — **conservation held**,
+11/11, no page errors. This is the definitive "two humans settle real money on testnet"
+verification. Harness at `test/integration/cashier-2p.test.cjs`.
+
 **Cashier Live money rail verified end-to-end through the real UI (iter 57).** Until now
 the escrow *contract* logic was proven on a local EVM, but the cashier's actual Live-mode
 UI flow (buttons → ethers calls → contract interactions) was only read, not executed. Built
