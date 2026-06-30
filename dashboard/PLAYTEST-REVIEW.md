@@ -43,6 +43,18 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Nav health-check + the play screen was a dead-end (iter 61).** Health-checked all 11
+nav-reachable pages (dashboard, payments, network, leaderboard, catalog, calculator,
+cashier, lobby, mp-table, docs, table): **all load with no JS errors and render content** —
+no broken pages anywhere. One real UX gap: the `/mp-table` (the main play screen) had its
+"♠ P2Poker" brand as plain text and no nav, so from the table you could only reach the
+Cashier via the buy-in note — a dead-end otherwise. Made the brand a home link → `/lobby`
+and added a right-aligned **Cashier →** link to the header (the beforeunload guard still
+protects a mid-session leave). Verified (5/5): both links present + correct, page still
+initializes, no errors. (Noted but not changed: the relay-infra pages — Payments/Network/
+Leaderboard — are HiveRelay-branded, slightly out of context for a poker tester, but
+functional; the poker flow itself is coherent end to end.)
+
 **Dispute-settlement recourse proven on-chain — but not yet enabled in the UI (iter 60).**
 Found the disconnect that makes iter-56's "claim against a cheater" currently theoretical:
 the cashier's `Deploy a test escrow` passes `committee=[], threshold=0`, so the escrow
