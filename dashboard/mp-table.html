@@ -591,6 +591,17 @@ if (joinParam) {
   log('opened from a join link — accepting the invite…')
   $('acceptInvite').click()
 }
+// The trustless deal uses WebCrypto (Ed25519), which only runs in a SECURE context
+// (HTTPS or localhost). Warn clearly up front instead of failing silently on Host/Join.
+if (!window.isSecureContext) {
+  const warn = document.createElement('p')
+  warn.className = 'note'
+  warn.style.cssText = 'color:var(--red);border:1px solid rgba(244,112,103,.4);border-radius:8px;padding:.6rem .8rem;background:rgba(244,112,103,.08);margin-bottom:.8rem'
+  warn.innerHTML = '⚠ <b>Not a secure context.</b> The trustless deal needs WebCrypto, which only runs over <b>HTTPS</b> (or localhost). Host/Join/Demo are disabled until this relay is served over HTTPS.'
+  $('landing').insertBefore(warn, $('landing').firstChild)
+  ;['bHost', 'bJoin', 'bDemo'].forEach(id => { if ($(id)) $(id).disabled = true })
+  log('insecure context — serve this relay over HTTPS to play')
+}
 window.__mpReady = true
 </script>
 </body>

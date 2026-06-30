@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Secure-context guard for HTTPS deployment (iter 73).** A real testnet-deployment failure
+mode: the trustless deal uses WebCrypto (Ed25519), which only runs in a **secure context**
+(HTTPS or localhost). `createSeat` throws "WebCrypto unavailable" deep in the flow, but the
+mp-table didn't warn up front — a tester/deployer serving the relay over plain HTTP would
+click Host and get a silent failure. Added a proactive check at load: if
+`!window.isSecureContext`, show a red banner ("Not a secure context… needs HTTPS") and
+disable Host/Join/Demo. Verified (4/4, DOM-element check): secure context renders no warning
++ enables Host; insecure renders the warning + disables all three — page still loads cleanly.
+Saves a confusing dead-end when the relay isn't behind HTTPS.
+
 **Visual QA + demo shows the pot award (iter 72).** Screenshotted the desktop table after a
 full demo hand to QA the recent additions (position badges, opponent-action log, demo
 result) — all render cleanly and coherently. Caught one thing: the demo named the winner but
