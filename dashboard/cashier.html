@@ -209,6 +209,7 @@ input[readonly]{color:var(--cyan);cursor:text}
       <label>USD₮ token address</label><input id="cfgToken" placeholder="0x…">
       <label>RPC URL (read-only fallback)</label><input id="cfgRpc" placeholder="https://…sepolia…">
       <div class="hint" style="margin-top:.7rem;border-top:1px solid var(--card-border);padding-top:.7rem">New here? On <b>Base Sepolia</b>: deploy your own test escrow (mints 1,000 USD₮), or grab test USD₮ from the faucet to play with an existing one.</div>
+      <label>Opponent address — optional, for a shared 2-player escrow</label><input id="cfgOpponent" placeholder="0x… (leave blank for a solo test)">
       <button class="btn btn-cyan" id="btnDeployTest" style="margin-top:.4rem">Deploy a test escrow + mint USD₮</button>
       <button class="btn btn-ghost" id="btnFaucet" style="margin-top:.4rem">Get 1,000 test USD₮</button>
     </div>
@@ -488,14 +489,26 @@ async function liveDeployTest () {
     await usdt.waitForDeployment(); const usdtAddr = await usdt.getAddress()
     log('① MockUSDT deployed → ' + short(usdtAddr), 'ok')
     const escrowId = ethers.id('p2poker-selftest-' + me.slice(2, 10) + '-' + (await provider.getBlockNumber()))
-    const escrow = await new ethers.ContractFactory(art.escrow.abi, art.escrow.bytecode, signer).deploy(escrowId, usdtAddr, [me], [], 0)
+    // Optional opponent → a shared 2-player escrow (both can deposit; settle splits between them).
+    const oppRaw = $('cfgOpponent').value.trim()
+    let participants = [me]
+    if (oppRaw) {
+      if (!ethers.isAddress(oppRaw)) { log('opponent address is not a valid 0x address', 'err'); btn.disabled = false; return }
+      if (oppRaw.toLowerCase() === me.toLowerCase()) { log('opponent must be a different address', 'err'); btn.disabled = false; return }
+      participants = [me, ethers.getAddress(oppRaw)]
+    }
+    const escrow = await new ethers.ContractFactory(art.escrow.abi, art.escrow.bytecode, signer).deploy(escrowId, usdtAddr, participants, [], 0)
     await escrow.waitForDeployment(); const escrowAddr = await escrow.getAddress()
-    log('② PokerEscrow deployed → ' + short(escrowAddr), 'ok')
+    log('② PokerEscrow deployed (' + participants.length + (participants.length > 1 ? ' seats — shared' : ' seat — solo') + ') → ' + short(escrowAddr), 'ok')
     await (await usdt.mint(me, 1000n * DEC)).wait()
     log('③ minted 1,000 test USD₮ to your wallet', 'ok')
     $('cfgEscrow').value = escrowAddr; $('cfgToken').value = usdtAddr
-    $('setPayees').value = me // sole seat — settle balance auto-fills after you deposit
-    log('test escrow ready — you are the sole seat. Deposit a bankroll, then Sign → Submit → Withdraw (settle is pre-filled).', 'ok')
+    $('setPayees').value = participants.join(',') // settle payees (solo auto-fills your balance after deposit)
+    if (participants.length > 1) {
+      log('shared escrow ready — share its address with your opponent so they can deposit. After playing, each enters the agreed net balances (sum = total deposits), signs, and one submits the cooperative close.', 'ok')
+    } else {
+      log('test escrow ready — you are the sole seat. Deposit a bankroll, then Sign → Submit → Withdraw (settle is pre-filled).', 'ok')
+    }
     await liveConnect()
   } catch (e) { log('deploy failed: ' + (e.shortMessage || e.message), 'err') }
   btn.disabled = false

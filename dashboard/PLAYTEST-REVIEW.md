@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Shared 2-player escrow — the on-chain settle for two humans (iter 35).** The cashier's
+self-serve deploy only made a *solo* escrow; added an optional **opponent-address** field
+so a host deploys a shared escrow with both EVM addresses as participants (validated;
+blank = solo). Verified the full two-player on-chain cycle on a local EVM (7/7): deploy
+`[A,B]` → both deposit (pot 200) → `cooperativeClose` settles with **both signatures** →
+both withdraw their net (A 1050, B 950) → escrow drains to 0 (conservation held). So two
+humans can now share one escrow, deposit, and settle the session net on-chain — the
+escrow side of the multiplayer money loop is complete. Cashier still loads clean (faucet
+6/6, no CSP/JS errors). Remaining UX wire: carry the mp-table session net + opponent EVM
+address straight into the cashier's settle (today it's entered manually).
+
 **Hand net → settlement bridge (iter 34).** The showdown now computes each seat's
 **net** (winnings − contributions — exactly what settles on-chain), accumulates a
 session net across hands, shows it in the result banner ("…Net this hand +20 · session
