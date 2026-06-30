@@ -57,6 +57,16 @@ then the table UI.
 5. Table UI driving 1–4 (post moves, replay via `betting.js`, render) — ⬜ wiring
 6. Reduce → settle → escrow — ✅ proven (iter 16 + earlier)
 
+**Deal coordinated over a signed-log message flow (iter 27).** `hand-deal-protocol.js`
+turns the deal into JSON log payloads (`mp-key` / `mp-deck` / `mp-shuffle` / `mp-share`,
+points hex-encoded) + a `dealStateFromLog` replay. Verified (5/5) with two seats posting
+to a shared log: both replay to the **identical** joint key + shuffled deck; each opens
+its own hole cards + the board from the log; all 9 are distinct; **from the log alone an
+opponent cannot reconstruct your hole cards**; reveal-share proofs verify on replay.
+These payloads map 1:1 to `relay-table-client.postMove`, so the deal runs over the real
+relay log. Remaining: interleave betting (`betting.js` actions as moves) + showdown
+reveal → reduce → settle, plus the table UI.
+
 **Deal engine built + verified (iter 26).** `mental-deal.js` orchestrates a full hand
 deal from the proven primitives: encrypt the deck to the joint key → both seats
 shuffle (reencrypt-shuffle) → deal hole/board by layout → reveal hole cards privately
