@@ -90,6 +90,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Snappier polling now the rate cap allows it (iter 86).** With the poker rate cap raised
+(iter 85), the mp-table's conservative poll intervals were leaving responsiveness on the
+table. Tightened them within the new ~10/s headroom: the deal sync `250+300ms`/idle-tick →
+`150+150ms` (~3/s); the betting loop `250ms` → `150ms` (opponent's action now appears within
+~150ms) and the wait-on-opponent `300ms` → `200ms` (so the player polls every ~350ms when
+waiting, vs ~550ms). Result: a full hand ~10s (was 12s, and the test's own 450ms click-loop
+masks the rest of the per-step gain a real player feels). Verified: hand completes 13/13,
+**zero rate-limit hits** (the faster polling is well within the 600/min poker cap), no
+regression. Combined with iter 85, the game now plays at a genuinely responsive pace.
+
 **Rate limit was throttling the deal to a crawl (iter 85).** Root-caused the long-observed
 slow deal (~20–40s + "Too many requests"): the relay's **global rate limit is 60/min (1/s)
 per IP**, applied to *every* request before the path is parsed — so `/api/poker/<table>/move`

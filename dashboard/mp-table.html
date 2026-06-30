@@ -193,8 +193,8 @@ async function runDeal (sess, me, writers) {
   render($('board'), [0, 0, 0, 0, 0], false); render($('holeMe'), [0, 0], false); render($('holeOpp'), [0, 0], false)
   $('turnPill').textContent = 'dealing…'
   const start = Date.now(); let warned = false
-  for (let g = 0; g < 8000; g++) {
-    await sleep(250); await sess.sync()
+  for (let g = 0; g < 12000; g++) {
+    await sleep(150); await sess.sync() // ~3/s sync — snappier deal (well within the poker rate cap)
     const action = nextDealAction(sess.localLog, { writer: me.writer, x: me.x }, writers, me.mem)
     if (action) { await sess.post(action); log('you → ' + action.kind + (action.pos !== undefined ? ' #' + action.pos : '')); continue }
     const h = readMyHand(sess.localLog, { writer: me.writer, x: me.x }, writers)
@@ -202,7 +202,7 @@ async function runDeal (sess, me, writers) {
     const elapsed = Date.now() - start
     if (!warned && elapsed > 90000) { warned = true; $('turnPill').textContent = 'deal stalled'; log('the deal is taking longer than usual — your opponent may have disconnected. If it doesn’t finish soon, reload to start a new game.') }
     if (elapsed > 300000) { $('turnPill').textContent = 'deal failed'; log('deal failed — your opponent didn’t complete it. Reload to try a new game.'); return null }
-    await sleep(300)
+    await sleep(150)
   }
   return null
 }
@@ -273,8 +273,8 @@ async function runBetting (sess, me, writers, config) {
   const graceMs = window.__forfeitMs || 60000 // disconnect deadline (relay-ts anchored)
   let postedAtCount = -1, claimArmed = false, seenOpp = 0
   $('claimBtn').onclick = () => { claimArmed = true }
-  for (let g = 0; g < 4000; g++) {
-    await sleep(250)
+  for (let g = 0; g < 6000; g++) {
+    await sleep(150) // ~6/s — the opponent's action appears within ~150ms of landing (snappier)
     const entries = await sess.readEntries()
     // a posted forfeit ends the hand: whoever is claimed against loses, the claimant wins.
     const ff = entries.find(e => (e.payload || e).kind === 'forfeit')
@@ -288,7 +288,7 @@ async function runBetting (sess, me, writers, config) {
     if (view(S).toAct === me.writer) {
       hide('claimBtn')
       const count = entries.filter(e => (e.payload || e).kind === 'bet-action').length
-      if (postedAtCount === count) { await sleep(300); continue } // my action is still landing — don't double-post
+      if (postedAtCount === count) { await sleep(200); continue } // my action is still landing — don't double-post
       const act = await awaitAction(S, me)
       const ok = await sess.post({ kind: 'bet-action', seat: me.writer, type: act.type, amount: act.amount })
       if (ok) { postedAtCount = count; log('you → ' + act.type + (act.amount ? ' ' + act.amount : '')) }
@@ -300,7 +300,7 @@ async function runBetting (sess, me, writers, config) {
       const overdue = lastTs && Date.now() > lastTs + graceMs
       overdue ? show('claimBtn') : hide('claimBtn')
       if (overdue && claimArmed) { hide('claimBtn'); await sess.post({ kind: 'forfeit', against: oppWriter }); log('opponent timed out — you claim the pot'); return { S, forfeitAgainst: oppWriter } }
-      await sleep(300)
+      await sleep(200)
     }
   }
   return { S: bettingState(await sess.readEntries(), config) }
