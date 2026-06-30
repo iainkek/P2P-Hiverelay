@@ -492,7 +492,8 @@ async function liveDeployTest () {
     await (await usdt.mint(me, 1000n * DEC)).wait()
     log('③ minted 1,000 test USD₮ to your wallet', 'ok')
     $('cfgEscrow').value = escrowAddr; $('cfgToken').value = usdtAddr
-    log('test escrow ready — you are the sole seat. Deposit a bankroll, then settle your net + withdraw to prove the full on-chain rail.', 'ok')
+    $('setPayees').value = me // sole seat — settle balance auto-fills after you deposit
+    log('test escrow ready — you are the sole seat. Deposit a bankroll, then Sign → Submit → Withdraw (settle is pre-filled).', 'ok')
     await liveConnect()
   } catch (e) { log('deploy failed: ' + (e.shortMessage || e.message), 'err') }
   btn.disabled = false
@@ -505,6 +506,12 @@ async function liveRefresh () {
       const [dep, wd] = await Promise.all([S.escrow.deposited(S.address), S.escrow.withdrawable(S.address)])
       S.bankroll = dep; S.withdrawable = wd
       if (S.token) { S.wallet = await S.token.balanceOf(S.address); S.allowance = await S.token.allowance(S.address, S.escrowAddr) }
+      // Solo self-test convenience: if you're the only payee, pre-fill your settle
+      // balance (= bankroll; net 0) so the cooperative close is one-click.
+      const sp = $('setPayees').value.trim().toLowerCase()
+      if (sp === S.address.toLowerCase() && S.bankroll > 0n && !$('setBalances').value.trim()) {
+        $('setBalances').value = fmt(S.bankroll)
+      }
     }
     render()
   } catch (e) { log('read failed: ' + (e.shortMessage || e.message), 'err') }

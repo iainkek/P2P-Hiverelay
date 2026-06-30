@@ -143,6 +143,15 @@ F5. The action bar stacks full-width.
   button is wired, clicking without a wallet logs a clear instruction (no crash), and
   the cashier still works. Suites stay green (83 + 31 + 5).
 
+- **F12 — solo self-test settle is now one-click.** The self-serve deploy makes a
+  *solo* escrow, but the cooperative-settle section is built for multi-party
+  ("0xAlice…,0xBob…" / "150,50") — a solo tester wouldn't know to type their own
+  address + deposit. Now after deploy the payee auto-fills to your address and, once
+  you deposit, your settle balance auto-fills to your bankroll — so the loop is
+  Deposit → Sign → Submit → Withdraw with nothing to figure out. Guarded so it never
+  overwrites a multi-party entry or an amount you typed. Verified: solo fills to
+  100.00, "60,40" untouched, "999" not clobbered.
+
 ## Open / minor
 
 _None outstanding from the demo-surface + on-chain-path review._ The only remaining
