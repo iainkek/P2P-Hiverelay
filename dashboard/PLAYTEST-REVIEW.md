@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Cashier Demo-mode onboarding verified (iter 81).** The cashier's **Demo mode** (learn the
+money flow with no wallet or real funds — the money-rail equivalent of the mp-table demo) was
+an untested userflow. Verified it end-to-end (9/9): loads in Demo mode, Connect → CONNECT
+step done, Deposit 1000 → DEPOSIT done (logged), Simulate a session → SETTLE done (random net
+booked), Withdraw → CASH OUT done (full lifecycle), New session resets the stepper — no page
+errors throughout. So the cashier has a verified onboarding (Demo) *and* a verified real rail
+(Live, iters 57/80). A first-timer can understand both the game (mp-table demo) and the money
+(cashier demo) before touching real testnet funds. Preserved at
+`test/integration/cashier-demo.test.cjs`.
+
 **Cashier lifecycle stepper verified (iter 80).** Confirmed the cashier's central UX element
 — the CONNECT → DEPOSIT → SETTLE → CASH OUT stepper — actually reflects the money state in
 practice, not just in code. Drove the full Live flow through the real UI (mock wallet + local
