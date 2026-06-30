@@ -119,13 +119,22 @@ review loop runs.
 controls usable, 0 errors). 9-max is inherently tight on a phone but now fits after
 F5. The action bar stacks full-width.
 
+- **F10 — cashier Live mode now works relay-served (CSP untouched).** Was M2: the
+  cashier loaded `ethers` from a CDN that the relay CSP (`script-src 'self'`) refuses
+  when served through the relay, so Live mode only worked opened directly (file://).
+  **Fixed** by vendoring `ethers.umd.min.js` into the money dir and serving it
+  same-origin through the existing `/poker-engine/` whitelist; the cashier now loads
+  `/poker-engine/ethers.umd.min.js`. Verified headless under the **strict relay CSP**:
+  ethers loads (a CDN script would be refused), zero CSP violations, and the co-sign
+  digest still byte-matches `settle.cjs` with the vendored 6.17.0. CSP stays
+  `script-src 'self'` — no relaxation; the injected wallet does RPC so `connect-src`
+  stays tight too.
+
 ## Open / minor
 
-- **M2 — cashier Live mode + relay CSP.** The cashier loads `ethers` from a CDN,
-  which the dashboard CSP (`script-src 'self' 'unsafe-inline'`) blocks when
-  **relay-served**. Live mode works opened directly (file://) but not through the
-  relay. Fix: self-host ethers same-origin (like `/poker-engine`) + use the injected
-  wallet for RPC so connect-src stays tight.
+_None outstanding from the demo-surface + on-chain-path review._ The only remaining
+work is the big build below (real end-to-end on-chain play) and the operator inputs
+it needs.
 
 ## Readiness for REAL human testing on testnet — the honest picture
 
@@ -135,7 +144,7 @@ not yet wired into one playable real-money game:
 | Test a human can run today | Status |
 |---|---|
 | **Gameplay UX** — play Hold'em vs bots at `/table` | ✅ ready (now with a correct net readout) |
-| **On-chain money rail** — deposit → settle → withdraw real testnet USD₮ | ✅ proven via scripts; in-browser needs (a) their wallet as an escrow seat, (b) ethers loading (M2), (c) MetaMask on Base Sepolia |
+| **On-chain money rail** — deposit → settle → withdraw real testnet USD₮ | ✅ proven via scripts; in-browser now works relay-served (F10) — needs their wallet as an escrow seat + MetaMask on Base Sepolia |
 | **Full real-money game** — two humans play a hand that settles on-chain | ❌ **not wired** — see below |
 
 **The core gap.** The demo table plays **locally vs bots** — it does **not** connect
