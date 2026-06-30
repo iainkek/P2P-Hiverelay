@@ -118,6 +118,7 @@ import { dealStateFromLog, sharesForPosition, msgShare, unhex } from '/poker-eng
 import { dealLayout, openBoard } from '/poker-engine/crypto/mental-deal.js'
 
 const RANKS = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'], SUITS = ['♠','♥','♦','♣']
+const CAT = ['high card', 'a pair', 'two pair', 'three of a kind', 'a straight', 'a flush', 'a full house', 'quads', 'a straight flush']
 const $ = (id) => document.getElementById(id)
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const short = (h) => h.slice(0, 6) + '…' + h.slice(-4)
@@ -201,10 +202,11 @@ function awaitAction (S, me) {
     $('raiseAmt').textContent = sl.value
   }
   show('controls')
+  document.title = '▶ Your turn — P2Poker' // alert a player whose tab is in the background
   return new Promise((resolve) => {
     let left = window.__turnSeconds || 30 // a turn clock so an AFK player can't freeze the game
     const finish = (kind) => {
-      clearInterval(timer); pendingResolve = null; hide('controls')
+      clearInterval(timer); pendingResolve = null; hide('controls'); document.title = 'P2Poker — multiplayer table'
       if (kind === 'fold') resolve({ type: 'fold' })
       else if (kind === 'call') resolve({ type: la.owe === 0 ? 'check' : 'call' })
       else { const to = Math.max(+sl.min, Math.min(+sl.max, +sl.value)); resolve({ type: la.canBet ? 'bet' : 'raise', amount: to }) }
@@ -284,13 +286,14 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst) {
   const live = writers.filter(w => !folded.has(w))
   const pubBy = (w) => { const e = sess.localLog.find(x => x.writer === w && (x.payload || x).kind === 'mp-key'); return e ? unhex((e.payload || e).pub) : null }
   const sign = (n) => (n >= 0 ? '+' : '') + n
-  const settle = (winner, boardCards) => {
+  const settle = (winner, boardCards, winCat) => {
     const iWon = winner === me.writer
     const myNet = (iWon ? pot : 0) - (contrib[me.writer] || 0) // net = winnings − contributions; zero-sum
     sessionNet += myNet
     try { localStorage.setItem('p2poker.mp.net', String(sessionNet)) } catch {} // bridge to the Cashier
     $('turnPill').textContent = 'hand over'
-    $('result').textContent = (iWon ? 'You win the ' + pot + ' pot! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + pot + '). ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet)
+    const withHand = (winCat != null) ? ' with ' + CAT[winCat] : '' // show the winning hand at a real showdown
+    $('result').textContent = (iWon ? 'You win the ' + pot + ' pot' + withHand + '! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + pot + ')' + withHand + '. ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet)
     $('result').style.color = myNet >= 0 ? 'var(--green)' : 'var(--red)'
     log('hand over — winner ' + short(winner) + ', pot ' + pot + ', your net ' + sign(myNet))
     window.__handsPlayed = (window.__handsPlayed || 0) + 1
@@ -311,7 +314,7 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst) {
     render($('holeOpp'), shown[oppW] || [0, 0], true); $('seatOpp').querySelector('.lbl').textContent = 'shown'
     let winner = live[0], best = evaluate7([...shown[live[0]], ...boardCards])
     for (const w of live.slice(1)) { const r = evaluate7([...shown[w], ...boardCards]); if (compareRank(r, best) > 0) { best = r; winner = w } }
-    settle(winner, boardCards)
+    settle(winner, boardCards, best[0])
     return
   }
 }

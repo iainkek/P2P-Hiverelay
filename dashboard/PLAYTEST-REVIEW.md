@@ -43,6 +43,12 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Showdown clarity + turn alert (iter 43).** Two playing-experience touches: the
+showdown result now **names the winning hand** ("Opponent wins (40) with two pair") so
+you see *why* you won/lost (real poker UX); and when it's your turn the **tab title**
+changes to "▶ Your turn — P2Poker" so a player whose tab is backgrounded gets alerted
+(reverts on action). Verified the hand-name banner two-browser (13/13, no regression).
+
 **Mobile (iter 42).** The multiplayer table is phone-friendly: on a 390px viewport the
 two seats stack vertically (You / Opponent), the board + betting controls + raise slider
 fit with no horizontal overflow, cards render with correct colours. Verified 5/5
