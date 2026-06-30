@@ -570,11 +570,16 @@ $('bDemo').onclick = async () => {
   // Showdown — both hands are already open in the demo's god-view; evaluate + name the winner.
   const rankA = evaluate7([...ha.hole, ...ha.board]), rankB = evaluate7([...hb.hole, ...ha.board])
   const cmp = compareRank(rankA, rankB)
+  // reflect the pot award in the stacks so a newcomer SEES the winner gain chips
+  const finalS = bettingState(mirror, config); const pot = Object.values(view(finalS).contributions || {}).reduce((a, b) => a + b, 0)
+  const gain = (who) => cmp === 0 ? Math.floor(pot / 2) : (who === (cmp > 0 ? 'A' : 'B') ? pot : 0)
+  $('stackMe').textContent = finalS.stack[A.writer] + gain('A'); $('stackOpp').textContent = finalS.stack[B.writer] + gain('B')
+  $('potPill').textContent = 'pot ' + pot + ' → ' + (cmp === 0 ? 'split' : 'seat ' + (cmp > 0 ? 'A' : 'B'))
   $('seatOpp').querySelector('.lbl').textContent = 'seat B — shown'; $('turnPill').textContent = 'demo over'
   const res = cmp === 0 ? 'Split pot — tied hands' : ('Seat ' + (cmp > 0 ? 'A' : 'B') + ' wins with ' + CAT[(cmp > 0 ? rankA : rankB)[0]])
   $('result').innerHTML = '<b>Demo hand complete — ' + res + '.</b> The deal was trustless (neither seat saw the other’s cards or could rig the shuffle) and the showdown opened both hands cryptographically. <a href="/mp-table" style="color:var(--cyan);text-decoration:none">▸ Host or Join a real game for USD₮</a>'
   $('result').style.color = 'var(--text)'
-  window.__demoHand = { done: true, winner: cmp > 0 ? 'A' : cmp < 0 ? 'B' : 'split' }
+  window.__demoHand = { done: true, winner: cmp > 0 ? 'A' : cmp < 0 ? 'B' : 'split', cards: [...ha.hole, ...hb.hole, ...ha.board] }
 }
 
 // Auto-join from a shared link: /mp-table?join=<invite> → open the join flow with the

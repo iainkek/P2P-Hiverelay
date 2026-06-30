@@ -43,6 +43,15 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Visual QA + demo shows the pot award (iter 72).** Screenshotted the desktop table after a
+full demo hand to QA the recent additions (position badges, opponent-action log, demo
+result) — all render cleanly and coherently. Caught one thing: the demo named the winner but
+left both stacks at 980 (the betting-end state), so a newcomer didn't *see* the winner gain
+chips. Now the demo reflects the pot award in the stacks (winner 1020 vs loser 980) and the
+pot pill shows where it went ("pot 40 → seat A"). Also confirmed (6/6) the trustless deal is
+valid — all 9 dealt cards distinct and in range — settling a blurry-screenshot worry that a
+board card looked duplicated.
+
 **Full-hand demo for first-timers (iter 71).** The solo "demo" only ran the *deal* — it
 stopped at "DEAL COMPLETE" with both hands shown but no betting, showdown, or winner, so a
 newcomer trying it to learn the game saw the trustless crypto but not the actual poker, and
