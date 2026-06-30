@@ -103,7 +103,7 @@
         </span>
       </div>
       <div id="result" style="text-align:center;margin-top:1rem;font-weight:700"></div>
-      <div style="text-align:center;margin-top:.8rem"><button class="btn hide" id="nextHand">Deal next hand →</button><span class="pill hide" id="waitNext">waiting for the host to deal the next hand…</span><button class="btn hide" id="claimBtn" style="background:var(--red);color:#fff">Opponent timed out — claim the pot</button></div>
+      <div style="text-align:center;margin-top:.8rem"><button class="btn hide" id="nextHand">Deal next hand →</button><span class="pill hide" id="waitNext">waiting for the host to deal the next hand…</span><button class="btn hide" id="claimBtn" style="background:var(--red);color:#fff">Opponent timed out — claim the pot</button><a class="btn hide" id="toCashier" href="/cashier" style="background:var(--cyan);color:#04212b;margin-left:.5rem">Settle in the Cashier →</a></div>
     </div>
   </div>
 
@@ -400,7 +400,7 @@ async function playSession (rt, baseTableKey, me, writers, oppWriter, isHost) {
   let stacks = Object.fromEntries(writers.map(w => [w, BUYIN])) // carried across hands; bounded ≥ 0
   for (let hand = 0; hand < 1000; hand++) {
     me.seq = 0; me.mem = {} // fresh per table/hand
-    $('result').textContent = ''; hide('nextHand'); hide('waitNext')
+    $('result').textContent = ''; hide('nextHand'); hide('waitNext'); hide('toCashier')
     // carry stacks; rotate the button each hand so the blinds alternate
     const config = { seats: writers, stacks: { ...stacks }, blinds: { sb: SB, bb: BB }, button: writers[hand % writers.length] }
     const res = await runFullHand(rt, tableKey, me, writers, oppWriter, config)
@@ -410,9 +410,11 @@ async function playSession (rt, baseTableKey, me, writers, oppWriter, isHost) {
       const iBusted = stacks[me.writer] < BB
       $('result').textContent = (iBusted ? 'You are out of chips. ' : 'Your opponent is out of chips — you win the session! ') + 'Settle your net (' + (stacks[me.writer] - BUYIN >= 0 ? '+' : '') + (stacks[me.writer] - BUYIN) + ') in the Cashier.'
       $('result').style.color = stacks[me.writer] - BUYIN >= 0 ? 'var(--green)' : 'var(--red)'
+      show('toCashier') // one click to the settle flow (net already bridged)
       log('session over — final stack ' + stacks[me.writer]); window.__sessionOver = true
       return
     }
+    show('toCashier') // net is bridged after every hand — a player can stop & settle anytime
     if (isHost) {
       await waitNextHandClick()
       const nextKey = (await createSeat()).pub

@@ -53,6 +53,14 @@ the human-vs-human table without typing the URL. Added a **"Multiplayer"** nav e
 cashier/dashboard/lobby/table/leaderboard and the table loads from it, no errors. (No
 amount of protocol correctness helps if players can't reach the table.)
 
+**Actionable settle path from the table (iter 51).** The session-over message *told* you
+to "settle in the Cashier" but wasn't clickable, and there was no way to stop & settle
+between hands (you'd have to navigate away manually). Added a **"Settle in the Cashier →"**
+button that appears after every completed hand (the net is bridged each hand) and on bust
+— one click to the cashier, where the iter-47 one-click fill takes the bridged net. Closes
+the loop: nav → table → play → one click → settle → withdraw. Verified (8/8): both seats
+see the button between hands, it links to `/cashier`, net bridged.
+
 **Shuffle cheat-evidence wired into showdown (iter 49).** Another protocol-invariant gap:
 the table opened cards at showdown but never *verified the shuffles*. The re-encryption
 shuffle is plaintext-preserving only if honest — a malicious client could post an invalid
