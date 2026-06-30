@@ -281,28 +281,43 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
   const { hole, board } = dealLayout(writers.length)
   const myIdx = writers.indexOf(me.writer)
   const v = view(S); const contrib = v.contributions || {}
-  const pot = Object.values(contrib).reduce((a, b) => a + b, 0)
   const folded = new Set(v.folded || [])
   if (forfeitAgainst) folded.add(forfeitAgainst) // a timed-out seat forfeits = treated as folded
   const live = writers.filter(w => !folded.has(w))
   const pubBy = (w) => { const e = sess.localLog.find(x => x.writer === w && (x.payload || x).kind === 'mp-key'); return e ? unhex((e.payload || e).pub) : null }
   const sign = (n) => (n >= 0 ? '+' : '') + n
   let outStacks = null
+  // Distribute the pot with effective-pot accounting: an uncalled bet (one seat all-in
+  // for less than the other put in) is refunded, never won — so this matches the
+  // reducer's settleHand (the dispute path). Heads-up: the contested pot is capped at
+  // 2× the smaller live contribution; the over-bettor gets the excess back.
+  const winningsFor = (winner) => {
+    const c = {}; for (const w of writers) c[w] = contrib[w] || 0
+    const win = {}; for (const w of writers) win[w] = 0
+    if (live.length <= 1) { win[winner] = Object.values(c).reduce((a, b) => a + b, 0) } // uncontested: take all (incl. dead money)
+    else {
+      const minLive = Math.min(...live.map(w => c[w]))
+      win[winner] = minLive * live.length // contested pot
+      for (const w of live) win[w] += (c[w] - minLive) // refund the uncalled excess
+    }
+    return { c, win }
+  }
   const settle = (winner, boardCards, winCat) => {
+    const { c, win } = winningsFor(winner)
+    const wonPot = (live.length <= 1) ? win[winner] : Math.min(...live.map(w => c[w])) * live.length // what's actually contested
     const iWon = winner === me.writer
-    const myNet = (iWon ? pot : 0) - (contrib[me.writer] || 0) // net = winnings − contributions; zero-sum
-    // carry stacks: each seat's new stack = prior stack + its net (bounded ≥ 0 by all-in caps)
+    const myNet = win[me.writer] - c[me.writer] // net = winnings − contributions; zero-sum, uncalled-bet-safe
     outStacks = {}
-    for (const w of writers) outStacks[w] = (config.stacks[w] != null ? config.stacks[w] : BUYIN) + ((w === winner ? pot : 0) - (contrib[w] || 0))
+    for (const w of writers) outStacks[w] = (config.stacks[w] != null ? config.stacks[w] : BUYIN) + (win[w] - c[w])
     sessionNet = (outStacks[me.writer] - BUYIN) // net vs the initial buy-in (what settles on-chain; |net| ≤ deposit)
     try { localStorage.setItem('p2poker.mp.net', String(sessionNet)) } catch {} // bridge to the Cashier
     $('turnPill').textContent = 'hand over'
     const withHand = (winCat != null) ? ' with ' + CAT[winCat] : '' // show the winning hand at a real showdown
-    $('result').textContent = (iWon ? 'You win the ' + pot + ' pot' + withHand + '! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + pot + ')' + withHand + '. ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet) + ' · stack ' + outStacks[me.writer]
+    $('result').textContent = (iWon ? 'You win the ' + wonPot + ' pot' + withHand + '! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + wonPot + ')' + withHand + '. ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet) + ' · stack ' + outStacks[me.writer]
     $('result').style.color = sessionNet >= 0 ? 'var(--green)' : 'var(--red)'
-    log('hand over — winner ' + short(winner) + ', pot ' + pot + ', your net ' + sign(myNet) + ', stack ' + outStacks[me.writer])
+    log('hand over — winner ' + short(winner) + ', pot ' + wonPot + ', your net ' + sign(myNet) + ', stack ' + outStacks[me.writer])
     window.__handsPlayed = (window.__handsPlayed || 0) + 1
-    window.__hand = { done: true, iWon, pot, winner, myNet, sessionNet, stack: outStacks[me.writer], hands: window.__handsPlayed, uncontested: live.length === 1, myHole: hand.hole, board: boardCards }
+    window.__hand = { done: true, iWon, pot: wonPot, winner, myNet, sessionNet, stack: outStacks[me.writer], hands: window.__handsPlayed, uncontested: live.length === 1, myHole: hand.hole, board: boardCards }
   }
   // Uncontested: everyone but one folded → that seat wins the pot, no cards shown.
   if (live.length === 1) { settle(live[0], hand.board); return { newStacks: outStacks } }
