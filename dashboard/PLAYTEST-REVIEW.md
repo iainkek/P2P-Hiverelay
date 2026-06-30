@@ -43,6 +43,13 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Shareable join link (iter 44).** The host→joiner handshake was copy-paste a long code;
+now the host gets a **join link** (`/mp-table?join=<invite>`) to share (chat/DM). Opening
+it auto-opens the join flow with the invite pre-filled + accepted, so the opponent just
+sends their join code back. Verified two-browser (4/4): host shows the link, the joiner
+*opens the link* (no paste) → auto-accepts → produces its code → the deal completes. Much
+smoother onboarding (the raw code is still available for manual paste).
+
 **Showdown clarity + turn alert (iter 43).** Two playing-experience touches: the
 showdown result now **names the winning hand** ("Opponent wins (40) with two pair") so
 you see *why* you won/lost (real poker UX); and when it's your turn the **tab title**

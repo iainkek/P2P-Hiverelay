@@ -55,10 +55,12 @@
 
   <!-- host -->
   <div id="hostUi" class="hide">
-    <div class="card-ui"><h3>1 · Send this invite to your opponent</h3>
-      <label>Your invite code — copy + send it (chat/DM):</label>
-      <textarea id="inviteOut" readonly></textarea>
-      <button class="btn ghost" id="copyInvite">Copy invite</button>
+    <div class="card-ui"><h3>1 · Send this join link to your opponent</h3>
+      <label>Share this link (chat/DM) — your opponent opens it to join:</label>
+      <textarea id="inviteLink" readonly></textarea>
+      <button class="btn" id="copyLink">Copy join link</button>
+      <button class="btn ghost" id="copyInvite">Copy raw code</button>
+      <textarea id="inviteOut" readonly class="hide"></textarea>
     </div>
     <div class="card-ui"><h3>2 · Paste their join code, then start</h3>
       <textarea id="joinIn" placeholder="paste your opponent's join code here"></textarea>
@@ -377,11 +379,14 @@ $('bHost').onclick = async () => {
   hide('landing'); show('hostUi'); log('hosting — generating your seat…')
   hostSeat = await makeSeat()
   hostTableKey = (await createSeat()).pub
-  $('inviteOut').value = b64({ t: hostTableKey, h: hostSeat.writer })
-  log('invite ready — send it to your opponent, then paste their join code.')
+  const code = b64({ t: hostTableKey, h: hostSeat.writer })
+  $('inviteOut').value = code
+  $('inviteLink').value = location.origin + '/mp-table?join=' + code
+  log('join link ready — send it to your opponent, then paste their join code below.')
 }
 $('joinIn').addEventListener('input', () => { $('startHost').disabled = !$('joinIn').value.trim() })
 $('copyInvite').onclick = () => navigator.clipboard?.writeText($('inviteOut').value)
+$('copyLink').onclick = () => navigator.clipboard?.writeText($('inviteLink').value)
 $('startHost').onclick = async () => {
   $('startHost').disabled = true
   let joiner; try { joiner = unb64($('joinIn').value) } catch { log('invalid join code'); $('startHost').disabled = false; return }
@@ -448,6 +453,15 @@ $('bDemo').onclick = async () => {
   window.__mp = { hole: ha.hole, board: ha.board, ready: ha.ready && hb.ready }
 }
 
+// Auto-join from a shared link: /mp-table?join=<invite> → open the join flow with the
+// invite pre-filled and accept it, so the opponent just clicks the host's link.
+const joinParam = new URLSearchParams(location.search).get('join')
+if (joinParam) {
+  $('bJoin').click()
+  $('inviteIn').value = joinParam
+  log('opened from a join link — accepting the invite…')
+  $('acceptInvite').click()
+}
 window.__mpReady = true
 </script>
 </body>
