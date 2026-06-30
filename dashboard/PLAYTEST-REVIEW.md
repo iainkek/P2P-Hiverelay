@@ -43,6 +43,18 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Graceful session-end signal (iter 74).** A real session-end rough edge: when the host
+stopped and clicked "Settle in the Cashier," the joiner had no idea — it kept polling for
+the next hand for **~20 minutes** before giving up. Now the leaver posts a `session-over`
+signal on the current table before navigating, and the waiting opponent's poll detects it
+and ends immediately with "Your opponent ended the session — settle your net," showing the
+Settle button. Verified (5/5): the joiner detects the end within seconds, gets the clear
+message + Settle button; and the normal "Deal next hand" path is unaffected (4/4 — joiner
+still follows the next-table announcement, no false session-over). *Caught a real bug while
+building it:* the `postSessionOver` closure was placed before the iter-54 try/finally wrap,
+so `let tableKey` (declared inside the try) was out of scope ("tableKey is not defined") —
+found via instrumentation, fixed by moving the closure inside the try.
+
 **Secure-context guard for HTTPS deployment (iter 73).** A real testnet-deployment failure
 mode: the trustless deal uses WebCrypto (Ed25519), which only runs in a **secure context**
 (HTTPS or localhost). `createSeat` throws "WebCrypto unavailable" deep in the flow, but the
