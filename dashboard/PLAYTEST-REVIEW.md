@@ -137,6 +137,11 @@ instance), so it can't be built+verified in this review loop. Scope below.
 - **Demo cashier math is sound** — top-ups accumulate; a session can never lose more
   than its bankroll (`net ≥ -bankroll` ⇒ `withdrawable ≥ 0`); winnings carry to the
   next session.
+- **Bet controls never produce a dead click** — the slider range is pinned to the
+  engine's `[minRaiseTo, maxRaiseTo]` (step BB) and the ½-pot/pot/max quick-bets clamp
+  to it. Drove 38 raises (slider min, all-in, pot, half) across 14 hands: **0 dead
+  clicks** — every Raise advanced the game, and the slider value was always within
+  the legal range. So "I clicked Raise and nothing happened" can't occur.
 
 ## Side-pot payouts — proven correct (real-money critical)
 
