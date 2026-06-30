@@ -30,11 +30,17 @@ prove/verify primitive checks out directly (honest share → `{valid:true}`, bad
 → `{valid:false}`).
 
 So mental poker is **not novel crypto to invent** — the primitive is built and
-proven. What remains for it is (a) a poker dealing **protocol** on top (encrypt deck
-to the joint key, deal hole cards via shares, reveal at showdown), and (b) a
-**browser port** of the point ops (`chaum-pedersen.js` uses sodium's
-`crypto_core_ed25519_*` for points; the browser needs those on noble, which is
-already imported for the scalar field). Then the table UI wiring.
+proven. The **browser point-op port is now done**: `poker/crypto/ed25519-noble.js`
+implements the ed25519 group ops (base/point scalar-mult, add/sub, scalar add/mul,
+validity) on noble, **byte-identical to sodium** — verified by fuzz (100/100
+arithmetic matches; legitimate points valid; identity/small/mixed-order rejected,
+i.e. ≥ as strict as sodium, matching chaum-pedersen's intent). So a hand
+dealt/encrypted in the browser is decryptable + verifiable by the Node/relay sodium
+code and vice-versa. What remains for mental poker: (a) a browser `chaum-pedersen`
+that uses this backend (port prove/verify/share + match the Fiat-Shamir hash), (b)
+the dealing **protocol** (encrypt deck to the joint key, deal hole cards via shares,
+reveal at showdown), (c) serving noble to the browser (the recurring bundle step),
+then the table UI.
 
 ### Multiplayer stack status
 1. Relay table / shared signed log — ✅ proven (iter 16)
