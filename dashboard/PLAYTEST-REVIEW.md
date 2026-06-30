@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Deal driver built (iter 30).** `mp-deal-driver.js` is the deal-phase state machine
+the table UI runs: `nextDealAction(log, seat, seats, mem)` returns the one payload a
+seat should post next (key → deck → shuffle-in-order → shares for others' holes +
+board) or null while waiting; `readMyHand` reads the seat's private cards once shares
+are in. Pure + deterministic over the log, so both seats converge with no extra
+coordination. Verified (7/7): two seats independently drive a full deal to quiescence
+in 19 bounded moves, each reads 2 private hole cards, both agree on the board, 9
+distinct cards, and the driver never leaks a seat's own hole cards. The UI loop is now
+just: poll log → nextDealAction → sign+postMove → repeat.
+
 **The whole engine now runs IN-BROWSER via the relay (iter 29).** Extended the
 `/poker-engine/` route to serve the `crypto/**` subtree, made the browser crypto
 modules Node-free (replaced `Buffer` hex with pure-JS in `elgamal-deck`,
