@@ -57,6 +57,16 @@ then the table UI.
 5. Table UI driving 1–4 (post moves, replay via `betting.js`, render) — ⬜ wiring
 6. Reduce → settle → escrow — ✅ proven (iter 16 + earlier)
 
+**Deal engine built + verified (iter 26).** `mental-deal.js` orchestrates a full hand
+deal from the proven primitives: encrypt the deck to the joint key → both seats
+shuffle (reencrypt-shuffle) → deal hole/board by layout → reveal hole cards privately
+(owner + others' proven shares) and the board publicly. Verified a 2-seat deal (5/5):
+each seat privately opens its 2 hole cards, the board shows 5 public cards, all 9 are
+distinct from one deck, and **an opponent genuinely cannot see your hole cards**.
+Remaining is coordination, not crypto: drive these steps as signed moves over the
+relay log (relay-table-client) interleaved with betting (betting.js) and showdown →
+reduce → settle, plus the table UI.
+
 **Browser crypto now actually loads (iter 25).** The recurring blocker — the mental-
 poker modules import noble (`@noble/curves`, `@noble/hashes`), unbundlable here — is
 solved without a bundler: vendored the noble `.js` trees under `money/vendor/noble/`
