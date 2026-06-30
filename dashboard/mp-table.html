@@ -90,10 +90,14 @@
       <div style="text-align:center;margin-top:1.2rem"><span class="pill" id="potPill">pot 0</span> <span class="pill" id="turnPill" style="background:rgba(63,185,80,.14);color:var(--green)">dealing…</span></div>
       <div class="lbl" style="text-align:center;margin-top:1.1rem">community board</div>
       <div class="board" id="board"></div>
-      <div class="row hide" id="controls" style="justify-content:center;margin-top:1.2rem">
+      <div class="row hide" id="controls" style="justify-content:center;align-items:center;margin-top:1.2rem;gap:.5rem">
         <button class="btn" id="bFold">Fold</button>
         <button class="btn" id="bCall">Check</button>
         <button class="btn" id="bRaise">Raise</button>
+        <span id="raiseWrap" style="display:inline-flex;align-items:center;gap:.4rem">
+          <input type="range" id="raiseSlider" min="0" max="100" value="0" style="width:130px;accent-color:var(--gold)">
+          <b id="raiseAmt" style="min-width:34px;font-family:monospace">—</b>
+        </span>
       </div>
       <div id="result" style="text-align:center;margin-top:1rem;font-weight:700"></div>
       <div style="text-align:center;margin-top:.8rem"><button class="btn hide" id="nextHand">Deal next hand →</button><span class="pill hide" id="waitNext">waiting for the host to deal the next hand…</span></div>
@@ -185,18 +189,31 @@ function awaitAction (S, me) {
   const la = legalActions(S)
   $('bFold').disabled = !la.canFold || la.owe === 0
   $('bCall').textContent = la.owe === 0 ? 'Check' : ('Call ' + la.callAmount)
-  $('bRaise').disabled = !(la.canBet || la.canRaise)
-  $('bRaise').textContent = la.canBet ? 'Bet ' + (la.minRaiseTo || BB) : 'Raise ' + (la.minRaiseTo || BB)
+  const canRaise = !!(la.canBet || la.canRaise)
+  $('bRaise').disabled = !canRaise
+  $('bRaise').textContent = la.canBet ? 'Bet' : 'Raise'
+  // slider spans [minRaiseTo … maxRaiseTo] (all-in) in BB steps; raise goes TO its value
+  const sl = $('raiseSlider')
+  $('raiseWrap').style.display = canRaise ? 'inline-flex' : 'none'
+  if (canRaise) {
+    const min = la.minRaiseTo || BB, max = la.maxRaiseTo || min
+    sl.min = min; sl.max = Math.max(max, min); sl.step = BB; sl.value = min
+    $('raiseAmt').textContent = sl.value
+  }
   show('controls')
   return new Promise((resolve) => {
     pendingResolve = (kind) => {
       pendingResolve = null; hide('controls')
       if (kind === 'fold') resolve({ type: 'fold' })
       else if (kind === 'call') resolve({ type: la.owe === 0 ? 'check' : 'call' })
-      else resolve({ type: la.canBet ? 'bet' : 'raise', amount: la.minRaiseTo || (la.callAmount + BB) })
+      else { // raise/bet TO the chosen amount, clamped to the legal range
+        const to = Math.max(+sl.min, Math.min(+sl.max, +sl.value))
+        resolve({ type: la.canBet ? 'bet' : 'raise', amount: to })
+      }
     }
   })
 }
+$('raiseSlider').oninput = () => { $('raiseAmt').textContent = $('raiseSlider').value }
 $('bFold').onclick = () => pendingResolve && pendingResolve('fold')
 $('bCall').onclick = () => pendingResolve && pendingResolve('call')
 $('bRaise').onclick = () => pendingResolve && pendingResolve('raise')

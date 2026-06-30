@@ -43,6 +43,12 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Raise sizing (iter 39).** The Raise button only did a fixed min-raise; added a
+**slider** spanning `[minRaiseTo … maxRaiseTo]` (all-in) in BB steps so a player chooses
+their bet/raise amount, with a live amount label. Verified two-browser (8/8): host
+drags to all-in (1000), label tracks, joiner calls → pot 2000, settles host +1000 /
+joiner −1000 (zero-sum, |net| = pot/2). Betting is now real (not just min-raise).
+
 **Multi-hand sessions + clean folds (iter 37–38).** `/mp-table` now plays a *session*,
 not a single hand: after each hand the host clicks **"Deal next hand"** and a fresh
 relay table is created (keys/identities reused — no re-handshake; the new key is
