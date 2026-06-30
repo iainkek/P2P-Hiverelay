@@ -211,6 +211,8 @@ input[readonly]{color:var(--cyan);cursor:text}
       <label>RPC URL (read-only fallback)</label><input id="cfgRpc" placeholder="https://…sepolia…">
       <div class="hint" style="margin-top:.7rem;border-top:1px solid var(--card-border);padding-top:.7rem">New here? On <b>Base Sepolia</b>: deploy your own test escrow (mints 1,000 USD₮), or grab test USD₮ from the faucet to play with an existing one.</div>
       <label>Opponent address — optional, for a shared 2-player escrow</label><input id="cfgOpponent" placeholder="0x… (leave blank for a solo test)">
+      <button class="btn btn-ghost" id="btnShareAddr" style="margin-top:.3rem;font-size:.76rem">Joining a friend's game? Share your address with the host →</button>
+      <input id="myAddrLink" readonly style="display:none;margin-top:.3rem;font-size:.66rem;color:var(--text-dim)">
       <button class="btn btn-cyan" id="btnDeployTest" style="margin-top:.4rem">Deploy a test escrow + mint USD₮</button>
       <button class="btn btn-ghost" id="btnFaucet" style="margin-top:.4rem">Get 1,000 test USD₮</button>
       <button class="btn btn-cyan" id="btnShareEscrow" style="margin-top:.4rem;display:none">Copy escrow link for your opponent →</button>
@@ -664,13 +666,30 @@ function bootCashier () {
     try { navigator.clipboard && navigator.clipboard.writeText(link) } catch {}
     log('escrow link copied — send it to your opponent so they can deposit in one click', 'ok')
   }
-  // Opponent opened a shared-escrow link → auto-fill the escrow + token and switch to Live.
+  $('btnShareAddr').onclick = async () => {
+    if (!window.ethers || !window.ethereum) return log('install MetaMask + select Base Sepolia first', 'err')
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum)
+      await provider.send('eth_requestAccounts', [])
+      const addr = await (await provider.getSigner()).getAddress()
+      const link = location.origin + '/cashier?opponent=' + addr
+      $('myAddrLink').value = link; $('myAddrLink').style.display = 'block'
+      try { navigator.clipboard && navigator.clipboard.writeText(link) } catch {}
+      log('your address link copied — send it to the host so they can deploy the shared escrow', 'ok')
+    } catch (e) { log('could not read your address: ' + (e.shortMessage || e.message), 'err') }
+  }
+  // Links that auto-fill the setup (so the whole coordination is link-based):
+  //   ?escrow=&token=  — opponent opened the host's escrow link
+  //   ?opponent=       — host opened the joiner's "share my address" link
   try {
     const q = new URLSearchParams(location.search)
-    const esc = q.get('escrow'), tok = q.get('token')
+    const esc = q.get('escrow'), tok = q.get('token'), opp = q.get('opponent')
     if (esc && tok) {
       setMode('live'); $('cfgEscrow').value = esc; $('cfgToken').value = tok; $('btnShareEscrow').style.display = 'block'
       log('escrow loaded from your opponent’s link — Connect, get test USD₮ from the faucet, then deposit your buy-in', 'ok')
+    } else if (opp) {
+      setMode('live'); $('cfgOpponent').value = opp
+      log('your opponent’s address is filled in from their link — click "Deploy a test escrow" to create your shared table', 'ok')
     }
   } catch {}
   $('btnDeposit').onclick = () => { const amt = BigInt(Math.round((parseFloat($('depAmount').value) || 0) * 1e6)); if (amt <= 0n) return log('enter an amount', 'err'); S.mode === 'demo' ? demoDeposit(amt) : liveDeposit(amt) }

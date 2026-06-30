@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**"Share my address" link — the whole setup is now link-based (iter 63).** Cut the last
+manual copy in the setup: the opponent sending the host their EVM address before the shared
+deploy. Added a **"Share your address with the host →"** button (connects MetaMask, builds
+`/cashier?opponent=<addr>`); the host opens it and the opponent field auto-fills + switches
+to Live + prompts "Deploy your shared table." Verified (7/7): host link auto-fills the
+opponent + Live + prompt; the joiner button is present, wired, and graceful with no wallet;
+plain `/cashier` is unaffected; no errors. Now **every handoff in the two-human flow is a
+shareable link** — share-address → escrow-link → game-join-link → one-click settle — with
+no copy-pasting of addresses anywhere, which is what makes real human testing actually
+happen instead of stalling on coordination.
+
 **Shareable escrow link — cut the setup coordination (iter 62).** The biggest real barrier
 to a tester completing a game is coordination, and one rough edge was the opponent having
 to manually copy **two addresses** (escrow + token) to connect to a shared escrow. Mirrored
