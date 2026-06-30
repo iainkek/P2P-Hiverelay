@@ -157,6 +157,20 @@ instance), so it can't be built+verified in this review loop. Scope below.
   clicks** — every Raise advanced the game, and the slider value was always within
   the legal range. So "I clicked Raise and nothing happened" can't occur.
 
+## Card + hand display — what you see is what's scored (verified)
+
+A player bets on what they think they hold, so the cards shown and the hand named
+must match the evaluator exactly:
+
+- **Cards.** `cardEl` renders rank/suit from the **same** `cardRank`/`cardSuit` the
+  engine evaluates with, so the displayed card is provably the scored card (no
+  divergence possible). Colour (`isRed`) is correct: hearts + diamonds red.
+- **Hand readout.** The "You have: …" `handName()` and the showdown category `CAT[]`
+  both index `[0..12]` (Two…Ace), matching the evaluator's rank tuple. Checked 12
+  known hands incl. the tricky ones — the A-2-3-4-5 wheel reads "Straight, Five high"
+  (ace low), broadway reads "Ace high", quads/full house/flush/two-pair all named
+  right; all 52 indices map to a named rank. 12/12 correct.
+
 ## Side-pot payouts — proven correct (real-money critical)
 
 The table has its **own inline `distribute()`** (the reducer pulls in sodium and
