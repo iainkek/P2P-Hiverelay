@@ -43,6 +43,18 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Accidental-leave guard mid-session (iter 54).** A real edge a human will hit: refreshing
+or closing the tab mid-session. The seat keys (Ed25519 sign keypair + ElGamal decryption
+scalar, `makeSeat()`) live **only in memory** and the writer set is fixed at table
+creation — so a reload can't rejoin a live session, stranding a player who's already
+deposited. Added a `beforeunload` guard: while a session is in progress (`sessionActive`,
+set/cleared via try-finally around `playSession`) an accidental refresh/close prompts a
+confirmation; clicking **"Settle in the Cashier"** clears the flag first so the intended
+exit never nags. Verified (7/7): no nag on the landing, warns mid-session for both seats,
+quiet after choosing to settle, and a full hand still completes (the wrap didn't break
+playSession). *Residual:* this prevents accidental loss but not recovery after a
+confirmed-leave/crash — full seat-key persistence + resume is the larger follow-up.
+
 **Player onboarding guide added to /docs (iter 53).** A tester clicking "Docs" got
 HiveRelay *operator/SDK* docs (install a node, the Pear SDK, architecture) — no
 player-facing "how to play" anywhere. Added a **"Playing Poker (testnet)"** guide at the

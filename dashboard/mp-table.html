@@ -132,6 +132,11 @@ const b64 = (o) => btoa(JSON.stringify(o)).replace(/=+$/, '')
 const unb64 = (s) => JSON.parse(atob(s.trim()))
 let logLines = []
 let sessionNet = 0 // accumulated net across hands this session (bridged to the Cashier)
+let sessionActive = false // true while a real session is in progress — guards against an accidental refresh/close losing the in-memory seat keys
+// Seat keys (sign keypair + decryption scalar) live only in memory; the writer set is
+// fixed at table creation, so a reload can't rejoin a live session. Warn before an
+// accidental mid-session leave (clicking "Settle in the Cashier" clears the flag first).
+window.addEventListener('beforeunload', (e) => { if (sessionActive) { e.preventDefault(); e.returnValue = 'You have a hand in progress — leaving now forfeits it. Settle in the Cashier first.'; return e.returnValue } })
 const log = (s) => { logLines.push(s); $('log').textContent = logLines.slice(-30).join('\n'); $('log').scrollTop = 1e9 }
 function cardEl (c, faceUp) {
   const d = document.createElement('div')
@@ -389,6 +394,7 @@ async function runFullHand (rt, tableKey, me, writers, oppWriter, config) {
 // "Deal next hand" gate (host) — resolved by the button.
 let nextHandResolve = null
 $('nextHand').onclick = () => { if (nextHandResolve) { const r = nextHandResolve; nextHandResolve = null; hide('nextHand'); r() } }
+$('toCashier').onclick = () => { sessionActive = false } // intentional leave to settle — don't warn
 const waitNextHandClick = () => new Promise((res) => { nextHandResolve = res; show('nextHand') })
 
 // A multi-hand session over the relay. Each hand is its own append-only relay table
@@ -396,6 +402,8 @@ const waitNextHandClick = () => new Promise((res) => { nextHandResolve = res; sh
 // table and announces its key on the current table's log; the joiner reads it. Seq is
 // per (writer, table), so it resets each hand. Session net accumulates across hands.
 async function playSession (rt, baseTableKey, me, writers, oppWriter, isHost) {
+  sessionActive = true // a real session is now in progress — beforeunload will warn on accidental leave
+  try {
   let tableKey = baseTableKey
   let stacks = Object.fromEntries(writers.map(w => [w, BUYIN])) // carried across hands; bounded ≥ 0
   for (let hand = 0; hand < 1000; hand++) {
@@ -436,6 +444,7 @@ async function playSession (rt, baseTableKey, me, writers, oppWriter, isHost) {
       tableKey = nextKey
     }
   }
+  } finally { sessionActive = false } // session ended — leaving is safe again
 }
 
 function enterTable (myWriter, oppWriter) {
