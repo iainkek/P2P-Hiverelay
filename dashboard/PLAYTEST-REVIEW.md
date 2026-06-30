@@ -43,6 +43,20 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Cashier Live money rail verified end-to-end through the real UI (iter 57).** Until now
+the escrow *contract* logic was proven on a local EVM, but the cashier's actual Live-mode
+UI flow (buttons → ethers calls → contract interactions) was only read, not executed. Built
+a mock EIP-1193 provider (`window.ethereum` backed by an ethers Wallet + a local hardhat
+node reporting Base Sepolia's chainId 84532) and drove the **real cashier buttons** through
+the whole money rail: Deploy a test escrow (USDT + escrow via `ContractFactory`) → faucet
+mint → approve + `deposit(1000)` → EIP-191 sign → `cooperativeClose([me],[1000],[sig])` →
+`withdraw()`. Verified on-chain at every step (wallet holds 1,000 after mint; escrow holds
+the 1,000 deposit; escrow drains and the wallet ends whole) with **zero page errors** —
+10/10. The one bug hit was in the *mock's* nonce handling (real MetaMask manages nonces);
+the cashier itself was flawless. This is the strongest "works live on testnet" evidence
+short of a real Base Sepolia deploy (gated). Harness preserved at
+`test/integration/cashier-live.test.cjs`.
+
 **Dispute-path reducer — claim against a cheater (iter 56).** The deepest open item:
 until now an honest player could *refuse to co-sign* a cheat (denying the cheater), but
 couldn't *claim* their winnings on-chain if the opponent stalled the cooperative close.
