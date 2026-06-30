@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Join-wait patience + clearer timeout (iter 77).** Traced the join handshake: after the
+joiner sends its code back, it polls for the host to start, with a "Waiting for the host…"
+indicator and a timeout. But the timeout was only **5 minutes**, while two humans
+coordinating (send code → host pastes → deals) can easily take longer — especially
+first-timers — and on timeout the joiner loses its seat and must re-handshake. The
+between-hands wait is 20 min; made the join wait match (2400 × 500ms). On timeout the
+indicator now turns red with actionable guidance ("make sure they pasted your join code and
+clicked Create table & deal, then reload to retry"). Verified the join handshake + deal
+still completes end-to-end (13/13) — only the patience window changed.
+
 **Regression checkpoint — contracts + settlement green (iter 76).** After 75 iterations of
 changes, re-ran the authoritative suites to confirm nothing regressed in the money-critical
 core. The **escrow contract suite is 31/31**: deposit→cooperativeClose→withdraw, conservation

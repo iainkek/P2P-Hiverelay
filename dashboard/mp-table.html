@@ -525,7 +525,7 @@ $('acceptInvite').onclick = async () => {
   show('joinStep2'); log('join code ready — send it to the host, then wait for the deal.')
   // wait for the host to create the table, then drive our seat
   const rt = new RelayTable(''); const writers = [joinInvite.h, joinSeat.writer]
-  for (let i = 0; i < 600; i++) {
+  for (let i = 0; i < 2400; i++) { // ~20 min patience — humans coordinating can be slow
     const lg = await rt.readLog(joinInvite.t)
     // wait until the host has actually created the table AND posted (entries > 0),
     // otherwise we'd race ahead of table creation and our moves would be rejected.
@@ -536,7 +536,9 @@ $('acceptInvite').onclick = async () => {
     }
     await sleep(500)
   }
-  log('timed out waiting for the host')
+  $('joinWait').textContent = 'The host hasn’t started in 20 min. Make sure they pasted your join code and clicked “Create table & deal,” then reload this page to retry.'
+  $('joinWait').style.color = 'var(--red)'
+  log('timed out waiting for the host — they may not have pasted your join code yet')
 }
 $('copyJoin').onclick = () => navigator.clipboard?.writeText($('joinOut').value)
 
