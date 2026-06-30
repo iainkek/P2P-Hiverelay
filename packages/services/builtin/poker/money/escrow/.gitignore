@@ -4,3 +4,4 @@ artifacts/
 typechain-types/
 deployments.json
 live-deployment.json
+live-dispute-deployment.json
