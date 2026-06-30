@@ -186,16 +186,22 @@ function bettingState (localLog, config) {
   return S
 }
 
-// DEAL phase: drive nextDealAction until this seat can read its hand.
+// DEAL phase: drive nextDealAction until this seat can read its hand. A normal deal over
+// the relay is ~20–40s; warn at 90s and give up at 5 min so a mid-deal disconnect doesn't
+// leave the player staring at "dealing…" for half an hour.
 async function runDeal (sess, me, writers) {
   render($('board'), [0, 0, 0, 0, 0], false); render($('holeMe'), [0, 0], false); render($('holeOpp'), [0, 0], false)
   $('turnPill').textContent = 'dealing…'
-  for (let g = 0; g < 4000; g++) {
+  const start = Date.now(); let warned = false
+  for (let g = 0; g < 8000; g++) {
     await sleep(250); await sess.sync()
     const action = nextDealAction(sess.localLog, { writer: me.writer, x: me.x }, writers, me.mem)
     if (action) { await sess.post(action); log('you → ' + action.kind + (action.pos !== undefined ? ' #' + action.pos : '')); continue }
     const h = readMyHand(sess.localLog, { writer: me.writer, x: me.x }, writers)
     if (h.ready) { render($('holeMe'), h.hole, true); render($('board'), h.board, true); window.__mp = { hole: h.hole, board: h.board, ready: true }; log('dealt — you hold ' + h.hole.map(cardStr).join(' ')); return h }
+    const elapsed = Date.now() - start
+    if (!warned && elapsed > 90000) { warned = true; $('turnPill').textContent = 'deal stalled'; log('the deal is taking longer than usual — your opponent may have disconnected. If it doesn’t finish soon, reload to start a new game.') }
+    if (elapsed > 300000) { $('turnPill').textContent = 'deal failed'; log('deal failed — your opponent didn’t complete it. Reload to try a new game.'); return null }
     await sleep(300)
   }
   return null

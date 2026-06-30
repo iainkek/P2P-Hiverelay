@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Deal-phase disconnect timeout + feedback (iter 79).** Unlike betting (which has the
+disconnect claim button), the **deal** phase had no disconnect detection: `runDeal` looped
+up to 4000 ticks (~36 min) showing only "dealing…" the whole time. So if the opponent
+closed their tab right after the handshake, the player stared at "dealing…" for half an
+hour before "deal failed." A normal relay deal is ~20–40s, so added a **90s warning**
+("taking longer than usual — your opponent may have disconnected") and a **5-min hard
+timeout** ("deal failed — reload to try a new game"), both with a turn-pill status change.
+Verified the normal deal + hand still completes well before the warning (13/13). No money
+is at stake during the deal (blinds post at betting), so this is purely about not stranding
+a player in a silent 36-minute wait.
+
 **Shuffle-reveal grace vs false forfeits (iter 78).** A fairness bug in the showdown: if the
 opponent's `shuffle-reveal` hadn't landed within 24 ticks (~7.2s) after the cards opened,
 the honest player forfeited them as a withholder (iter 49). But the reveal is a *separate
