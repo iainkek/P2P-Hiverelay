@@ -208,6 +208,8 @@ input[readonly]{color:var(--cyan);cursor:text}
       <label>Escrow address</label><input id="cfgEscrow" placeholder="0x…">
       <label>USD₮ token address</label><input id="cfgToken" placeholder="0x…">
       <label>RPC URL (read-only fallback)</label><input id="cfgRpc" placeholder="https://…sepolia…">
+      <div class="hint" style="margin-top:.7rem;border-top:1px solid var(--card-border);padding-top:.7rem">No escrow yet? With MetaMask on <b>Base Sepolia</b>, deploy your own test escrow and mint test USD₮ — fully self-served, nothing to set up.</div>
+      <button class="btn btn-cyan" id="btnDeployTest" style="margin-top:.4rem">Deploy a test escrow + mint USD₮</button>
     </div>
     <button class="btn btn-primary" id="btnConnect">Connect wallet</button>
   </div>
@@ -463,6 +465,38 @@ async function liveConnect () {
   log('connected to escrow ' + short(S.escrowAddr), 'ok')
   await liveRefresh()
 }
+// Self-serve: deploy a fresh MockUSDT + PokerEscrow (you as the sole seat) and mint
+// test USD₮ — so a tester can run the whole on-chain rail with just MetaMask on Base
+// Sepolia, no setup. Mirrors scripts/live-demo.cjs (proven on Base Sepolia).
+async function liveDeployTest () {
+  if (!window.ethers) { log('ethers not loaded — reload the page', 'err'); return }
+  if (!window.ethereum) { log('no wallet — install MetaMask and select Base Sepolia', 'err'); return }
+  const btn = $('btnDeployTest')
+  try {
+    btn.disabled = true
+    const provider = new ethers.BrowserProvider(window.ethereum)
+    await provider.send('eth_requestAccounts', [])
+    const net = await provider.getNetwork()
+    if (Number(net.chainId) !== 84532) { log('switch MetaMask to Base Sepolia (chainId 84532) — currently on ' + net.chainId, 'err'); btn.disabled = false; return }
+    const signer = await provider.getSigner()
+    const me = await signer.getAddress()
+    log('deploying your test escrow as ' + short(me) + '… (confirm each tx in MetaMask)')
+    const art = await (await fetch('/poker-engine/poker-artifacts.json')).json()
+    const usdt = await new ethers.ContractFactory(art.usdt.abi, art.usdt.bytecode, signer).deploy()
+    await usdt.waitForDeployment(); const usdtAddr = await usdt.getAddress()
+    log('① MockUSDT deployed → ' + short(usdtAddr), 'ok')
+    const escrowId = ethers.id('p2poker-selftest-' + me.slice(2, 10) + '-' + (await provider.getBlockNumber()))
+    const escrow = await new ethers.ContractFactory(art.escrow.abi, art.escrow.bytecode, signer).deploy(escrowId, usdtAddr, [me], [], 0)
+    await escrow.waitForDeployment(); const escrowAddr = await escrow.getAddress()
+    log('② PokerEscrow deployed → ' + short(escrowAddr), 'ok')
+    await (await usdt.mint(me, 1000n * DEC)).wait()
+    log('③ minted 1,000 test USD₮ to your wallet', 'ok')
+    $('cfgEscrow').value = escrowAddr; $('cfgToken').value = usdtAddr
+    log('test escrow ready — you are the sole seat. Deposit a bankroll, then settle your net + withdraw to prove the full on-chain rail.', 'ok')
+    await liveConnect()
+  } catch (e) { log('deploy failed: ' + (e.shortMessage || e.message), 'err') }
+  btn.disabled = false
+}
 async function liveRefresh () {
   try {
     const [pot, settled] = await Promise.all([S.escrow.pot(), S.escrow.settled()])
@@ -539,6 +573,7 @@ function bootCashier () {
   $('btnDemo').onclick = () => setMode('demo')
   $('btnLive').onclick = () => setMode('live')
   $('btnConnect').onclick = () => S.mode === 'demo' ? demoConnect() : liveConnect()
+  $('btnDeployTest').onclick = () => liveDeployTest()
   $('btnDeposit').onclick = () => { const amt = BigInt(Math.round((parseFloat($('depAmount').value) || 0) * 1e6)); if (amt <= 0n) return log('enter an amount', 'err'); S.mode === 'demo' ? demoDeposit(amt) : liveDeposit(amt) }
   $('btnSimulate').onclick = () => demoSimulate()
   $('btnWithdraw').onclick = () => S.mode === 'demo' ? demoWithdraw() : liveWithdraw()

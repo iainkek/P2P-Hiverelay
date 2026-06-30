@@ -130,6 +130,19 @@ F5. The action bar stacks full-width.
   `script-src 'self'` — no relaxation; the injected wallet does RPC so `connect-src`
   stays tight too.
 
+- **F11 — self-serve testnet escrow (removes the last setup dependency).** A tester
+  used to need *me* to deploy them an escrow with their address as a seat. Added a
+  **"Deploy a test escrow + mint USD₮"** button to the cashier's Live mode: connect
+  MetaMask on Base Sepolia and it deploys MockUSDT + PokerEscrow (you as the sole
+  seat) and mints 1,000 test USD₮ — then deposit → settle → withdraw proves the whole
+  on-chain rail, entirely self-served. Vendored the contract artifacts
+  (`poker-artifacts.json`, served same-origin via the `/poker-engine/` whitelist).
+  Verified: the vendored bytecode deploys + runs a full deposit→cooperativeClose→
+  withdraw cycle on a real EVM (8 assertions, conservation held, solo seat + single
+  sig works); in-browser the artifacts load + parse under the strict relay CSP, the
+  button is wired, clicking without a wallet logs a clear instruction (no crash), and
+  the cashier still works. Suites stay green (83 + 31 + 5).
+
 ## Open / minor
 
 _None outstanding from the demo-surface + on-chain-path review._ The only remaining
@@ -144,7 +157,7 @@ not yet wired into one playable real-money game:
 | Test a human can run today | Status |
 |---|---|
 | **Gameplay UX** — play Hold'em vs bots at `/table` | ✅ ready (now with a correct net readout) |
-| **On-chain money rail** — deposit → settle → withdraw real testnet USD₮ | ✅ proven via scripts; in-browser now works relay-served (F10) — needs their wallet as an escrow seat + MetaMask on Base Sepolia |
+| **On-chain money rail** — deposit → settle → withdraw real testnet USD₮ | ✅ **now fully self-serve in-browser** (F10+F11): MetaMask on Base Sepolia → "Deploy a test escrow" → deposit/settle/withdraw. No setup, no input from anyone. |
 | **Full real-money game** — two humans play a hand that settles on-chain | ❌ **not wired** — see below |
 
 **The core gap.** The demo table plays **locally vs bots** — it does **not** connect

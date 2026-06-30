@@ -1557,7 +1557,7 @@ export class RelayAPI extends EventEmitter {
     // The pure engine modules the dashboard table imports, plus the vendored ethers
     // UMD bundle the cashier's live (on-chain) mode loads same-origin — keeps the
     // dashboard CSP at script-src 'self' (no CDN, no CSP relaxation).
-    const allowed = new Set(['betting.js', 'hand-eval.js', 'ethers.umd.min.js'])
+    const allowed = new Set(['betting.js', 'hand-eval.js', 'ethers.umd.min.js', 'poker-artifacts.json'])
     if (!allowed.has(name)) {
       res.writeHead(404)
       res.end('not found')
@@ -1573,7 +1573,7 @@ export class RelayAPI extends EventEmitter {
         return
       }
     }
-    res.setHeader('Content-Type', 'text/javascript; charset=utf-8')
+    res.setHeader('Content-Type', name.endsWith('.json') ? 'application/json; charset=utf-8' : 'text/javascript; charset=utf-8')
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Cache-Control', 'public, max-age=300')
     res.writeHead(200)
