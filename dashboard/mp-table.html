@@ -234,40 +234,45 @@ async function runBetting (sess, me, writers) {
   return null
 }
 
-// SHOWDOWN: publish my own hole-card shares, open both hands + board, settle the winner.
+// SHOWDOWN: award the pot. Uncontested (a fold) wins WITHOUT revealing; a contested
+// showdown reveals both hands (each publishes its own hole-card shares) and compares.
 async function runShowdown (sess, me, writers, hand, S) {
   const st = dealStateFromLog(sess.localLog); const deck = st.deck
   const { hole, board } = dealLayout(writers.length)
   const myIdx = writers.indexOf(me.writer)
-  const folded = new Set(view(S).folded || [])
+  const v = view(S); const contrib = v.contributions || {}
+  const pot = Object.values(contrib).reduce((a, b) => a + b, 0)
+  const folded = new Set(v.folded || [])
+  const live = writers.filter(w => !folded.has(w))
   const pubBy = (w) => { const e = sess.localLog.find(x => x.writer === w && (x.payload || x).kind === 'mp-key'); return e ? unhex((e.payload || e).pub) : null }
-  // contested? if I folded, no need to reveal; otherwise publish my hole shares
-  if (!folded.has(me.writer)) for (const pos of hole[myIdx]) await sess.post(msgShare(pos, DK.decryptShare(me.x, deck[pos].C1)))
-  // wait until every non-folded seat's hole cards can be opened
+  const sign = (n) => (n >= 0 ? '+' : '') + n
+  const settle = (winner, boardCards) => {
+    const iWon = winner === me.writer
+    const myNet = (iWon ? pot : 0) - (contrib[me.writer] || 0) // net = winnings − contributions; zero-sum
+    sessionNet += myNet
+    try { localStorage.setItem('p2poker.mp.net', String(sessionNet)) } catch {} // bridge to the Cashier
+    $('turnPill').textContent = 'hand over'
+    $('result').textContent = (iWon ? 'You win the ' + pot + ' pot! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + pot + '). ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet)
+    $('result').style.color = myNet >= 0 ? 'var(--green)' : 'var(--red)'
+    log('hand over — winner ' + short(winner) + ', pot ' + pot + ', your net ' + sign(myNet))
+    window.__hand = { done: true, iWon, pot, winner, myNet, sessionNet, uncontested: live.length === 1, myHole: hand.hole, board: boardCards }
+  }
+  // Uncontested: everyone but one folded → that seat wins the pot, no cards shown.
+  if (live.length === 1) { settle(live[0], hand.board); return }
+  // Contested: publish my own hole-card shares so my hand can be opened by all.
+  for (const pos of hole[myIdx]) await sess.post(msgShare(pos, DK.decryptShare(me.x, deck[pos].C1)))
   for (let g = 0; g < 4000; g++) {
     await sleep(300); await sess.sync()
     const shown = {}; let allUp = true
-    writers.forEach((w, i) => { if (folded.has(w)) return; shown[w] = hole[i].map(pos => DK.decryptCard(deck[pos], sharesForPosition(sess.localLog, pos, deck, pubBy))); if (shown[w].some(c => c === null)) allUp = false })
+    live.forEach((w) => { const i = writers.indexOf(w); shown[w] = hole[i].map(pos => DK.decryptCard(deck[pos], sharesForPosition(sess.localLog, pos, deck, pubBy))); if (shown[w].some(c => c === null)) allUp = false })
     const boardCards = board.map(pos => openBoard(deck[pos], sharesForPosition(sess.localLog, pos, deck, pubBy)))
     if (boardCards.some(c => c === null)) allUp = false
     if (!allUp) continue
-    // reduce to a winner (folded seats can't win)
-    render($('holeOpp'), (shown[writers[1 - myIdx]] || [0, 0]), !folded.has(writers[1 - myIdx])); $('seatOpp').querySelector('.lbl').textContent = folded.has(writers[1 - myIdx]) ? 'folded' : 'shown'
-    const live = writers.filter(w => !folded.has(w))
-    let winner = live[0]
-    if (live.length > 1) { let best = evaluate7([...shown[live[0]], ...boardCards]); for (const w of live.slice(1)) { const r = evaluate7([...shown[w], ...boardCards]); if (compareRank(r, best) > 0) { best = r; winner = w } } }
-    const v = view(S); const contrib = v.contributions || {}
-    const pot = Object.values(contrib).reduce((a, b) => a + b, 0)
-    const iWon = winner === me.writer
-    // per-seat net (winnings − contributions) — what settles on-chain. Zero-sum.
-    const myNet = (iWon ? pot : 0) - (contrib[me.writer] || 0)
-    sessionNet += myNet
-    try { localStorage.setItem('p2poker.mp.net', String(sessionNet)) } catch {} // bridge to the Cashier
-    const sign = (n) => (n >= 0 ? '+' : '') + n
-    $('result').textContent = (iWon ? 'You win the ' + pot + ' pot! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + pot + '). ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet)
-    $('result').style.color = myNet >= 0 ? 'var(--green)' : 'var(--red)'
-    log('SHOWDOWN — winner ' + short(winner) + ', pot ' + pot + ', your net ' + sign(myNet))
-    window.__hand = { done: true, iWon, pot, winner, myNet, sessionNet, myHole: hand.hole, board: boardCards }
+    const oppW = writers[1 - myIdx]
+    render($('holeOpp'), shown[oppW] || [0, 0], true); $('seatOpp').querySelector('.lbl').textContent = 'shown'
+    let winner = live[0], best = evaluate7([...shown[live[0]], ...boardCards])
+    for (const w of live.slice(1)) { const r = evaluate7([...shown[w], ...boardCards]); if (compareRank(r, best) > 0) { best = r; winner = w } }
+    settle(winner, boardCards)
     return
   }
 }
