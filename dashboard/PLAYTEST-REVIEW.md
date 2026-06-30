@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Carried stacks — a real correctness fix (iter 45).** Each hand used to reset to a
+fixed 1000-chip stack with the net just accumulating, so across multiple hands a player
+could lose **more than they deposited** — which the on-chain `cooperativeClose` can't
+settle (conservation: payouts can't exceed deposits). Now stacks **carry across hands**
+(start = buy-in, bounded ≥ 0 by all-in caps), the button rotates each hand, and a seat
+that can't post the big blind busts → **session over** with the final net. The session
+net is now `stack − buy-in ∈ [−deposit, +deposit]` — always on-chain-settleable. The
+result line shows your running stack. Verified: 2-hand check/call session stays
+zero-sum + bounded (7/7); an all-in win busts the opponent → session over, net ±1000 =
+the deposit (8/8). (Also removed the now-dead fixed-stack `bettingConfig`.)
+
 **Shareable join link (iter 44).** The host→joiner handshake was copy-paste a long code;
 now the host gets a **join link** (`/mp-table?join=<invite>`) to share (chat/DM). Opening
 it auto-opens the join flow with the invite pre-filled + accepted, so the opponent just

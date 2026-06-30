@@ -164,7 +164,6 @@ function makeSession (rt, tableKey, me) {
   return { localLog, ingest, sync, post, readEntries }
 }
 const BUYIN = 1000, SB = 10, BB = 20
-const bettingConfig = (writers) => ({ seats: writers, stacks: Object.fromEntries(writers.map(w => [w, BUYIN])), blinds: { sb: SB, bb: BB }, button: writers[0] })
 function bettingState (localLog, config) {
   const S = createHand(config)
   for (const e of localLog) { const p = e.payload || e; if (p.kind === 'bet-action' && !S.complete) applyAction(S, { seat: p.seat, type: p.type, amount: p.amount }) }
@@ -239,9 +238,8 @@ function renderBetting (S, me) {
 // BETTING phase: reconstruct betting.js state from the ORDERED relay log (bet-actions
 // are turn-based, so order matters — the merged mirror can reorder/drop them); act on
 // your turn, guarding against a double-post while a posted action is still propagating.
-async function runBetting (sess, me, writers) {
+async function runBetting (sess, me, writers, config) {
   me.writers = writers
-  const config = bettingConfig(writers)
   const oppWriter = writers.find(w => w !== me.writer)
   const graceMs = window.__forfeitMs || 60000 // disconnect deadline (relay-ts anchored)
   let postedAtCount = -1, claimArmed = false
@@ -277,7 +275,7 @@ async function runBetting (sess, me, writers) {
 
 // SHOWDOWN: award the pot. Uncontested (a fold) wins WITHOUT revealing; a contested
 // showdown reveals both hands (each publishes its own hole-card shares) and compares.
-async function runShowdown (sess, me, writers, hand, S, forfeitAgainst) {
+async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) {
   const st = dealStateFromLog(sess.localLog); const deck = st.deck
   const { hole, board } = dealLayout(writers.length)
   const myIdx = writers.indexOf(me.writer)
@@ -288,21 +286,25 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst) {
   const live = writers.filter(w => !folded.has(w))
   const pubBy = (w) => { const e = sess.localLog.find(x => x.writer === w && (x.payload || x).kind === 'mp-key'); return e ? unhex((e.payload || e).pub) : null }
   const sign = (n) => (n >= 0 ? '+' : '') + n
+  let outStacks = null
   const settle = (winner, boardCards, winCat) => {
     const iWon = winner === me.writer
     const myNet = (iWon ? pot : 0) - (contrib[me.writer] || 0) // net = winnings − contributions; zero-sum
-    sessionNet += myNet
+    // carry stacks: each seat's new stack = prior stack + its net (bounded ≥ 0 by all-in caps)
+    outStacks = {}
+    for (const w of writers) outStacks[w] = (config.stacks[w] != null ? config.stacks[w] : BUYIN) + ((w === winner ? pot : 0) - (contrib[w] || 0))
+    sessionNet = (outStacks[me.writer] - BUYIN) // net vs the initial buy-in (what settles on-chain; |net| ≤ deposit)
     try { localStorage.setItem('p2poker.mp.net', String(sessionNet)) } catch {} // bridge to the Cashier
     $('turnPill').textContent = 'hand over'
     const withHand = (winCat != null) ? ' with ' + CAT[winCat] : '' // show the winning hand at a real showdown
-    $('result').textContent = (iWon ? 'You win the ' + pot + ' pot' + withHand + '! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + pot + ')' + withHand + '. ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet)
-    $('result').style.color = myNet >= 0 ? 'var(--green)' : 'var(--red)'
-    log('hand over — winner ' + short(winner) + ', pot ' + pot + ', your net ' + sign(myNet))
+    $('result').textContent = (iWon ? 'You win the ' + pot + ' pot' + withHand + '! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + pot + ')' + withHand + '. ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet) + ' · stack ' + outStacks[me.writer]
+    $('result').style.color = sessionNet >= 0 ? 'var(--green)' : 'var(--red)'
+    log('hand over — winner ' + short(winner) + ', pot ' + pot + ', your net ' + sign(myNet) + ', stack ' + outStacks[me.writer])
     window.__handsPlayed = (window.__handsPlayed || 0) + 1
-    window.__hand = { done: true, iWon, pot, winner, myNet, sessionNet, hands: window.__handsPlayed, uncontested: live.length === 1, myHole: hand.hole, board: boardCards }
+    window.__hand = { done: true, iWon, pot, winner, myNet, sessionNet, stack: outStacks[me.writer], hands: window.__handsPlayed, uncontested: live.length === 1, myHole: hand.hole, board: boardCards }
   }
   // Uncontested: everyone but one folded → that seat wins the pot, no cards shown.
-  if (live.length === 1) { settle(live[0], hand.board); return }
+  if (live.length === 1) { settle(live[0], hand.board); return { newStacks: outStacks } }
   // Contested: publish my own hole-card shares so my hand can be opened by all.
   for (const pos of hole[myIdx]) await sess.post(msgShare(pos, DK.decryptShare(me.x, deck[pos].C1)))
   for (let g = 0; g < 4000; g++) {
@@ -317,17 +319,18 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst) {
     let winner = live[0], best = evaluate7([...shown[live[0]], ...boardCards])
     for (const w of live.slice(1)) { const r = evaluate7([...shown[w], ...boardCards]); if (compareRank(r, best) > 0) { best = r; winner = w } }
     settle(winner, boardCards, best[0])
-    return
+    return { newStacks: outStacks }
   }
+  return { newStacks: outStacks }
 }
 
-async function runFullHand (rt, tableKey, me, writers, oppWriter) {
+async function runFullHand (rt, tableKey, me, writers, oppWriter, config) {
   const sess = makeSession(rt, tableKey, me)
   const hand = await runDeal(sess, me, writers)
-  if (!hand) { log('deal failed'); return }
-  const bet = await runBetting(sess, me, writers)
-  if (!bet || !bet.S) { log('betting failed'); return }
-  await runShowdown(sess, me, writers, hand, bet.S, bet.forfeitAgainst)
+  if (!hand) { log('deal failed'); return null }
+  const bet = await runBetting(sess, me, writers, config)
+  if (!bet || !bet.S) { log('betting failed'); return null }
+  return await runShowdown(sess, me, writers, hand, bet.S, bet.forfeitAgainst, config)
 }
 // "Deal next hand" gate (host) — resolved by the button.
 let nextHandResolve = null
@@ -340,10 +343,22 @@ const waitNextHandClick = () => new Promise((res) => { nextHandResolve = res; sh
 // per (writer, table), so it resets each hand. Session net accumulates across hands.
 async function playSession (rt, baseTableKey, me, writers, oppWriter, isHost) {
   let tableKey = baseTableKey
+  let stacks = Object.fromEntries(writers.map(w => [w, BUYIN])) // carried across hands; bounded ≥ 0
   for (let hand = 0; hand < 1000; hand++) {
     me.seq = 0; me.mem = {} // fresh per table/hand
     $('result').textContent = ''; hide('nextHand'); hide('waitNext')
-    await runFullHand(rt, tableKey, me, writers, oppWriter)
+    // carry stacks; rotate the button each hand so the blinds alternate
+    const config = { seats: writers, stacks: { ...stacks }, blinds: { sb: SB, bb: BB }, button: writers[hand % writers.length] }
+    const res = await runFullHand(rt, tableKey, me, writers, oppWriter, config)
+    if (!res || !res.newStacks) { log('hand did not complete'); return }
+    stacks = res.newStacks
+    if (Object.values(stacks).some(s => s < BB)) { // a seat can no longer post the big blind → session over
+      const iBusted = stacks[me.writer] < BB
+      $('result').textContent = (iBusted ? 'You are out of chips. ' : 'Your opponent is out of chips — you win the session! ') + 'Settle your net (' + (stacks[me.writer] - BUYIN >= 0 ? '+' : '') + (stacks[me.writer] - BUYIN) + ') in the Cashier.'
+      $('result').style.color = stacks[me.writer] - BUYIN >= 0 ? 'var(--green)' : 'var(--red)'
+      log('session over — final stack ' + stacks[me.writer]); window.__sessionOver = true
+      return
+    }
     if (isHost) {
       await waitNextHandClick()
       const nextKey = (await createSeat()).pub
