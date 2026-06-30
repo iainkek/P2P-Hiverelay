@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Shuffle-reveal grace vs false forfeits (iter 78).** A fairness bug in the showdown: if the
+opponent's `shuffle-reveal` hadn't landed within 24 ticks (~7.2s) after the cards opened,
+the honest player forfeited them as a withholder (iter 49). But the reveal is a *separate
+post* from the hole shares, and that post retries up to 40×500ms (~20s) on a relay hiccup —
+so the grace (7.2s) was *shorter than the honest post's own retry window*, meaning a slow-
+but-honest reveal could be falsely forfeited. Raised the grace to 200 ticks (~60s, matching
+the disconnect deadline), comfortably exceeding the retry window; a genuine withholder still
+loses, just after a fairer wait. Honest showdown unaffected (7/7); cheat detection is via
+`output-mismatch` (immediate), so it's untouched by the grace.
+
 **Join-wait patience + clearer timeout (iter 77).** Traced the join handshake: after the
 joiner sends its code back, it polls for the host to start, with a "Waiting for the host…"
 indicator and a timeout. But the timeout was only **5 minutes**, while two humans

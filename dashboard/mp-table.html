@@ -392,7 +392,10 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
     if (allUpSinceG < 0) allUpSinceG = g
     const vr = verifyShuffles()
     if (vr.cheater && vr.cheater !== me.writer) return winByForfeit(vr.cheater, boardCards, 'cheated the shuffle (' + vr.reason + ')')
-    if (vr.pending) { if (g - allUpSinceG < 24) continue; if (vr.missing && vr.missing !== me.writer) return winByForfeit(vr.missing, boardCards, 'would not reveal its shuffle'); continue }
+    // grace before forfeiting a missing shuffle-reveal: must exceed the post's own 40×500ms
+    // (~20s) retry window so a relay hiccup can't falsely forfeit an honest, slow reveal.
+    // 200 ticks × 300ms ≈ 60s (matches the disconnect deadline); a real withholder still loses.
+    if (vr.pending) { if (g - allUpSinceG < 200) continue; if (vr.missing && vr.missing !== me.writer) return winByForfeit(vr.missing, boardCards, 'would not reveal its shuffle'); continue }
     const oppW = writers[1 - myIdx]
     render($('holeOpp'), shown[oppW] || [0, 0], true); $('seatOpp').querySelector('.lbl').textContent = 'shown'
     const ranks = {}; for (const w of live) ranks[w] = evaluate7([...shown[w], ...boardCards])
