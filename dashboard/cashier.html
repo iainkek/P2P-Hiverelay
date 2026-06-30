@@ -291,7 +291,8 @@ const ESCROW_ABI = [
   'function escrowId() view returns (bytes32)',
   'function deposited(address) view returns (uint256)',
   'function withdrawable(address) view returns (uint256)',
-  'function isParticipant(address) view returns (bool)'
+  'function isParticipant(address) view returns (bool)',
+  'function participants(uint256) view returns (address)'
 ]
 const ERC20_ABI = [
   'function approve(address,uint256) returns (bool)',
@@ -540,9 +541,14 @@ async function liveFromMp () {
   const raw = localStorage.getItem('p2poker.mp.net')
   const net = raw == null ? NaN : parseFloat(raw)
   if (isNaN(net)) { log('no multiplayer net found — play a session at /mp-table first', 'err'); return }
-  const payees = $('setPayees').value.split(',').map(s => s.trim()).filter(Boolean)
-  if (payees.length !== 2) { log('enter both payee addresses first (host,joiner — same order both seats use)', 'err'); return }
   if (!S.address || !S.escrow) { log('connect to the shared escrow first', 'err'); return }
+  let payees = $('setPayees').value.split(',').map(s => s.trim()).filter(Boolean)
+  if (payees.length !== 2) {
+    // Auto-fill the two seats from the escrow's on-chain participants — both players read
+    // the SAME canonical order, so their co-signatures are over an identical digest.
+    try { const ps = [await S.escrow.participants(0), await S.escrow.participants(1)]; if (ps.every(a => /^0x[0-9a-fA-F]{40}$/.test(a))) { payees = ps; $('setPayees').value = ps.join(',') } } catch {}
+  }
+  if (payees.length !== 2) { log('enter both payee addresses (host,joiner), or connect to a 2-seat shared escrow to auto-fill them', 'err'); return }
   const me = S.address.toLowerCase()
   try {
     const deps = await Promise.all(payees.map(p => S.escrow.deposited(p)))

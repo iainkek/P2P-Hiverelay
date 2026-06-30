@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Settle payees auto-fill from the escrow (iter 64).** The "Fill balances from net" button
+(iter 47) still required the *payees* (both EVM addresses) typed in — auto-filled for the
+deployer but not the joiner. Now if the payees aren't entered, the cashier reads the two
+seats from the escrow's on-chain `participants` array (added that getter to the ABI). Both
+players read the **same canonical order**, so their co-signatures are over an identical
+digest by construction. Verified against a real shared escrow (4/4): the joiner auto-filled
+both payees with no typing, computed conserving balances from its net, and the host
+independently produced the **identical** payees+balances — co-sign matches. Combined with
+iters 47/62/63, the whole two-human flow now has **zero manual address entry** end to end.
+
 **"Share my address" link — the whole setup is now link-based (iter 63).** Cut the last
 manual copy in the setup: the opponent sending the host their EVM address before the shared
 deploy. Added a **"Share your address with the host →"** button (connects MetaMask, builds
