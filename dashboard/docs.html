@@ -235,6 +235,14 @@ pre code{background:none;padding:0;color:var(--text)}
 <!-- Sidebar -->
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-section">
+    <div class="sidebar-section-title">Play Poker</div>
+    <a href="#play-poker">How to Play (testnet)</a>
+    <a href="#play-setup">Get USD₮ &amp; escrow</a>
+    <a href="#play-table">Host or join</a>
+    <a href="#play-settle">Settle &amp; cash out</a>
+    <a href="#play-trust">Trust model</a>
+  </div>
+  <div class="sidebar-section">
     <div class="sidebar-section-title">Getting Started</div>
     <a href="#quick-start">Quick Start</a>
     <a href="#install">Installation</a>
@@ -286,6 +294,72 @@ pre code{background:none;padding:0;color:var(--text)}
 
 <!-- Main Content -->
 <main class="main">
+
+<!-- ════════════════════ PLAYING POKER ════════════════════ -->
+<h2 class="section-title" id="play-poker">Playing Poker (testnet)</h2>
+
+<p><strong>P2Poker</strong> is trustless heads-up Texas hold'em: you play another human for
+real <strong>testnet USD₮</strong>, the cards are dealt by mental-poker cryptography over the
+relay's signed log (no dealer, no server sees your hole cards), and the pot is held by an
+on-chain escrow on Base Sepolia — <strong>no operator ever holds or can freeze your chips.</strong>
+The whole loop is reachable from the <a href="/mp-table">Multiplayer</a> table and the
+<a href="/cashier">Cashier</a>.</p>
+
+<div class="callout tip">
+  <div class="callout-label">The one-line version</div>
+  Get test USD₮ → both players deposit the buy-in into one shared escrow → host/join a table
+  and play → settle your net back to the escrow → withdraw. <strong>1 chip = 1 USD₮</strong>, and
+  you can never lose more than you deposited.
+</div>
+
+<h3 id="play-setup">1 · Get test USD₮ and open a shared escrow</h3>
+<p>Open the <a href="/cashier">Cashier</a> and switch to <strong>Live</strong>. Connect MetaMask
+on <strong>Base Sepolia</strong> (you'll need a little Base Sepolia ETH for gas from any public
+faucet). Then:</p>
+<ol>
+  <li>Click <strong>"Get 1,000 test USD₮"</strong> — the in-app faucet mints you the buy-in.</li>
+  <li>One player (the <strong>host</strong>) deploys a <strong>shared escrow</strong>: paste the
+  opponent's wallet address, deploy, and both players <strong>deposit 1,000</strong> into it. The
+  escrow now holds 2,000 and only pays out what the two of you cooperatively sign (or what the
+  dispute committee attests).</li>
+</ol>
+
+<h3 id="play-table">2 · Host or join, then play</h3>
+<ol>
+  <li>Go to the <a href="/mp-table">Multiplayer</a> table. The host clicks <strong>Host a
+  table</strong> and sends the <strong>join link</strong> (chat/DM); the opponent just opens it.</li>
+  <li>The opponent's page produces a short <strong>join code</strong> — they send it back, the host
+  pastes it and clicks <strong>Create table &amp; deal</strong>.</li>
+  <li>Play hold'em: check / call / fold, or <strong>raise</strong> with the slider. A turn clock
+  auto-acts if someone stalls, and if your opponent disconnects mid-hand you can
+  <strong>claim the pot</strong>. Neither seat controls the shuffle — it's replay-verified at
+  showdown, so a cheat is caught and auto-forfeited.</li>
+</ol>
+
+<h3 id="play-settle">3 · Settle and cash out</h3>
+<p>When you're done, click <strong>"Settle in the Cashier →"</strong> from the table (your net is
+carried over automatically). In the Cashier's settle panel, both seats click <strong>"Fill balances from my multiplayer net"</strong> — it computes each seat's <em>deposit ± net</em> from the on-chain
+deposits, so both sign the <strong>same</strong> cooperative close. One seat submits it, then each
+player clicks <strong>Withdraw</strong>. Done — your winnings are in your wallet.</p>
+
+<div class="callout warn">
+  <div class="callout-label">If your opponent won't co-sign</div>
+  A cooperative close needs both signatures, so a sore loser can't quietly take your money — at
+  worst they stall the settle, and the escrow's dispute path (committee attestation of the signed
+  log) resolves it. Funds are never at the mercy of one player.
+</div>
+
+<h3 id="play-trust">Trust model — why this is safe</h3>
+<ul>
+  <li><strong>No custody.</strong> Chips live in an on-chain escrow with conservation enforced
+  (total paid out always equals total deposited); the operator can't touch them.</li>
+  <li><strong>Provably fair deal.</strong> Cards are threshold-encrypted to a joint key and opened
+  only with both seats' shares; the shuffle is a verifiable re-encryption, replay-checked at
+  showdown — a substituted card is cheat-evident and forfeits the cheater.</li>
+  <li><strong>Settlement integrity.</strong> The cooperative settle and the dispute-path reducer
+  are proven to agree, uncalled bets are refunded correctly, and your session net is bounded by
+  your deposit — you can never owe more than you put in.</li>
+</ul>
 
 <!-- ════════════════════ QUICK START ════════════════════ -->
 <h2 class="section-title" id="quick-start">Quick Start</h2>

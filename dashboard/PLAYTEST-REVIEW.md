@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Player onboarding guide added to /docs (iter 53).** A tester clicking "Docs" got
+HiveRelay *operator/SDK* docs (install a node, the Pear SDK, architecture) — no
+player-facing "how to play" anywhere. Added a **"Playing Poker (testnet)"** guide at the
+top of `/docs` (own sidebar section): the one-line loop, then 3 steps — get test USD₮ +
+open a shared escrow (faucet → deposit the buy-in), host/join + play, settle + cash out —
+plus a "what if they won't co-sign" note and a trust-model section (no custody, provably
+fair deal, settlement integrity). Every button name matches the real UI exactly ("Get
+1,000 test USD₮", "Create table & deal", "Settle in the Cashier", "Fill balances from my
+multiplayer net") and it links to `/mp-table` + `/cashier`. Verified (8/8): section +
+anchors render, wording matches the live buttons, no errors.
+
 **Lobby rewired to the real multiplayer flow (iter 52).** The `/lobby` (the natural
 "find a game" page) actively misled: the hero "Play now" went to the solo `/table`, the
 create card said "live multiplayer **soon**" (it's live), and **every** "Sit down" —
