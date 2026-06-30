@@ -19,15 +19,29 @@ flow (7/7):
   order-independent means **both seats agree on the same deck**.
 
 So the **verifiable, unbiasable shared shuffle is done and runs browser-side.** The
-one remaining cryptographic piece is **mental-poker hole-card privacy** (commutative
-re-encryption layered on this public deck order) so opponents can't see your cards —
-that's the last unsolved primitive; everything else in the stack is proven.
+remaining piece is **mental-poker hole-card privacy** layered on this public deck
+order — and its crypto primitive already exists and is **production-proven**:
+`poker/crypto/chaum-pedersen.js` is threshold ElGamal decryption shares + Chaum-
+Pedersen ZK proofs that each share is honest (cards encrypted to a joint key; to
+reveal a card to one seat the others contribute proven shares without learning it).
+The relay's **custody** system already uses it (PVSS-hinted seeds); its tests pass
+(`custody-share-bundle` 14/14, `custody-claim-path-witness` 4/4), and the
+prove/verify primitive checks out directly (honest share → `{valid:true}`, bad share
+→ `{valid:false}`).
+
+So mental poker is **not novel crypto to invent** — the primitive is built and
+proven. What remains for it is (a) a poker dealing **protocol** on top (encrypt deck
+to the joint key, deal hole cards via shares, reveal at showdown), and (b) a
+**browser port** of the point ops (`chaum-pedersen.js` uses sodium's
+`crypto_core_ed25519_*` for points; the browser needs those on noble, which is
+already imported for the scalar field). Then the table UI wiring.
 
 ### Multiplayer stack status
 1. Relay table / shared signed log — ✅ proven (iter 16)
 2. Browser signing + identity (`relay-table-client.js`) — ✅ built + proven (iter 18)
 3. Verifiable shared shuffle (VRF deal-seed) — ✅ proven browser-side (iter 19)
-4. Mental-poker hole-card privacy — ⬜ the last crypto piece
+4. Mental-poker hole-card privacy — ◑ crypto primitive built + production-proven
+   (chaum-pedersen.js); remaining = dealing protocol + browser point-op port
 5. Table UI driving 1–4 (post moves, replay via `betting.js`, render) — ⬜ wiring
 6. Reduce → settle → escrow — ✅ proven (iter 16 + earlier)
 
