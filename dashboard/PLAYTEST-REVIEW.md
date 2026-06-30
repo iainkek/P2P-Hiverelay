@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Discoverability — the table was orphaned from navigation (iter 51).** A pure
+player's-perspective pass (screenshotted every screen). The landing, host handshake, and
+cashier all read clearly — but the main feature was unreachable: the shared top-nav
+(Dashboard · Payments · Cashier · Lobby · Play · Network · Leaderboard · Docs) had **no
+link to `/mp-table`**. "Play" points at the solo `/table`; a real tester would never find
+the human-vs-human table without typing the URL. Added a **"Multiplayer"** nav entry →
+`/mp-table` across all 10 nav-bearing pages. Verified (7/7): the link renders on
+cashier/dashboard/lobby/table/leaderboard and the table loads from it, no errors. (No
+amount of protocol correctness helps if players can't reach the table.)
+
 **Shuffle cheat-evidence wired into showdown (iter 49).** Another protocol-invariant gap:
 the table opened cards at showdown but never *verified the shuffles*. The re-encryption
 shuffle is plaintext-preserving only if honest — a malicious client could post an invalid
