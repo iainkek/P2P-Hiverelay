@@ -4,6 +4,25 @@ A deep review of every user flow from the perspective of a real human sitting do
 to play and to test the real-money rail on testnet. Living doc — updated as the
 review loop runs.
 
+## Browser table client — DE-RISKED (iteration 17)
+
+The one piece left for real two-human play is a browser client that signs + posts
+moves to the relay log. Its only real unknown was **in-browser ed25519 signing** (the
+relay verifies with sodium; browsers have no sodium). Proven solvable:
+
+- **Canonical bytes** (`_canonicalEntry`) are plain string-concat + UTF-8 — reproduced
+  in ~3 lines, byte-identical (the format is explicitly cross-runtime).
+- **Signing**: `@noble/curves` ed25519 (pure JS, browser-ready) produces signatures
+  the relay's `sodium.crypto_sign_verify_detached` **accepts** — verified against the
+  local relay: create-table with a noble pubkey → 201; a noble-signed move → `{ok:true}`
+  and lands in the log; a **tampered** signature is rejected (422 bad-sig).
+
+So every layer of real multiplayer is now proven: canonical bytes ✓, browser ed25519
+✓, relay table API ✓, reduce→settlement ✓ (iter 16), escrow on-chain ✓. **What's left
+is pure wiring**: vendor a browser noble bundle, write a `relay-table-client.js`
+(create/join, sign+post moves, poll the log), and render the table from the shared
+log instead of local bots. No unsolved primitives remain.
+
 ## Multiplayer substrate — PROVEN on a local relay (iteration 16)
 
 The remaining frontier (two humans, on-chain settlement) needs a relay table that
