@@ -1589,9 +1589,15 @@ export class RelayAPI extends EventEmitter {
   }
 
   async _readPokerEngineFile (name) {
-    // noble/* lives under money/vendor/; everything else directly under money/.
-    const sub = name.startsWith('noble/') ? ['vendor', ...name.split('/')] : [name]
-    const rel = ['packages', 'services', 'builtin', 'poker', 'money', ...sub]
+    // crypto/* lives at poker/crypto/; noble/* under poker/money/vendor/; the rest
+    // directly under poker/money/.
+    let rel
+    if (name.startsWith('crypto/')) {
+      rel = ['packages', 'services', 'builtin', 'poker', ...name.split('/')]
+    } else {
+      const sub = name.startsWith('noble/') ? ['vendor', ...name.split('/')] : [name]
+      rel = ['packages', 'services', 'builtin', 'poker', 'money', ...sub]
+    }
     const candidates = [join(__dirname, '..', '..', '..', '..', ...rel)]
     if (this._dashboardDir) candidates.push(join(this._dashboardDir, '..', ...rel))
     let lastErr

@@ -43,6 +43,21 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**First working multiplayer table UI — live deal over the relay (iter 31).** Added
+`/mp-table` (dashboard route) — a page that drives a **real mental-poker deal over the
+real relay** and renders it: two seats exchange ElGamal keys, post an encrypted deck,
+each re-encrypt-shuffles, publish decryption shares — every step a signed log entry —
+then each opens its private hole cards while the board is public. Verified end-to-end
+against a booted relay (9/9): page loads (crypto modules + noble import map resolve
+under the relay CSP), a full deal completes over the relay (19 signed entries), both
+seats render 2 private hole cards + 5 board cards, all 9 distinct, hole cards face-up
+in the UI, zero CSP violations, zero errors. Screenshot confirms a clean felt with
+correct card rendering. (Also fixed the `/poker-engine/crypto/` route path — it pointed
+at `money/crypto/` but the modules are at `poker/crypto/`; only caught now because
+iter-29 tested via a stand-in server, not the relay.) Remaining: host/invite handshake
+so two separate browsers join one table (relay writers are fixed at creation) +
+betting/showdown UI → on-chain settle.
+
 **Deal driver built (iter 30).** `mp-deal-driver.js` is the deal-phase state machine
 the table UI runs: `nextDealAction(log, seat, seats, mem)` returns the one payload a
 seat should post next (key → deck → shuffle-in-order → shares for others' holes +

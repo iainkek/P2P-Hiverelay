@@ -7,6 +7,7 @@ const FULL_DASHBOARD_ROUTES = new Map([
   ['/catalog', { cacheKey: '_catalogHtml', filename: 'catalog.html' }],
   ['/cashier', { cacheKey: '_cashierHtml', filename: 'cashier.html' }],
   ['/table', { cacheKey: '_tableHtml', filename: 'table.html' }],
+  ['/mp-table', { cacheKey: '_mpTableHtml', filename: 'mp-table.html' }],
   ['/lobby', { cacheKey: '_lobbyHtml', filename: 'lobby.html' }]
 ])
 
