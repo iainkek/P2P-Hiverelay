@@ -178,7 +178,7 @@ async function bootLobby () {
   // create-table card
   const c = document.createElement('div')
   c.className = 'tbl create'
-  c.innerHTML = '<div class="plus">+</div><div>Create a table</div><div style="font-size:.74rem">Pick stakes &amp; invite a friend</div>'
+  c.innerHTML = '<div class="plus">+</div><div>Practice table</div><div style="font-size:.74rem">Jump in vs bots &mdash; live multiplayer soon</div>'
   c.onclick = () => { window.location.href = '/table' }
   wrap.appendChild(c)
   renderStats(tables)

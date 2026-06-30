@@ -105,6 +105,20 @@ instance), so it can't be built+verified in this review loop. Scope below.
   sound; the new hotkeys add power-user keyboard play. A deeper ARIA/tab-order pass
   remains a future nicety.
 
+- **F13 — lobby "Create a table" over-promised.** The card read "Pick stakes &
+  invite a friend" but just opened the bot table — no stakes picker, no invite
+  (multiplayer isn't built). Honest now: **"Practice table — Jump in vs bots, live
+  multiplayer soon."**
+
+## Reload & persistence (verified)
+
+- **Reload mid-hand is graceful** — refreshing during a hand re-renders all seats and
+  deals a fresh, playable hand with no errors (the table always starts a clean
+  session; it never tries to resume a half-finished hand).
+- **Session net persists at hand-end only** (`finishBetting` → `localStorage`), which
+  the lobby + cashier read as the session-net bridge. A reload doesn't wipe it (the
+  table never writes 0 on boot), and the lobby/cashier handle a missing value as `+0`.
+
 ## Lobby → table flow + first-time experience (verified)
 
 - **Sit-down opens the chosen size** — every lobby table's `max` is in {2,6,9}; the
