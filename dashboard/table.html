@@ -290,6 +290,7 @@ function setupTable (n) {
 
 function startHand () {
   T.gen++ // invalidate any bot timeouts scheduled for a previous hand/table
+  document.querySelectorAll('.actbadge, .ship').forEach(e => e.remove()) // clear last hand's badges/ship
   // auto-rebuy bots so the table stays full; you bust → Re-buy button.
   for (let i = 1; i < T.numSeats; i++) { const s = T.seatIds[i]; if (T.stacks[s] < BB) T.stacks[s] = BUYIN }
   if (T.stacks.you < BB) { T.phase = 'over'; T.msgText = 'You busted. Re-buy to keep playing.'; render(); return }
@@ -438,6 +439,8 @@ function render () {
   if (pot > (T._lastPot || 0)) { potEl.classList.remove('bump'); void potEl.offsetWidth; potEl.classList.add('bump') }
   T._lastPot = pot
   potEl.innerHTML = 'Pot <b>' + pot + '</b>'
+  $('net').textContent = (T.net > 0 ? '+' : '') + T.net
+  $('net').style.color = T.net > 0 ? 'var(--green)' : T.net < 0 ? 'var(--red)' : 'var(--text-bright)'
   // board (flip only the cards revealed THIS render — no per-render re-animation)
   const prevReveal = T._lastReveal || 0
   const bd = $('board'); bd.innerHTML = ''
