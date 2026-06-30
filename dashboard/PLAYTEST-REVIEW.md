@@ -43,6 +43,14 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Opponent-action feedback — follow the betting (iter 69).** A real feel gap: the log
+announced *your* actions ("you → call 10") but the **opponent's were silent** — you'd just
+see the pot change and the turn flip, with no idea whether they checked, called, or raised
+(and by how much). Poker players track the action. The betting loop now announces each
+opponent action as it lands in the signed log: "opponent → raise 40 / call / check / fold."
+Verified two-browser (5/5): both seats see the other's actions, the joiner sees the host's
+raise announced, the host sees the joiner's call/check — no false or duplicated lines.
+
 **Settlement matrix certified against the reducer (iter 68).** After fixing the uncalled-bet
 (48) and tie (67) cases, closed the loop by certifying the mp-table's heads-up settlement
 against the canonical reducer across the **full outcome matrix** (6/6): single winner;

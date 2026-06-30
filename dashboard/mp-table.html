@@ -256,7 +256,7 @@ async function runBetting (sess, me, writers, config) {
   me.writers = writers
   const oppWriter = writers.find(w => w !== me.writer)
   const graceMs = window.__forfeitMs || 60000 // disconnect deadline (relay-ts anchored)
-  let postedAtCount = -1, claimArmed = false
+  let postedAtCount = -1, claimArmed = false, seenOpp = 0
   $('claimBtn').onclick = () => { claimArmed = true }
   for (let g = 0; g < 4000; g++) {
     await sleep(250)
@@ -265,6 +265,9 @@ async function runBetting (sess, me, writers, config) {
     const ff = entries.find(e => (e.payload || e).kind === 'forfeit')
     if (ff) { hide('controls'); hide('claimBtn'); return { S: bettingState(entries, config), forfeitAgainst: (ff.payload || ff).against } }
     const S = bettingState(entries, config)
+    // Announce the opponent's actions as they land so the player can follow the betting.
+    const oppActs = entries.filter(e => { const p = e.payload || e; return p.kind === 'bet-action' && p.seat === oppWriter })
+    while (seenOpp < oppActs.length) { const p = oppActs[seenOpp].payload || oppActs[seenOpp]; log('opponent → ' + p.type + (p.amount ? ' ' + p.amount : '')); seenOpp++ }
     renderBetting(S, me)
     if (S.complete) { hide('controls'); hide('claimBtn'); return { S } }
     if (view(S).toAct === me.writer) {
