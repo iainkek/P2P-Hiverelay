@@ -59,6 +59,28 @@ review loop runs.
   guaranteed-legal action (check / call / all-in). Defensive; `botDecide` is legal
   today (bet/raise clamped to `[minRaiseTo, maxRaiseTo]`).
 
+- **F8 — stale "heads-up" copy.** The hub headline and lobby intro both said
+  "heads-up hold'em" although the product plays 2–9 handed — wrong expectations on a
+  first-time player's very first screen. **Fixed** → "real-money hold'em (2–9
+  handed)" on both.
+
+## Lobby → table flow + first-time experience (verified)
+
+- **Sit-down opens the chosen size** — every lobby table's `max` is in {2,6,9}; the
+  table parses `?seats=` and validates (anything else → 6-max). Drove it: 9-max
+  sit-down → `?seats=9` → table opens with 9 seats; heads-up → 2. Full tables show a
+  disabled "Table full". All 6 nav links resolve.
+- **The lobby is a clear first-time entry** — headline ("Real-money poker, no
+  operator holding your chips"), the Sit down → Play → Settle net → Cash out flow,
+  live table cards with seat-occupancy dots and open/full/in-hand badges, and a live
+  session-net stat. A newcomer instantly knows to pick a table and sit.
+- **Tester entry point:** `/dashboard` is the relay's *ops* dashboard with a poker
+  banner on top (prominent, with Lobby/Play/Cashier CTAs). For a focused poker test,
+  point testers straight at **`/lobby`** — the cleanest poker-first surface.
+- **Pages degrade gracefully** — the relay-backend `fetch`es (`/api/overview`, credit
+  pricing, etc.) and `/poker-engine` 404 only under a bare static server (no relay);
+  the pages catch the failures and render fine — no uncaught JS errors.
+
 ## Table edge cases (verified)
 
 - **Out-of-turn clicks are safe** — force-dispatching a click on an action button
