@@ -4,6 +4,31 @@ A deep review of every user flow from the perspective of a real human sitting do
 to play and to test the real-money rail on testnet. Living doc — updated as the
 review loop runs.
 
+## Certification (iteration 10 — full regression sweep)
+
+Everything reviewed across 10 iterations is green together, no regressions:
+
+- **Product suites:** off-chain 83/83 · on-chain 31 passing · dashboard routes 5/5.
+- **Browser flows (headless):** table net/badges, keyboard play, lobby→table,
+  ethers-under-strict-CSP + co-sign digest, self-serve deploy + solo settle — all
+  pass (31 assertions across 5 harnesses).
+- **12 issues found & fixed + 4 platform wins** (hotkeys, same-origin ethers,
+  self-serve escrow deploy, one-click solo settle). See below.
+
+**What a real human can do on testnet today, self-served:** open `/lobby` → play
+hold'em vs bots (hotkeys, net readout, mobile-friendly); open `/cashier` → Live →
+*Deploy a test escrow* on Base Sepolia → deposit → settle → withdraw real testnet
+USD₮, one click per step, with an on-chain-valid co-sign. **Nothing needed from the
+operator.**
+
+**The one remaining frontier (not built):** two real humans playing the same
+real-money *hand* that settles on-chain. The table is a local bot demo; it isn't
+joined to the relay (shared multiplayer state) or to the escrow (settling actual
+gameplay). That needs the relay-multiplayer + table→reducer→escrow wiring — every
+piece (betting engine, reducer, escrow, signed-log) exists and is tested
+individually, but joining them needs a running relay (FRA key or a local relay
+instance), so it can't be built+verified in this review loop. Scope below.
+
 ## Verified working (headless drive, 0 JS errors)
 
 - **Table** — 2 / 6 / 9-max, full betting (fold/check/call/bet/raise/all-in +
@@ -180,11 +205,24 @@ single real-money table.
 
 ## Recommended next steps (for a real human test)
 
-1. **Done:** net display, stale badges, name.
-2. **Deploy the user an interactive escrow** — a fresh PokerEscrow with *their*
-   wallet as a seat + minted MockUSDT + a pre-filled cashier config, so they can
-   click a real deposit→settle→withdraw in the browser. (Needs their address.)
-3. **Fix M2** (self-host ethers) so the cashier Live mode works relay-served.
-4. **The big one:** wire a real table to the escrow + relay so a played hand reduces
-   to a settlement that's co-signed/attested on-chain — the bridge from "demo" to
-   "real human poker."
+1. ✅ **Done** across iterations 1–9: net display, stale badges, names, mobile 9-max,
+   deposit RPC-lag, hung-table guard, heads-up copy, keyboard hotkeys, same-origin
+   ethers (M2/F10), self-serve escrow deploy (F11), one-click solo settle (F12).
+2. ✅ **Interactive on-chain test** — no longer needs the operator: the cashier's
+   "Deploy a test escrow" button provisions everything from the tester's own wallet.
+3. **The remaining frontier — real multiplayer money game.** Concrete scope:
+   - **Shared table state.** Join the table to the relay's signed log so two humans
+     see one game. `fra/play-on-fra.mjs` already drives the real relay's log →
+     reducer; the table needs to (a) create/join a relay table, (b) post each action
+     as a signed log entry, (c) render from the shared log instead of local bots.
+     Needs a running relay — the **FRA management key** (live relay, operator-gated)
+     or a **local relay instance** to develop against.
+   - **Settle real gameplay.** On hand/session end, run `reducer.js` over the signed
+     log → net balances → the cashier's existing `cooperativeClose` (co-sign) or
+     `disputeClose` (committee) path. The settle digest is already on-chain-valid
+     (verified), so this is wiring the reducer output into the (working) settle UI.
+   - **Seat ↔ wallet binding.** Each seat's relay identity maps to its on-chain
+     address (escrow participant), so the reduced balances settle to the right payees.
+   - **Effort:** multi-day; needs relay access to build+verify. Everything *below*
+     this line (engine, reducer, escrow, settle, signed-log) exists and is tested —
+     this is integration, not new primitives.
