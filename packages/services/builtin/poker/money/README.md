@@ -64,13 +64,19 @@ npx hardhat run scripts/full-demo.cjs              # the end-to-end capstone dem
 Everything above is built and tested. To make it actually live needs two
 operator-provided credentials (not code):
 
-**1. On-chain USD₮ broadcast** — a funded testnet key + RPC:
+**1. On-chain USD₮ broadcast** — a funded testnet key + RPC. **✅ PROVEN on Base
+Sepolia (chainId 84532):** `scripts/live-demo.cjs` deployed MockUSDT + PokerEscrow
+and ran a real 2-player **deposit → cooperativeClose → withdraw** — A settled to
+1050 USD₮, B to 950, the escrow drained to exactly 0 (conservation held on a live
+network). Re-run against any EVM testnet:
 ```
 cd escrow
-export TESTNET_RPC_URL="https://<arbitrum-or-base-sepolia-rpc>"
-export TESTNET_PRIVATE_KEY="0x<funded-key>"      # gas from a faucet
-npx hardhat run scripts/deploy.cjs --network testnet
-# → deploys MockUSDT + PokerEscrow; then deposit → cooperative/dispute close on-chain
+TESTNET_RPC_URL="https://sepolia.base.org" \
+TESTNET_PRIVATE_KEY="0x<funded-key>" \
+  node scripts/live-demo.cjs
+# → deploys both contracts, mints, 2-player deposit→settle→withdraw, prints tx hashes
+# (deploy.cjs --network testnet remains for a deploy-only run; the testnet network
+#  in hardhat.config.cjs reads the same two env vars)
 ```
 
 **2. FRA signed-log run** — the relay management key (FRA gates table creation
