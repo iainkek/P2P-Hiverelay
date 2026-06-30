@@ -43,6 +43,14 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Money loop verified + buy-in made explicit (iter 46).** Confirmed the carried-stack
+net settles **exactly** on-chain at the real scale (5/5 on a local EVM): both deposit the
+buy-in (1000) → pot 2000 → a session net of +300 → `cooperativeClose` balances [1300,700]
+(sum = deposits, conservation holds) → each withdraws its final stack → escrow drains to
+0. This only reconciles if **1 chip = 1 USD₮ and deposit = buy-in**, so made that
+explicit on `/mp-table`: a prominent "Buy-in: 1000 USD₮ (1 chip = 1 USD₮)" note telling
+both seats to deposit 1000 into a shared escrow before playing and settle the net after.
+
 **Carried stacks — a real correctness fix (iter 45).** Each hand used to reset to a
 fixed 1000-chip stack with the net just accumulating, so across multiple hands a player
 could lose **more than they deposited** — which the on-chain `cooperativeClose` can't
