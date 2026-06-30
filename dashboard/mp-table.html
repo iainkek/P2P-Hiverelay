@@ -202,15 +202,19 @@ function awaitAction (S, me) {
   }
   show('controls')
   return new Promise((resolve) => {
-    pendingResolve = (kind) => {
-      pendingResolve = null; hide('controls')
+    let left = window.__turnSeconds || 30 // a turn clock so an AFK player can't freeze the game
+    const finish = (kind) => {
+      clearInterval(timer); pendingResolve = null; hide('controls')
       if (kind === 'fold') resolve({ type: 'fold' })
       else if (kind === 'call') resolve({ type: la.owe === 0 ? 'check' : 'call' })
-      else { // raise/bet TO the chosen amount, clamped to the legal range
-        const to = Math.max(+sl.min, Math.min(+sl.max, +sl.value))
-        resolve({ type: la.canBet ? 'bet' : 'raise', amount: to })
-      }
+      else { const to = Math.max(+sl.min, Math.min(+sl.max, +sl.value)); resolve({ type: la.canBet ? 'bet' : 'raise', amount: to }) }
     }
+    pendingResolve = finish
+    $('turnPill').textContent = 'your turn · ' + left + 's'
+    const timer = setInterval(() => {
+      if (--left <= 0) { log('time — auto-' + (la.owe === 0 ? 'check' : 'fold')); finish(la.owe === 0 ? 'call' : 'fold') } // free → check, facing a bet → fold
+      else $('turnPill').textContent = 'your turn · ' + left + 's'
+    }, 1000)
   })
 }
 $('raiseSlider').oninput = () => { $('raiseAmt').textContent = $('raiseSlider').value }

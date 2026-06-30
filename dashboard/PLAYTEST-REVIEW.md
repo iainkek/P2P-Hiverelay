@@ -43,6 +43,14 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Turn clock (iter 40).** A 30s per-turn countdown (shown in the turn pill) so an AFK
+player can't freeze the game: on expiry it auto-checks if the action is free, else
+auto-folds. Verified two-browser (5/5): with the joiner never clicking, its clock
+auto-checks each turn and the hand still completes, both agreeing on the result.
+(Handles the AFK-but-connected case; a full disconnect — browser closed, no timer —
+still needs an opponent-claimed timeout-forfeit using relay timestamps, which
+`timeout.js` already models. Next.)
+
 **Raise sizing (iter 39).** The Raise button only did a fixed min-raise; added a
 **slider** spanning `[minRaiseTo … maxRaiseTo]` (all-in) in BB steps so a player chooses
 their bet/raise amount, with a live amount label. Verified two-browser (8/8): host
