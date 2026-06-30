@@ -276,6 +276,26 @@ surface works when served by the **real `api.js`**, not a mock:
   verified against a local relay (no need to touch the live FRA relay). That's the
   unblock for the remaining frontier.
 
+## Certification (iteration 36 — full system, including multiplayer)
+
+The complete two-human flow now exists and is green end-to-end:
+- **Product suites:** off-chain **87/87** · on-chain **31** · routes **5/5** · api.js clean.
+- **Full human-vs-human hand (two browsers, real relay):** **13/13** — handshake →
+  trustless deal (private hole cards) → betting over the log → showdown → winner → net
+  (zero-sum, bridged to the Cashier).
+- **On-chain money:** shared 2-player escrow deploy → both deposit → `cooperativeClose`
+  (both sigs) → withdraw → drains to 0 (**7/7** on a local EVM); solo self-serve deploy
+  + faucet proven; both settlement paths proven on Base Sepolia earlier.
+
+**What a tester can do on testnet today, self-served:** open `/cashier`, grab test USD₮
+from the faucet, deploy a shared escrow with their opponent's address, both deposit;
+open `/mp-table`, exchange invite/join codes, and play a complete trustless hold'em hand
+against another human (each sees only their own cards); see the session net in the
+Cashier and settle it on-chain via the cooperative close. Every layer — relay
+transport, browser mental-poker crypto, deal/bet/showdown, and on-chain settlement — is
+built and verified. The one remaining nicety is auto-carrying the net + opponent EVM
+address into the settle form (today entered manually).
+
 ## Certification (iteration 10 — full regression sweep)
 
 Everything reviewed across 10 iterations is green together, no regressions:
