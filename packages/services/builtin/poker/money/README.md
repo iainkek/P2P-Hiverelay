@@ -54,7 +54,7 @@ full deposit to escape a loss). If you never withdraw, you get nothing.
 **All three settlement paths are proven on-chain:** cooperative (players co-sign), stall
 (relay attestation), and cheat (arbitration → forfeit). Run the suites:
 ```
-npx brittle test/unit/poker-*.test.js              # 78 passing  (off-chain, from repo root)
+npx brittle test/unit/poker-*.test.js              # 83 passing  (off-chain, from repo root)
 cd escrow && npm install && npx hardhat test       # 31 passing  (on-chain, local EVM)
 npx hardhat run scripts/full-demo.cjs              # the end-to-end capstone demo
 ```
@@ -83,7 +83,7 @@ FRA_API_KEY="<relay management key>" \
 
 ## Status: feature-complete in isolation
 
-Every cleanly-isolatable module is built, tested, and demonstrated (109 tests +
+Every cleanly-isolatable module is built, tested, and demonstrated (114 tests +
 the capstone demo). What remains genuinely needs the operator or the live relay:
 
 - **Go-live (operator credentials)** — the two steps above: a funded testnet key
