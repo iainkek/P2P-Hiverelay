@@ -43,6 +43,16 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Lobby rewired to the real multiplayer flow (iter 52).** The `/lobby` (the natural
+"find a game" page) actively misled: the hero "Play now" went to the solo `/table`, the
+create card said "live multiplayer **soon**" (it's live), and **every** "Sit down" —
+including on real relay tables — routed to solo play. Fixed to be honest: hero CTA →
+"Play a human →" `/mp-table`; the create card is "Host a heads-up table" → `/mp-table`;
+real **live**-badged relay tables get a "Join →" to `/mp-table`, while demo tables are
+explicitly "Practice (solo) →" `/table`; a section clarifier spells out live = real vs
+others = solo practice. Verified (7/7): every CTA routes correctly, no stale "soon", no
+page errors. Nothing in the lobby now misrepresents what's playable.
+
 **Discoverability — the table was orphaned from navigation (iter 51).** A pure
 player's-perspective pass (screenshotted every screen). The landing, host handshake, and
 cashier all read clearly — but the main feature was unreachable: the shared top-nav

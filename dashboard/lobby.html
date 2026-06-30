@@ -98,7 +98,7 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
     <div class="flow"><b>Sit down</b><span class="arrow">→</span><b>Play</b><span class="arrow">→</span><b>Settle net</b><span class="arrow">→</span><b>Cash out</b></div>
   </div>
   <div class="cta">
-    <a href="/table" class="btn btn-primary">Play now →</a>
+    <a href="/mp-table" class="btn btn-primary">Play a human →</a>
     <a href="/cashier" class="btn btn-ghost">Open Cashier</a>
   </div>
 </div>
@@ -110,7 +110,7 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
   <div class="stat-card"><div class="stat-label">Stakes Range</div><div class="stat-value" id="sStakes">—</div></div>
 </div>
 
-<div class="section-title"><span>Tables</span><span id="liveNote" style="font-size:.7rem;text-transform:none;letter-spacing:0"></span></div>
+<div class="section-title"><span>Tables <span style="text-transform:none;letter-spacing:0;color:var(--text-dim);font-weight:400;font-size:.72rem">— <b style="color:var(--cyan)">live</b> = real relay games (Join) · others = solo practice</span></span><span id="liveNote" style="font-size:.7rem;text-transform:none;letter-spacing:0"></span></div>
 <div class="tables" id="tables"></div>
 
 <script defer>
@@ -131,6 +131,7 @@ function tableCard (t) {
   el.className = 'tbl'
   const seats = Array.from({ length: t.max }, (_, i) => `<div class="s ${i < t.seated ? 'filled' : ''}">${i < t.seated ? '&#9679;' : ''}</div>`).join('')
   const can = t.status !== 'full'
+  const label = !can ? 'Table full' : (t.live ? 'Join →' : 'Practice (solo) →')
   el.innerHTML = `
     <div class="top">
       <div><div class="nm">${t.name}</div><div class="stake">${t.sb} / ${t.bb} · buy-in ${fmtK(t.buyin)}</div></div>
@@ -138,8 +139,10 @@ function tableCard (t) {
     </div>
     <div class="meta"><span>Seats</span><span>${t.seated}/${t.max}</span></div>
     <div class="seats">${seats}</div>
-    <div class="sit"><button class="btn btn-sit" ${can ? '' : 'disabled'}>${can ? 'Sit down →' : 'Table full'}</button></div>`
-  if (can) el.querySelector('button').onclick = () => { window.location.href = '/table?seats=' + (t.max || 2) }
+    <div class="sit"><button class="btn btn-sit" ${can ? '' : 'disabled'}>${label}</button></div>`
+  // Live relay tables are real → the multiplayer table (open the host's invite to join).
+  // Demo tables are illustrative → solo practice vs bots, so nothing here misrepresents.
+  if (can) el.querySelector('button').onclick = () => { window.location.href = t.live ? '/mp-table' : ('/table?seats=' + (t.max || 2)) }
   return el
 }
 
@@ -179,8 +182,8 @@ async function bootLobby () {
   // create-table card
   const c = document.createElement('div')
   c.className = 'tbl create'
-  c.innerHTML = '<div class="plus">+</div><div>Practice table</div><div style="font-size:.74rem">Jump in vs bots &mdash; live multiplayer soon</div>'
-  c.onclick = () => { window.location.href = '/table' }
+  c.innerHTML = '<div class="plus">+</div><div>Host a heads-up table</div><div style="font-size:.74rem">Get a link to share &mdash; play another human for real USD₮</div>'
+  c.onclick = () => { window.location.href = '/mp-table' }
   wrap.appendChild(c)
   renderStats(tables)
 }
