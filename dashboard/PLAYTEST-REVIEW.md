@@ -4,6 +4,27 @@ A deep review of every user flow from the perspective of a real human sitting do
 to play and to test the real-money rail on testnet. Living doc — updated as the
 review loop runs.
 
+## Browser table client — module BUILT + verified (iteration 18)
+
+Wrote `money/relay-table-client.js` (served same-origin via `/poker-engine`) — the
+browser module that makes the dashboard a real seat. WebCrypto Ed25519 (no vendored
+crypto) signs moves the relay accepts; works in any secure context (localhost dev +
+https prod). API: `createSeat()` / `restoreSeat()` (persist a seat across reloads,
+PKCS8), `signEntry()`, and a `RelayTable` wrapper (`createTable`/`postMove`/`readLog`/
+`listTables`).
+
+Verified end-to-end in a browser on the **real relay** (same-origin, localhost
+secure): `createTable` → 201; a WebCrypto-signed move → accepted + in the shared log;
+a tampered signature → 422; a **persisted seat key restores and re-signs** correctly;
+no JS errors. (Also confirmed `crypto.subtle` Ed25519 is available on localhost — the
+about:blank failure earlier was just a non-secure context.)
+
+**Remaining for playable multiplayer:** a table UI that drives this client (create/
+join, post each betting action as a signed move, poll the log, replay via
+`betting.js`), plus trustless dealing (the relay is card-blind — the poker bundle
+ships VRF for this). The networking + identity + signing layer is now done and
+proven.
+
 ## Browser table client — DE-RISKED (iteration 17)
 
 The one piece left for real two-human play is a browser client that signs + posts
