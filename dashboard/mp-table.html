@@ -305,21 +305,26 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
   // for less than the other put in) is refunded, never won — so this matches the
   // reducer's settleHand (the dispute path). Heads-up: the contested pot is capped at
   // 2× the smaller live contribution; the over-bettor gets the excess back.
-  const winningsFor = (winner) => {
+  const winningsFor = (winners) => {
     const c = {}; for (const w of writers) c[w] = contrib[w] || 0
     const win = {}; for (const w of writers) win[w] = 0
-    if (live.length <= 1) { win[winner] = Object.values(c).reduce((a, b) => a + b, 0) } // uncontested: take all (incl. dead money)
+    if (live.length <= 1) { win[winners[0]] = Object.values(c).reduce((a, b) => a + b, 0) } // uncontested: take all (incl. dead money)
     else {
       const minLive = Math.min(...live.map(w => c[w]))
-      win[winner] = minLive * live.length // contested pot
+      const contested = minLive * live.length // contested pot
+      // split among ALL tied winners; odd chips to the earliest in canonical order (matches the reducer's distributeEven)
+      const ws = [...winners].sort()
+      const base = Math.floor(contested / ws.length), rem = contested - base * ws.length
+      ws.forEach((w, i) => { win[w] += base + (i < rem ? 1 : 0) })
       for (const w of live) win[w] += (c[w] - minLive) // refund the uncalled excess
     }
     return { c, win }
   }
-  const settle = (winner, boardCards, winCat) => {
-    const { c, win } = winningsFor(winner)
-    const wonPot = (live.length <= 1) ? win[winner] : Math.min(...live.map(w => c[w])) * live.length // what's actually contested
-    const iWon = winner === me.writer
+  const settle = (winners, boardCards, winCat) => {
+    const { c, win } = winningsFor(winners)
+    const wonPot = (live.length <= 1) ? win[winners[0]] : Math.min(...live.map(w => c[w])) * live.length // what's actually contested
+    const iWon = winners.includes(me.writer)
+    const split = winners.length > 1 // a tie — pot is shared
     const myNet = win[me.writer] - c[me.writer] // net = winnings − contributions; zero-sum, uncalled-bet-safe
     outStacks = {}
     for (const w of writers) outStacks[w] = (config.stacks[w] != null ? config.stacks[w] : BUYIN) + (win[w] - c[w])
@@ -327,14 +332,16 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
     try { localStorage.setItem('p2poker.mp.net', String(sessionNet)) } catch {} // bridge to the Cashier
     $('turnPill').textContent = 'hand over'
     const withHand = (winCat != null) ? ' with ' + CAT[winCat] : '' // show the winning hand at a real showdown
-    $('result').textContent = (iWon ? 'You win the ' + wonPot + ' pot' + withHand + '! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + wonPot + ')' + withHand + '. ')) + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet) + ' · stack ' + outStacks[me.writer]
+    const banner = split ? ('Split pot' + withHand + ' — you take ' + win[me.writer] + ' back. ')
+      : (iWon ? 'You win the ' + wonPot + ' pot' + withHand + '! ' : (folded.has(me.writer) ? 'You folded. ' : 'Opponent wins (' + wonPot + ')' + withHand + '. '))
+    $('result').textContent = banner + 'Net this hand ' + sign(myNet) + ' · session ' + sign(sessionNet) + ' · stack ' + outStacks[me.writer]
     $('result').style.color = sessionNet >= 0 ? 'var(--green)' : 'var(--red)'
-    log('hand over — winner ' + short(winner) + ', pot ' + wonPot + ', your net ' + sign(myNet) + ', stack ' + outStacks[me.writer])
+    log('hand over — ' + (split ? 'SPLIT between ' + winners.map(short).join(' & ') : 'winner ' + short(winners[0])) + ', pot ' + wonPot + ', your net ' + sign(myNet) + ', stack ' + outStacks[me.writer])
     window.__handsPlayed = (window.__handsPlayed || 0) + 1
-    window.__hand = { done: true, iWon, pot: wonPot, winner, myNet, sessionNet, stack: outStacks[me.writer], hands: window.__handsPlayed, uncontested: live.length === 1, myHole: hand.hole, board: boardCards }
+    window.__hand = { done: true, iWon, split, pot: wonPot, winner: winners[0], winners, myNet, sessionNet, stack: outStacks[me.writer], hands: window.__handsPlayed, uncontested: live.length === 1, myHole: hand.hole, board: boardCards }
   }
   // Uncontested: everyone but one folded → that seat wins the pot, no cards shown.
-  if (live.length === 1) { settle(live[0], hand.board); return { newStacks: outStacks } }
+  if (live.length === 1) { settle([live[0]], hand.board); return { newStacks: outStacks } }
   // Contested: publish my hole-card shares so my hand can be opened, AND reveal my
   // shuffle params so the opponent can replay-verify I never substituted a card.
   for (const pos of hole[myIdx]) await sess.post(msgShare(pos, DK.decryptShare(me.x, deck[pos].C1)))
@@ -359,7 +366,7 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
   }
   const winByForfeit = (cheater, boardCards, why) => {
     log('⚠ ' + short(cheater) + ' ' + why + ' — pot awarded to you'); folded.add(cheater); live = writers.filter(w => !folded.has(w))
-    settle(me.writer, boardCards); if (window.__hand) window.__hand.cheatClaim = { cheater, why }
+    settle([me.writer], boardCards); if (window.__hand) window.__hand.cheatClaim = { cheater, why }
     return { newStacks: outStacks }
   }
   let allUpSinceG = -1
@@ -376,9 +383,11 @@ async function runShowdown (sess, me, writers, hand, S, forfeitAgainst, config) 
     if (vr.pending) { if (g - allUpSinceG < 24) continue; if (vr.missing && vr.missing !== me.writer) return winByForfeit(vr.missing, boardCards, 'would not reveal its shuffle'); continue }
     const oppW = writers[1 - myIdx]
     render($('holeOpp'), shown[oppW] || [0, 0], true); $('seatOpp').querySelector('.lbl').textContent = 'shown'
-    let winner = live[0], best = evaluate7([...shown[live[0]], ...boardCards])
-    for (const w of live.slice(1)) { const r = evaluate7([...shown[w], ...boardCards]); if (compareRank(r, best) > 0) { best = r; winner = w } }
-    settle(winner, boardCards, best[0]); if (window.__hand) window.__hand.shufflesVerified = (vr.ok === true && !vr.error)
+    const ranks = {}; for (const w of live) ranks[w] = evaluate7([...shown[w], ...boardCards])
+    let best = ranks[live[0]]
+    for (const w of live.slice(1)) if (compareRank(ranks[w], best) > 0) best = ranks[w]
+    const winners = live.filter(w => compareRank(ranks[w], best) === 0) // ALL tied for best → split
+    settle(winners, boardCards, best[0]); if (window.__hand) window.__hand.shufflesVerified = (vr.ok === true && !vr.error)
     return { newStacks: outStacks }
   }
   return { newStacks: outStacks }

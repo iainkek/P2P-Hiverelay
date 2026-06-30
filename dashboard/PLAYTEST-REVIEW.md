@@ -43,6 +43,18 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Split-pot bug — ties went winner-take-all (iter 67).** A real correctness bug a tie
+would have exposed: the showdown picked a single winner (`if compareRank(r,best) > 0
+winner = w`), so on a **tie** (`=== 0`) `winner` stayed `live[0]` and `winningsFor` awarded
+the **whole pot to one player** — *and* disagreed with the reducer's `settleHand`, which
+correctly splits ties (breaking the cooperative==dispute consistency). Ties happen in real
+heads-up play (both seats play the board). Fixed: the showdown now collects **all** seats
+tied for best and `winningsFor`/`settle` take a winners array, splitting the contested pot
+(odd chips to the earliest in canonical order, matching the reducer; heads-up always splits
+evenly). The banner reads "Split pot — you take X back." Verified: split matches the reducer
+across single-winner / uncalled / fold / tie (5/5), the tie nets 0/0 not winner-take-all,
+and a normal single-winner hand is unaffected end-to-end (7/7).
+
 **Betting-rule correctness review + min-raise userflow (iter 66).** Audited the core poker
 rules a knowledgeable tester would scrutinize, and they're **correct**: heads-up posts the
 button as the small blind (`sbIdx = bIdx`), SB/button acts first preflop and BB first
