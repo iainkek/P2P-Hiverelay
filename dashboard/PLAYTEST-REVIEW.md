@@ -43,6 +43,12 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Mobile (iter 42).** The multiplayer table is phone-friendly: on a 390px viewport the
+two seats stack vertically (You / Opponent), the board + betting controls + raise slider
+fit with no horizontal overflow, cards render with correct colours. Verified 5/5
+(landing + dealt table no overflow, both seats on-screen, 9 cards render, no JS errors)
+— a tester can play `/mp-table` on their phone.
+
 **Disconnect forfeit (iter 41) — the last robustness gap.** A full disconnect (browser
 closed → no local timer) used to trap the opponent. Now when you're waiting on a seat
 that's gone past the deadline (default 60s, anchored on the relay-bounded entry `ts`), a
