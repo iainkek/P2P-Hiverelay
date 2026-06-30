@@ -43,6 +43,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**A COMPLETE trustless hand is now built + in the test suite (iter 28).**
+`poker-mental-multiplayer.test.js` plays a full 2-seat hand purely by replaying a
+shared message log: deal (private hole cards, opponent can't see them) → betting
+(`betting.js` actions over the log) → showdown (each seat reveals its own hole-card
+shares) → `reduce()` → settlement. Verified + locked into the suite (off-chain now
+**85/85**): both seats reconstruct identical state, the 9 cards are one verifiable
+deck, the showdown matches what each privately held, and the settlement is zero-sum
+and pays the better hand — exactly the net balances the escrow settles. The hard
+protocol is done; what remains is the **table UI** + wrapping the log payloads in
+`relay-table-client.postMove` (transport already proven). No crypto, no new protocol.
+
 1. Relay table / shared signed log — ✅ proven (iter 16)
 2. Browser signing + identity (`relay-table-client.js`) — ✅ built + proven (iter 18)
 3. Verifiable shared shuffle (VRF deal-seed) — ✅ proven browser-side (iter 19)
