@@ -64,6 +64,22 @@ review loop runs.
   first-time player's very first screen. **Fixed** → "real-money hold'em (2–9
   handed)" on both.
 
+- **F9 — added poker hotkeys (table was mouse-only).** Serious players act on
+  keys, not the mouse. Added **F** fold · **C**/**Space** check-call · **R**
+  bet/raise · **A** all-in · **Enter** next hand, with a discoverable hint under the
+  controls. A key only fires when its control is enabled + visible, so out-of-turn
+  keys are no-ops (same guard as clicks) and typing in inputs/selects is never
+  hijacked. Verified headless: keys drive actions, Enter advances hands, out-of-turn
+  keypresses leave the pot unchanged, 0 JS errors.
+
+## Surfaces note
+
+- **Payments** in the topbar is the *relay's* credits/Lightning page (shared relay
+  nav), not poker — the poker money flow is the **Cashier**. Buttons are native
+  `<button>`s (keyboard-focusable, Enter/Space activate), so base accessibility is
+  sound; the new hotkeys add power-user keyboard play. A deeper ARIA/tab-order pass
+  remains a future nicety.
+
 ## Lobby → table flow + first-time experience (verified)
 
 - **Sit-down opens the chosen size** — every lobby table's `max` is in {2,6,9}; the

@@ -146,7 +146,8 @@ body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,tra
   </div>
 
   <div class="subbar">
-    <div>Demo table — real betting engine (the same one the relay uses), bots, side-pots, winner by hand strength.</div>
+    <div>Demo table — real betting engine (the same one the relay uses), bots, side-pots.
+      <span style="opacity:.6">Keys: <b>F</b> fold · <b>C</b>/<b>Space</b> check-call · <b>R</b> bet/raise · <b>A</b> all-in · <b>Enter</b> next</span></div>
     <div>Net this session: <b id="net" style="color:var(--text-bright);font-family:var(--mono)">0</b> · <a href="/cashier">Cash out in the Cashier →</a></div>
   </div>
 </div>
@@ -544,6 +545,23 @@ function boot () {
   $('qMax').onclick = () => quickRaise('max')
   $('raiseSlider').oninput = () => { $('raiseAmt').textContent = $('raiseSlider').value }
   $('seatSel').onchange = () => setupTable(+$('seatSel').value)
+  // Poker hotkeys — act without reaching for the mouse. Only fire a key if its
+  // control is enabled + visible (so out-of-turn keys are no-ops, same as clicks).
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return
+    const tag = (e.target && e.target.tagName) || ''
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+    const hit = (id) => { const el = $(id); if (el && !el.disabled && el.offsetParent !== null) { el.click(); return true } return false }
+    let done = false
+    switch (e.key.toLowerCase()) {
+      case 'f': done = hit('bFold'); break
+      case 'c': case ' ': done = hit('bCall'); break
+      case 'r': done = hit('bRaise'); break
+      case 'a': done = hit('bAllin'); break
+      case 'enter': done = hit('bNext') || hit('bRebuy'); break
+    }
+    if (done) e.preventDefault()
+  })
   $('soundBtn').onclick = () => { soundOn = !soundOn; ensureAC(); const el = $('soundBtn'); el.classList.toggle('on', soundOn); el.innerHTML = soundOn ? '&#128266;' : '&#128263;' }
   $('blinds').textContent = SB + ' / ' + BB
   const fromUrl = +new URLSearchParams(location.search).get('seats')
