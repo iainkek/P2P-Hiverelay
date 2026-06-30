@@ -84,11 +84,18 @@
   <div id="tableUi" class="hide">
     <div class="felt">
       <div class="seatrow">
-        <div class="seat me" id="seatMe"><h3>You</h3><div class="who" id="whoMe">—</div><div class="lbl">your hole cards</div><div class="cards" id="holeMe"></div></div>
-        <div class="seat" id="seatOpp"><h3>Opponent</h3><div class="who" id="whoOpp">—</div><div class="lbl">hidden</div><div class="cards" id="holeOpp"></div></div>
+        <div class="seat me" id="seatMe"><h3>You</h3><div class="who" id="whoMe">—</div><div class="lbl">your hole cards</div><div class="cards" id="holeMe"></div><div class="lbl" style="margin-top:.5rem">stack <b id="stackMe">—</b></div></div>
+        <div class="seat" id="seatOpp"><h3>Opponent</h3><div class="who" id="whoOpp">—</div><div class="lbl">hidden</div><div class="cards" id="holeOpp"></div><div class="lbl" style="margin-top:.5rem">stack <b id="stackOpp">—</b></div></div>
       </div>
-      <div class="lbl" style="text-align:center;margin-top:1.4rem">community board</div>
+      <div style="text-align:center;margin-top:1.2rem"><span class="pill" id="potPill">pot 0</span> <span class="pill" id="turnPill" style="background:rgba(63,185,80,.14);color:var(--green)">dealing…</span></div>
+      <div class="lbl" style="text-align:center;margin-top:1.1rem">community board</div>
       <div class="board" id="board"></div>
+      <div class="row hide" id="controls" style="justify-content:center;margin-top:1.2rem">
+        <button class="btn" id="bFold">Fold</button>
+        <button class="btn" id="bCall">Check</button>
+        <button class="btn" id="bRaise">Raise</button>
+      </div>
+      <div id="result" style="text-align:center;margin-top:1rem;font-weight:700"></div>
     </div>
   </div>
 
@@ -100,6 +107,10 @@ import { createSeat, signEntry, RelayTable } from '/poker-engine/relay-table-cli
 import * as ed from '/poker-engine/crypto/ed25519-noble.js'
 import * as DK from '/poker-engine/crypto/elgamal-deck.js'
 import { nextDealAction, readMyHand } from '/poker-engine/crypto/mp-deal-driver.js'
+import { createHand, applyAction, legalActions, view } from '/poker-engine/betting.js'
+import { evaluate7, compareRank } from '/poker-engine/hand-eval.js'
+import { dealStateFromLog, sharesForPosition, msgShare, unhex } from '/poker-engine/crypto/hand-deal-protocol.js'
+import { dealLayout, openBoard } from '/poker-engine/crypto/mental-deal.js'
 
 const RANKS = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'], SUITS = ['♠','♥','♦','♣']
 const $ = (id) => document.getElementById(id)
@@ -124,39 +135,150 @@ const cardStr = (c) => RANKS[c / 4 | 0] + SUITS[c % 4]
 // A seat = relay-signing key (log writer) + a private ElGamal secret.
 async function makeSeat () { const sign = await createSeat(); return { sign, writer: sign.pub, x: ed.scalarRandom(), mem: {}, seq: 0 } }
 
-// Drive ONE seat over the relay log until its hand is dealt. Merges a local mirror with
-// readLog (dedup by writer+kind+pos) so read-after-write lag never re-posts a move.
-async function runSeat (rt, tableKey, me, writers, oppWriter) {
+// A seat = relay-signing key (log writer) + a private ElGamal secret.
+// A session holds one seat's view: a local mirror merged with readLog (dedup by
+// writer+kind+pos), plus sync()/post() helpers that survive relay lag + rate limits.
+function makeSession (rt, tableKey, me) {
   const seen = new Map(); const localLog = []
   const key = (e) => e.writer + '|' + (e.payload || e).kind + '|' + ((e.payload || e).pos ?? '')
   const ingest = (e) => { const k = key(e); if (!seen.has(k)) { seen.set(k, true); localLog.push({ writer: e.writer, payload: e.payload || e }) } }
-  render($('board'), [0, 0, 0, 0, 0], false); render($('holeMe'), [0, 0], false); render($('holeOpp'), [0, 0], false)
-  for (let guard = 0; guard < 4000; guard++) {
-    await sleep(250) // throttle — stay under the relay rate limit; poker is not latency-critical
-    const lg = await rt.readLog(tableKey); for (const e of (lg.json && lg.json.entries || [])) ingest(e)
-    const action = nextDealAction(localLog, { writer: me.writer, x: me.x }, writers, me.mem)
-    if (action) {
-      const body = { tableKey, writer: me.writer, seq: me.seq, ts: Date.now(), payload: action }
-      const r = await rt.postMove(tableKey, await signEntry(me.sign, body))
-      if (r.status === 200 && r.json && r.json.ok) { me.seq++; ingest({ writer: me.writer, payload: action }); log('you → ' + action.kind + (action.pos !== undefined ? ' #' + action.pos : '')) }
-      else { await sleep(500) } // transient (rate-limit / seq-race / lag) — back off + retry, never give up
-      continue
+  const sync = async () => { const lg = await rt.readLog(tableKey); for (const e of (lg.json && lg.json.entries || [])) ingest(e) }
+  const readEntries = async () => { const lg = await rt.readLog(tableKey); return (lg.json && lg.json.entries) || [] } // authoritative, ORDERED
+  const post = async (payload) => {
+    for (let i = 0; i < 40; i++) {
+      const r = await rt.postMove(tableKey, await signEntry(me.sign, { tableKey, writer: me.writer, seq: me.seq, ts: Date.now(), payload }))
+      if (r.status === 200 && r.json && r.json.ok) { me.seq++; ingest({ writer: me.writer, payload }); return true }
+      await sleep(500); await sync() // transient (rate-limit / seq-race / lag) — back off + resync + retry
     }
-    const h = readMyHand(localLog, { writer: me.writer, x: me.x }, writers)
-    if (h.ready) {
-      render($('holeMe'), h.hole, true); render($('board'), h.board, true)
-      log('DEAL COMPLETE — you hold ' + h.hole.map(cardStr).join(' ') + ' · board ' + h.board.map(cardStr).join(' '))
-      window.__mp = { hole: h.hole, board: h.board, ready: true }
-      return h
-    }
-    await sleep(300) // waiting on the opponent
+    return false
   }
-  log('deal timed out'); return null
+  return { localLog, ingest, sync, post, readEntries }
+}
+const BUYIN = 1000, SB = 10, BB = 20
+const bettingConfig = (writers) => ({ seats: writers, stacks: Object.fromEntries(writers.map(w => [w, BUYIN])), blinds: { sb: SB, bb: BB }, button: writers[0] })
+function bettingState (localLog, config) {
+  const S = createHand(config)
+  for (const e of localLog) { const p = e.payload || e; if (p.kind === 'bet-action' && !S.complete) applyAction(S, { seat: p.seat, type: p.type, amount: p.amount }) }
+  return S
 }
 
+// DEAL phase: drive nextDealAction until this seat can read its hand.
+async function runDeal (sess, me, writers) {
+  render($('board'), [0, 0, 0, 0, 0], false); render($('holeMe'), [0, 0], false); render($('holeOpp'), [0, 0], false)
+  $('turnPill').textContent = 'dealing…'
+  for (let g = 0; g < 4000; g++) {
+    await sleep(250); await sess.sync()
+    const action = nextDealAction(sess.localLog, { writer: me.writer, x: me.x }, writers, me.mem)
+    if (action) { await sess.post(action); log('you → ' + action.kind + (action.pos !== undefined ? ' #' + action.pos : '')); continue }
+    const h = readMyHand(sess.localLog, { writer: me.writer, x: me.x }, writers)
+    if (h.ready) { render($('holeMe'), h.hole, true); render($('board'), h.board, true); window.__mp = { hole: h.hole, board: h.board, ready: true }; log('dealt — you hold ' + h.hole.map(cardStr).join(' ')); return h }
+    await sleep(300)
+  }
+  return null
+}
+
+// the human's action when it's their turn — resolved by the control buttons
+let pendingResolve = null
+function awaitAction (S, me) {
+  const la = legalActions(S)
+  $('bFold').disabled = !la.canFold || la.owe === 0
+  $('bCall').textContent = la.owe === 0 ? 'Check' : ('Call ' + la.callAmount)
+  $('bRaise').disabled = !(la.canBet || la.canRaise)
+  $('bRaise').textContent = la.canBet ? 'Bet ' + (la.minRaiseTo || BB) : 'Raise ' + (la.minRaiseTo || BB)
+  show('controls')
+  return new Promise((resolve) => {
+    pendingResolve = (kind) => {
+      pendingResolve = null; hide('controls')
+      if (kind === 'fold') resolve({ type: 'fold' })
+      else if (kind === 'call') resolve({ type: la.owe === 0 ? 'check' : 'call' })
+      else resolve({ type: la.canBet ? 'bet' : 'raise', amount: la.minRaiseTo || (la.callAmount + BB) })
+    }
+  })
+}
+$('bFold').onclick = () => pendingResolve && pendingResolve('fold')
+$('bCall').onclick = () => pendingResolve && pendingResolve('call')
+$('bRaise').onclick = () => pendingResolve && pendingResolve('raise')
+
+function renderBetting (S, me) {
+  const v = view(S)
+  const pot = Object.values(v.contributions || {}).reduce((a, b) => a + b, 0)
+  $('potPill').textContent = 'pot ' + pot
+  $('stackMe').textContent = (S.stack && S.stack[me.writer] != null) ? S.stack[me.writer] : '—'
+  const opp = (me.writers || []).find(w => w !== me.writer)
+  $('stackOpp').textContent = (opp && S.stack && S.stack[opp] != null) ? S.stack[opp] : '—'
+  $('turnPill').textContent = v.complete ? 'hand over' : (v.toAct === me.writer ? 'your turn' : 'opponent’s turn')
+}
+
+// BETTING phase: reconstruct betting.js state from the ORDERED relay log (bet-actions
+// are turn-based, so order matters — the merged mirror can reorder/drop them); act on
+// your turn, guarding against a double-post while a posted action is still propagating.
+async function runBetting (sess, me, writers) {
+  me.writers = writers
+  const config = bettingConfig(writers)
+  let postedAtCount = -1
+  for (let g = 0; g < 4000; g++) {
+    await sleep(250)
+    const entries = await sess.readEntries()
+    const S = bettingState(entries, config)
+    renderBetting(S, me)
+    if (S.complete) { hide('controls'); return S }
+    if (view(S).toAct === me.writer) {
+      const count = entries.filter(e => (e.payload || e).kind === 'bet-action').length
+      if (postedAtCount === count) { await sleep(300); continue } // my action is still landing — don't double-post
+      const act = await awaitAction(S, me)
+      const ok = await sess.post({ kind: 'bet-action', seat: me.writer, type: act.type, amount: act.amount })
+      if (ok) { postedAtCount = count; log('you → ' + act.type + (act.amount ? ' ' + act.amount : '')) }
+    } else await sleep(300)
+  }
+  return null
+}
+
+// SHOWDOWN: publish my own hole-card shares, open both hands + board, settle the winner.
+async function runShowdown (sess, me, writers, hand, S) {
+  const st = dealStateFromLog(sess.localLog); const deck = st.deck
+  const { hole, board } = dealLayout(writers.length)
+  const myIdx = writers.indexOf(me.writer)
+  const folded = new Set(view(S).folded || [])
+  const pubBy = (w) => { const e = sess.localLog.find(x => x.writer === w && (x.payload || x).kind === 'mp-key'); return e ? unhex((e.payload || e).pub) : null }
+  // contested? if I folded, no need to reveal; otherwise publish my hole shares
+  if (!folded.has(me.writer)) for (const pos of hole[myIdx]) await sess.post(msgShare(pos, DK.decryptShare(me.x, deck[pos].C1)))
+  // wait until every non-folded seat's hole cards can be opened
+  for (let g = 0; g < 4000; g++) {
+    await sleep(300); await sess.sync()
+    const shown = {}; let allUp = true
+    writers.forEach((w, i) => { if (folded.has(w)) return; shown[w] = hole[i].map(pos => DK.decryptCard(deck[pos], sharesForPosition(sess.localLog, pos, deck, pubBy))); if (shown[w].some(c => c === null)) allUp = false })
+    const boardCards = board.map(pos => openBoard(deck[pos], sharesForPosition(sess.localLog, pos, deck, pubBy)))
+    if (boardCards.some(c => c === null)) allUp = false
+    if (!allUp) continue
+    // reduce to a winner (folded seats can't win)
+    render($('holeOpp'), (shown[writers[1 - myIdx]] || [0, 0]), !folded.has(writers[1 - myIdx])); $('seatOpp').querySelector('.lbl').textContent = folded.has(writers[1 - myIdx]) ? 'folded' : 'shown'
+    const live = writers.filter(w => !folded.has(w))
+    let winner = live[0]
+    if (live.length > 1) { let best = evaluate7([...shown[live[0]], ...boardCards]); for (const w of live.slice(1)) { const r = evaluate7([...shown[w], ...boardCards]); if (compareRank(r, best) > 0) { best = r; winner = w } } }
+    const v = view(S); const pot = Object.values(v.contributions || {}).reduce((a, b) => a + b, 0)
+    const iWon = winner === me.writer
+    $('result').textContent = iWon ? ('You win the ' + pot + ' pot!') : (folded.has(me.writer) ? 'You folded.' : 'Opponent wins (' + pot + ').')
+    $('result').style.color = iWon ? 'var(--green)' : 'var(--red)'
+    log('SHOWDOWN — winner ' + short(winner) + ', pot ' + pot)
+    window.__hand = { done: true, iWon, pot, winner, myHole: hand.hole, board: boardCards }
+    return
+  }
+}
+
+async function runFullHand (rt, tableKey, me, writers, oppWriter) {
+  const sess = makeSession(rt, tableKey, me)
+  const hand = await runDeal(sess, me, writers)
+  if (!hand) { log('deal failed'); return }
+  const S = await runBetting(sess, me, writers)
+  if (!S) { log('betting failed'); return }
+  await runShowdown(sess, me, writers, hand, S)
+}
+const runSeat = runFullHand // host/join call this
+
 function enterTable (myWriter, oppWriter) {
-  hide('landing'); hide('hostUi'); hide('joinUi'); show('tableUi')
+  hide('landing'); hide('hostUi'); hide('joinUi'); show('tableUi'); hide('controls')
   $('whoMe').textContent = short(myWriter); $('whoOpp').textContent = short(oppWriter)
+  $('result').textContent = ''
 }
 
 // ── HOST ──

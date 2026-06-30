@@ -43,6 +43,23 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**A COMPLETE playable hand, two browsers — deal → bet → showdown → settle (iter 33).**
+Added betting + showdown to `/mp-table`: after the trustless deal, both seats
+reconstruct `betting.js` state from the relay's bet-action log and act on their turn
+(Fold / Check-Call / Raise controls), then at showdown each publishes its own hole-card
+shares so both hands open, the better hand is scored (`hand-eval`), and a result banner
+shows the winner + pot. Verified with **two separate browsers** against a booted relay
+(9/9): both reach showdown, agree on the board, the pot (40), and the winner; the UI
+shows "Opponent wins (40)." — a real human-vs-human hand, dealt trustlessly, bet,
+revealed, and settled, both agreeing on the outcome.
+
+One real bug found + fixed: the log mirror's dedup key was `writer|kind|pos`, so a
+seat's *second* bet-action (no `pos`) collided with its first and was dropped → betting
+deadlocked. Betting now reconstructs from the relay's **ordered** log (turn order
+matters) with a count-guard against double-posting during read lag. Remaining: wire the
+hand's net into the Cashier's on-chain `cooperativeClose` (the escrow half is already
+proven) so the testnet pot settles for real.
+
 **TWO HUMANS, TWO BROWSERS — a real trustless deal over the relay (iter 32).** Added a
 host/invite handshake to `/mp-table` (the relay fixes its writer allowlist at table
 creation, so keys are exchanged first via a copy-paste code, WebRTC-style): host shows
