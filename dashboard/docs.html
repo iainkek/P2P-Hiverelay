@@ -241,6 +241,7 @@ pre code{background:none;padding:0;color:var(--text)}
     <a href="#play-table">Host or join</a>
     <a href="#play-settle">Settle &amp; cash out</a>
     <a href="#play-trust">Trust model</a>
+    <a href="#play-deploy">Host a relay</a>
   </div>
   <div class="sidebar-section">
     <div class="sidebar-section-title">Getting Started</div>
@@ -360,6 +361,30 @@ player clicks <strong>Withdraw</strong>. Done — your winnings are in your wall
   are proven to agree, uncalled bets are refunded correctly, and your session net is bounded by
   your deposit — you can never owe more than you put in.</li>
 </ul>
+
+<h3 id="play-deploy">Hosting a relay for testnet play</h3>
+<p>Two players connect through one HiveRelay. If you're the one running it for a test session:</p>
+<ol>
+  <li><strong>Enable poker + allow player-hosted tables.</strong> Start the relay with
+  <code>HIVERELAY_POKER=1</code> and <code>HIVERELAY_OPEN_POKER_TABLES=1</code>. The second is
+  <strong>required for multiplayer</strong>: creating a table is a player action, but the browser
+  has no API key, so without this flag a player's "Host a table" 401s on a keyed relay and nobody
+  can start a game. Table creation stays rate-limited + capped; every in-game move is still
+  governed by the signed append-only log.</li>
+  <li><strong>Serve it over HTTPS</strong> (e.g. Caddy — see the operator guide). The trustless
+  deal uses WebCrypto, which only runs in a secure context; the table warns clearly if it's not.</li>
+  <li><strong>Set an API key</strong> (<code>HIVERELAY_API_KEY</code>) to protect the relay's
+  management routes. Poker game routes (move/log/events) stay open by design and are abuse-bounded
+  by the signed log.</li>
+  <li>Send both players <code>https://your-relay/mp-table</code> — one hosts, the other opens the
+  join link, and they're playing.</li>
+</ol>
+<div class="callout warn">
+  <div class="callout-label">Testnet-grade</div>
+  <code>openPokerTables</code> makes table creation open (rate-limited). That's right for a trusted
+  testnet session; a public production relay would want stronger anti-DoS on table creation
+  (proof-of-work / staking / per-identity limits).
+</div>
 
 <!-- ════════════════════ QUICK START ════════════════════ -->
 <h2 class="section-title" id="quick-start">Quick Start</h2>

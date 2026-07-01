@@ -94,6 +94,17 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Deployment guide added to /docs (iter 89).** The deployment config (found non-obvious in
+iters 87–88) is now documented: a **"Host a relay for testnet play"** section in `/docs`
+spelling out the steps — start with `HIVERELAY_POKER=1` + `HIVERELAY_OPEN_POKER_TABLES=1`
+(flagged as *required for multiplayer*, since without it "Host a table" 401s on a keyed relay),
+serve over HTTPS (WebCrypto), set an API key for management routes (game routes stay open,
+abuse-bounded by the signed log), and share `https://your-relay/mp-table`. Includes a
+testnet-grade caveat (a public production relay wants stronger anti-DoS on table creation).
+Verified (7/7): section + sidebar link render, documents the required env, HTTPS, and key. The
+actionable bridge from "the code works" to "it's running for real humans" — whoever spins up
+the relay now has the exact steps.
+
 **Hosted-relay deployment verified end-to-end (iter 88).** Applied the iter-87 "test the
 deployment you'll actually run" lens to the rest of the stack and confirmed no other
 hosted-relay blocker: the **dashboard pages** (`/mp-table`, `/cashier`) and **`/poker-engine/*`
