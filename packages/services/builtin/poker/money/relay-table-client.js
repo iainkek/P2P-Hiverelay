@@ -58,17 +58,39 @@ export async function signEntry (seat, body) {
 // Thin wrapper over the relay's /api/poker/* HTTP API. `base` is '' when the table
 // is served by the relay (same-origin), or a full relay URL otherwise.
 export class RelayTable {
-  constructor (base = '') { this.base = base }
+  constructor (base = '') {
+    this.base = base
+    // Offset (ms) from this device's clock to the relay's, learned from the HTTP
+    // `Date` header on every response. Entries carry a `ts` the relay rejects if it
+    // is outside ±TS_SKEW_MS of *its* clock — so a player whose device clock is off
+    // (no NTP, manual clock) would have every move rejected and could not play, and
+    // their skewed clock would falsely fire the disconnect-forfeit deadline. Stamping
+    // and comparing against relay time instead of Date.now() makes both skew-immune.
+    this._clockOffset = 0
+  }
+  // Relay-synced wall clock. Use this for entry timestamps and for any deadline
+  // compared against relay-issued timestamps, in place of Date.now().
+  now () { return Date.now() + this._clockOffset }
+  _syncClock (r) {
+    try {
+      const d = r && r.headers && r.headers.get && r.headers.get('date')
+      if (!d) return
+      const t = new Date(d).getTime()
+      if (Number.isFinite(t)) this._clockOffset = t - Date.now()
+    } catch { /* header unreadable — keep the last known offset */ }
+  }
   async createTable (tableKey, writers) { return this._post('/api/poker/tables', { tableKey, writers }) }
   async postMove (tableKey, signedEntry) { return this._post(`/api/poker/${tableKey}/move`, signedEntry) }
   async readLog (tableKey, from = 0, limit = 500) { return this._get(`/api/poker/${tableKey}/log?from=${from}&limit=${limit}`) }
   async listTables () { return this._get('/api/poker/tables') }
   async _post (path, body) {
     const r = await fetch(this.base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    this._syncClock(r)
     return { status: r.status, json: await r.json().catch(() => null) }
   }
   async _get (path) {
     const r = await fetch(this.base + path)
+    this._syncClock(r)
     return { status: r.status, json: await r.json().catch(() => null) }
   }
 }

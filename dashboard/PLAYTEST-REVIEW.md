@@ -94,6 +94,21 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Client clock-skew immunity (iter 90).** Another "localhost masks it" deployment edge, found by
+reasoning about *real devices*: the relay rejects any entry whose `ts` is outside ±60s of *its*
+clock (`TS_SKEW_MS`, an anti-replay/anti-fudge guard), and the browser stamped `ts = Date.now()`.
+So a player whose device clock is off by >60s (no NTP, manual clock, dead-battery reset) would
+have **every move rejected** — createTable succeeds (unsigned, no ts) but the deal/betting posts
+`BAD_TS`, so the game stalls cryptically — *and* their skewed clock would falsely trip the
+disconnect-forfeit deadline (`Date.now() > lastTs + graceMs`, comparing a skewed clock to the
+relay's real timestamps). Localhost never sees it: one machine, one clock. Fix: `RelayTable` now
+learns a clock offset from the HTTP `Date` header on every response and exposes `now()`; the table
+stamps entries and computes the forfeit deadline against **relay time**, not the device's. Both
+paths are now skew-immune. Verified end-to-end (7/7): with the device clock skewed **+120s**, the
+full trustless deal→bet→showdown *completed* (moves accepted), and the posted `ts` was relay-synced
+to **within 1ms** of the relay clock — not the +120s a raw `Date.now()` would have sent and had
+rejected. `relay-table-client.js`, `mp-table.html`.
+
 **Deployment guide added to /docs (iter 89).** The deployment config (found non-obvious in
 iters 87–88) is now documented: a **"Host a relay for testnet play"** section in `/docs`
 spelling out the steps — start with `HIVERELAY_POKER=1` + `HIVERELAY_OPEN_POKER_TABLES=1`
