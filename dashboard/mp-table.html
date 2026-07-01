@@ -129,8 +129,13 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const short = (h) => h.slice(0, 6) + '…' + h.slice(-4)
 const show = (id) => $(id).classList.remove('hide')
 const hide = (id) => $(id).classList.add('hide')
-const b64 = (o) => btoa(JSON.stringify(o)).replace(/=+$/, '')
-const unb64 = (s) => JSON.parse(atob(s.trim()))
+// URL-safe base64 (base64url): the invite/join codes travel in a shared link
+// (?join=<code>), and standard base64's '+' would be decoded back as a space by
+// URLSearchParams — corrupting the code so the auto-join throws "invalid invite".
+// '+'→'-', '/'→'_' makes the code safe to drop into a URL raw; unb64 reverses it
+// (and still accepts legacy standard-base64 pastes, since '-'/'_' can't appear there).
+const b64 = (o) => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_')
+const unb64 = (s) => JSON.parse(atob(s.trim().replace(/-/g, '+').replace(/_/g, '/')))
 let logLines = []
 let sessionNet = 0 // accumulated net across hands this session (bridged to the Cashier)
 let sessionActive = false // true while a real session is in progress — guards against an accidental refresh/close losing the in-memory seat keys

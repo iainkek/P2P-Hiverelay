@@ -94,6 +94,20 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Invite-link join, investigated + hardened (iter 91).** Traced the two-human handshake from a cold
+start: host clicks "Host a table" → gets a `?join=<code>` link (origin baked in via `location.origin`,
+so the joiner hits the *same* relay ✓); joiner opens the link → auto-accepts → sends a join code back →
+host pastes it → deals. Suspected the shared link would corrupt the code, because `?join=` carries
+standard base64 raw and `URLSearchParams` decodes `+` as a space. **Falsified by a deterministic test:**
+the invite payload is hex-only (`{"t","h"}`), and for ASCII bytes < 128 a base64 `+`/`/` can only come from
+the trailing 6-bit group when a byte is `>`,`?`,`~`,`0x7f` — none of which occur in hex+JSON. So the code
+*provably* never contains `+`/`/` and the link was already safe (200 random-key draws found zero `+`
+payloads; the bit-math confirms it's impossible, not just unlikely). Kept a **defensive** change anyway:
+`b64`/`unb64` now emit/accept URL-safe base64 (`+`→`-`, `/`→`_`) — the correct idiom for codes-in-links
+and future-proof if the invite ever gains a non-hex field (display name, note). Verified end-to-end (7/7):
+host→link→joiner auto-accept→create→deal completes across two browser contexts, no page errors. This was
+a *non-bug* surfaced and closed honestly — the join link is now proven safe, by math and by execution.
+
 **Client clock-skew immunity (iter 90).** Another "localhost masks it" deployment edge, found by
 reasoning about *real devices*: the relay rejects any entry whose `ts` is outside ±60s of *its*
 clock (`TS_SKEW_MS`, an anti-replay/anti-fudge guard), and the browser stamped `ts = Date.now()`.
