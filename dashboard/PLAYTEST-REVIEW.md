@@ -25,13 +25,13 @@ touches is built, verified by execution, and resilient to disconnects and networ
   deal 90s-warn/5-min-timeout, betting claim-the-pot, showdown reveal-grace > retry-window,
   session-over signal both directions). No false forfeits.
 - **Reach & onboarding** — mobile in-hand UI, nav (no dead-ends), `/docs` how-to-play guide,
-  position badges + opponent-action feed, secure-context (HTTPS) guard.
+  position badges + opponent-action feed, plain-HTTP capable (no HTTPS needed, iter 92).
 - **Contracts** — escrow suite 31/31 (deposit/close/withdraw, conservation, dispute via
   committee, reducer→escrow, reentrancy, fee/no-return tokens, funding lock).
 
-**Deployment requirement:** the relay must be served over **HTTPS** (WebCrypto needs a
-secure context) with the **poker plugin enabled** AND **`openPokerTables`** set
-(`HIVERELAY_OPEN_POKER_TABLES=1`). The last one is non-obvious but **mandatory for
+**Deployment requirement:** **plain HTTP is fine — no HTTPS required** (seat signing runs on
+pure-JS noble ed25519, not WebCrypto; iter 92). The relay needs the **poker plugin enabled**
+AND **`openPokerTables`** set (`HIVERELAY_OPEN_POKER_TABLES=1`). The last one is non-obvious but **mandatory for
 multiplayer**: a hosted relay needs an API key, the browser client has none, so without the
 flag the host's `createTable` 401s and *nobody can host a game* (iter 87). The flag is
 poker-table-specific (general auth stays intact); creation is still rate-limited +
@@ -94,6 +94,26 @@ reveal at showdown), (c) serving noble to the browser (the recurring bundle step
 then the table UI.
 
 ### Multiplayer stack status
+**Dropped the HTTPS requirement — runs on a bare hiverelay over plain HTTP (iter 92).** Per the
+project owner: HiveRelay/Pears play should NOT need HTTPS — it should run on relays like FRA
+directly. Traced the dependency: HTTPS was needed for *exactly one thing* — a browser secure
+context so `crypto.subtle` (WebCrypto Ed25519) was available to sign the seat's log entries
+(`relay-table-client.js`). Everything else is already HTTP-native: the relay serves plain `http`
+(`createServer` from `'http'` + Bare/Pear `bare-http-server.js`, no TLS — HTTPS was only ever a
+Caddy proxy bolt-on), the mental-poker crypto already runs on pure-JS `@noble/curves`, MetaMask
+works over HTTP, and the clock-sync reads the HTTP `Date` header. Fix: swap `createSeat` /
+`signEntry` / `restoreSeat` from WebCrypto to the **noble ed25519 already served at /poker-engine**
+(the same primitive `chaum-pedersen.js` uses). Signatures stay RFC 8032, so the relay's sodium
+`crypto_sign_verify_detached` is unchanged; keygen draws from `crypto.getRandomValues`, which —
+unlike `crypto.subtle` — is available in an insecure context. The old `isSecureContext`/HTTPS gate
+is replaced by a `crypto.getRandomValues` check (never fails in a real browser). Verified (7/7):
+with `crypto.subtle` **removed** and `isSecureContext=false`, `createSeat`+`signEntry` still produced
+a valid 32-byte pubkey + 64-byte sig, and a **full trustless deal completed over plain HTTP with the
+relay accepting every noble signature (sodium-verified)** — the exact bare-hiverelay condition. Seat
+keys move from PKCS8 to raw-seed hex (internal); irrelevant for fresh play. Docs updated: `/docs`
+deploy step now says plain HTTP, no proxy. FRA untouched. `relay-table-client.js`, `mp-table.html`,
+`docs.html`.
+
 **Invite-link join, investigated + hardened (iter 91).** Traced the two-human handshake from a cold
 start: host clicks "Host a table" → gets a `?join=<code>` link (origin baked in via `location.origin`,
 so the joiner hits the *same* relay ✓); joiner opens the link → auto-accepts → sends a join code back →

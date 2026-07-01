@@ -624,16 +624,18 @@ if (joinParam) {
   log('opened from a join link — accepting the invite…')
   $('acceptInvite').click()
 }
-// The trustless deal uses WebCrypto (Ed25519), which only runs in a SECURE context
-// (HTTPS or localhost). Warn clearly up front instead of failing silently on Host/Join.
-if (!window.isSecureContext) {
+// Seat signing + the trustless deal run on pure-JS ed25519 (noble), which needs only
+// crypto.getRandomValues — available over plain HTTP on a bare hiverelay, no HTTPS or
+// secure context required. Guard only against a truly crypto-less environment (never
+// a normal browser); this replaces the old WebCrypto/HTTPS gate.
+if (!(window.crypto && window.crypto.getRandomValues)) {
   const warn = document.createElement('p')
   warn.className = 'note'
   warn.style.cssText = 'color:var(--red);border:1px solid rgba(244,112,103,.4);border-radius:8px;padding:.6rem .8rem;background:rgba(244,112,103,.08);margin-bottom:.8rem'
-  warn.innerHTML = '⚠ <b>Not a secure context.</b> The trustless deal needs WebCrypto, which only runs over <b>HTTPS</b> (or localhost). Host/Join/Demo are disabled until this relay is served over HTTPS.'
+  warn.innerHTML = '⚠ <b>No crypto randomness.</b> This browser exposes no <code>crypto.getRandomValues</code>, so seat keys can’t be generated. Host/Join/Demo are disabled.'
   $('landing').insertBefore(warn, $('landing').firstChild)
   ;['bHost', 'bJoin', 'bDemo'].forEach(id => { if ($(id)) $(id).disabled = true })
-  log('insecure context — serve this relay over HTTPS to play')
+  log('no crypto.getRandomValues — cannot generate seat keys')
 }
 window.__mpReady = true
 </script>

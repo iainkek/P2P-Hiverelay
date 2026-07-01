@@ -2,15 +2,21 @@
 //
 // Lets the dashboard table act as a real seat: create/join a relay table, sign
 // each action with the seat's ed25519 key, post it to the shared log, and read the
-// log back so every seat renders the same game. Signing uses native WebCrypto
-// Ed25519 (available in any secure context — localhost dev + https prod); the
-// canonical bytes match the relay's `_canonicalEntry` so `sodium.crypto_sign_-
-// verify_detached` accepts them (proven against the live relay).
+// log back so every seat renders the same game. Signing uses pure-JS ed25519 (noble,
+// already served at /poker-engine for the mental-poker layer) — NOT WebCrypto — so the
+// table runs over plain HTTP on a bare hiverelay, not just HTTPS/localhost. The signature
+// is RFC 8032, byte-identical to what the relay's `sodium.crypto_sign_verify_detached`
+// expects over the same `_canonicalEntry` bytes (proven against the live relay). Key
+// randomness comes from crypto.getRandomValues which — unlike crypto.subtle — is available
+// in an insecure context too, so no secure context is required anywhere in the flow.
 //
-// No bundler, no vendored crypto — same-origin ES module served via /poker-engine.
+// No bundler — same-origin ES module served via /poker-engine.
+
+import { ed25519 } from '@noble/curves/ed25519.js'
 
 const enc = new TextEncoder()
 const hex = (buf) => [...new Uint8Array(buf)].map((x) => x.toString(16).padStart(2, '0')).join('')
+const unhex = (s) => Uint8Array.from(s.match(/../g).map((h) => parseInt(h, 16)))
 
 // Deep key-sort for deterministic JSON — mirrors signed-log.js `_sortDeep`.
 function sortDeep (v) {
@@ -34,24 +40,25 @@ export function canonicalBytes (entry) {
 
 // A seat = an ed25519 keypair. `pub` (hex) is the writer id the relay knows.
 export async function createSeat () {
-  if (!globalThis.crypto || !crypto.subtle) throw new Error('WebCrypto unavailable — open over https or localhost')
-  const kp = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
-  const pub = hex(await crypto.subtle.exportKey('raw', kp.publicKey))
-  // Export the private key so a seat can be persisted across reloads (PKCS8 hex).
-  const priv = hex(await crypto.subtle.exportKey('pkcs8', kp.privateKey))
-  return { pub, priv, _key: kp.privateKey }
+  if (!globalThis.crypto || !crypto.getRandomValues) throw new Error('crypto.getRandomValues unavailable — no supported randomness source')
+  // 32-byte ed25519 seed. randomSecretKey() draws from crypto.getRandomValues, which is
+  // available in insecure (plain-HTTP) contexts too — no WebCrypto / secure context needed.
+  const _key = ed25519.utils.randomSecretKey()
+  const pub = hex(ed25519.getPublicKey(_key))
+  const priv = hex(_key) // persist the raw seed (hex) across reloads
+  return { pub, priv, _key }
 }
 
-// Restore a seat persisted via createSeat().priv (PKCS8 hex).
-export async function restoreSeat (pub, privPkcs8Hex) {
-  const bytes = Uint8Array.from(privPkcs8Hex.match(/../g).map((h) => parseInt(h, 16)))
-  const _key = await crypto.subtle.importKey('pkcs8', bytes, { name: 'Ed25519' }, true, ['sign'])
-  return { pub, priv: privPkcs8Hex, _key }
+// Restore a seat persisted via createSeat().priv (raw 32-byte seed, hex).
+export async function restoreSeat (pub, privSeedHex) {
+  const _key = unhex(privSeedHex)
+  return { pub, priv: privSeedHex, _key }
 }
 
 // Sign a log entry body with the seat's key → returns body + hex signature.
+// RFC 8032 detached signature (noble); the relay verifies it with sodium.
 export async function signEntry (seat, body) {
-  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, seat._key, canonicalBytes(body))
+  const sig = ed25519.sign(canonicalBytes(body), seat._key)
   return { ...body, signature: hex(sig) }
 }
 

@@ -371,12 +371,13 @@ player clicks <strong>Withdraw</strong>. Done — your winnings are in your wall
   has no API key, so without this flag a player's "Host a table" 401s on a keyed relay and nobody
   can start a game. Table creation stays rate-limited + capped; every in-game move is still
   governed by the signed append-only log.</li>
-  <li><strong>Serve it over HTTPS</strong> (e.g. Caddy — see the operator guide). The trustless
-  deal uses WebCrypto, which only runs in a secure context; the table warns clearly if it's not.</li>
+  <li><strong>Plain HTTP is fine — no HTTPS needed.</strong> Seat signing and the trustless deal
+  run on pure-JS ed25519 (noble), so the table works over plain <code>http://</code> on a bare
+  hiverelay; there's no WebCrypto / secure-context requirement and no reverse proxy to set up.</li>
   <li><strong>Set an API key</strong> (<code>HIVERELAY_API_KEY</code>) to protect the relay's
   management routes. Poker game routes (move/log/events) stay open by design and are abuse-bounded
   by the signed log.</li>
-  <li>Send both players <code>https://your-relay/mp-table</code> — one hosts, the other opens the
+  <li>Send both players <code>http://your-relay/mp-table</code> — one hosts, the other opens the
   join link, and they're playing.</li>
 </ol>
 <div class="callout warn">
