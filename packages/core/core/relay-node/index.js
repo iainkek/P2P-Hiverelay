@@ -1,4 +1,5 @@
 import Hyperswarm from 'hyperswarm'
+import HyperDHT from 'hyperdht'
 import Corestore from 'corestore'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
@@ -986,8 +987,19 @@ export class RelayNode extends EventEmitter {
         }
       })
 
+      // config.dhtOpts (optional, additive): extra options for the swarm's
+      // underlying HyperDHT node — Hyperswarm does not forward host/firewalled
+      // itself. Needed for single-machine local-DHT rigs (dev islands): there the
+      // node must bind a SPECIFIC loopback host (a 0.0.0.0 bind silently coexists
+      // with another local process's specific bind on Windows and steals its
+      // loopback traffic) and skip firewall self-detection (unreliable over
+      // loopback; a "firewalled" node publishes holepunch-only announces that a
+      // single-node DHT cannot serve). Omitted → identical behaviour to before.
+      const dht = this.config.dhtOpts
+        ? new HyperDHT({ bootstrap, ...this.config.dhtOpts })
+        : undefined
       this.swarm = new Hyperswarm({
-        bootstrap,
+        ...(dht ? { dht } : { bootstrap }),
         keyPair,
         maxConnections: this.config.maxConnections,
         firewall: (remotePubKey, payload) => this.swarmFirewall.check(remotePubKey, payload)
