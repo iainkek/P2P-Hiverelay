@@ -153,8 +153,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 
 # tini as PID 1 → graceful SIGTERM handling so shutdown actually runs.
 # Debian installs tini at /usr/bin/tini (vs Alpine's /sbin/tini).
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh", "node", "/app/packages/core/cli/index.js"]
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "/app/packages/core/cli/index.js"]
 
-# Default: start a relay node. Override to run other subcommands, e.g.:
+# Default: start a relay node on the mounted /data volume. The CLI reads the
+# storage path from --storage (HIVERELAY_STORAGE env is set but not consumed by
+# `start`), so pass it explicitly or the relay falls back to ephemeral
+# ~/.hiverelay/storage and loses identity + state on every restart.
 #   docker run ... p2p-hiverelay:latest help
-CMD ["start"]
+CMD ["start", "--storage", "/data"]
