@@ -152,8 +152,15 @@ export class ServiceProtocol extends EventEmitter {
     this._peerRoles = new Map() // pubkey hex -> role string
     this._defaultPeerRole = opts.defaultPeerRole || 'anonymous'
 
-    // Per-peer rate limiting
-    this._rateLimitMax = opts.rateLimitMax || 100 // requests per window
+    // Per-peer rate limiting. This bucket counts EVERY services-RPC a peer makes
+    // — feed subscribe, backfill getLog, getState polls, pubsub, AND app writes
+    // (e.g. poker moves) — all on one per-peer budget. The old 100/min default was
+    // sized as an anonymous-peer DoS guard, but it starves legitimate authenticated
+    // workloads: a 3-player mental-poker deal's feed/backfill chatter alone exhausts
+    // 100 tokens before the ~15 card-share posts land, so hole cards never reveal
+    // (P2Poker 2026-07-06). Default raised to 1200/min (20/s) — still a bounded DoS
+    // guard — and made overridable via config (RelayNode: serviceRateLimit{Max,Window}).
+    this._rateLimitMax = opts.rateLimitMax || 1200 // requests per window
     this._rateLimitWindow = opts.rateLimitWindow || 60_000 // 1 minute
     this._peerRateState = new Map() // pubkey -> { tokens, lastRefill }
   }
