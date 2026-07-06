@@ -331,7 +331,11 @@ export class BareRelay extends EventEmitter {
         // authenticated-user/relay-admin routes. Operators opt into an open
         // surface explicitly via config.serviceDefaultPeerRole.
         this._serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
-          defaultPeerRole: (this.config && this.config.serviceDefaultPeerRole) || 'anonymous'
+          defaultPeerRole: (this.config && this.config.serviceDefaultPeerRole) || 'anonymous',
+          // Per-peer services-RPC rate limit. Overridable for write-heavy authenticated
+          // workloads (e.g. poker); undefined falls back to ServiceProtocol's default.
+          rateLimitMax: this.config && this.config.serviceRateLimitMax,
+          rateLimitWindow: this.config && this.config.serviceRateLimitWindow
         })
         log.info('  services:', registered, 'registered')
       }
