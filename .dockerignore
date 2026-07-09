@@ -15,6 +15,10 @@ startos/*.tar
 .planning
 .publisher-storage
 .pos-publisher-storage
+.seed-publisher-storage
+.local-relay-storage
+*-storage/
+.*-storage/
 .nyc_output
 coverage
 test-zk-storage
