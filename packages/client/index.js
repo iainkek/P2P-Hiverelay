@@ -3228,6 +3228,48 @@ export class HiveRelayClient extends EventEmitter {
   // ─── Service RPC ──────────────────────────────────────────────────
 
   /**
+   * Dial a SPECIFIC relay by pubkey and wait for its service channel.
+   *
+   * callService({ relay }) can only use relays already in this.relays — i.e.
+   * relays this client's own topic discovery happened to find and connect.
+   * A peer that learned a relay pubkey out-of-band (a P2Poker invite bundle,
+   * a pinned fleet list) was stuck waiting on that topic lookup, which on the
+   * public DHT is slow and intermittent (guest join timeouts, 2026-07-10).
+   * Hyperswarm's joinPeer() dials the peer directly via DHT findPeer +
+   * holepunch — no shared topic required.
+   *
+   * Resolves true once the relay's service channel is open (idempotent: an
+   * already-connected relay resolves immediately), false on timeout. Never
+   * throws on network failure — callers fall back to whatever this.relays has.
+   *
+   *   const ok = await client.connectRelay(pubkeyHex, { timeoutMs: 20000 })
+   */
+  async connectRelay (pubkeyHex, opts = {}) {
+    this._ensureStarted()
+    const hex = String(pubkeyHex || '').toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error('connectRelay: pubkeyHex must be 64-char hex')
+    if (this.relays.get(hex)?.channels?.service) return true
+    const timeoutMs = opts.timeoutMs || 20_000
+
+    try { this.swarm.joinPeer(b4a.from(hex, 'hex')) } catch (_) { /* already joined */ }
+    this.swarm.flush().catch(() => {})
+
+    return await new Promise((resolve) => {
+      const onOpen = ({ relay }) => { if (relay === hex) done(true) }
+      const timer = setTimeout(() => done(false), timeoutMs)
+      const done = (ok) => {
+        clearTimeout(timer)
+        this.off('service-channel-open', onOpen)
+        resolve(ok)
+      }
+      this.on('service-channel-open', onOpen)
+      // Close the check-then-listen race: the channel may have opened between
+      // the fast-path check above and the listener registration.
+      if (this.relays.get(hex)?.channels?.service) done(true)
+    })
+  }
+
+  /**
    * Call a remote service on a relay node.
    *
    *   const result = await client.callService('identity', 'whoami')
