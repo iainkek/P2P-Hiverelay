@@ -427,6 +427,28 @@ async function start () {
     cliOverrides.gatewayUrl = process.env.HIVERELAY_GATEWAY_URL
   }
 
+  // HIVERELAY_SERVICE_RATE_LIMIT_MAX / HIVERELAY_SERVICE_RATE_LIMIT_WINDOW_MS —
+  // per-peer services-RPC bucket (ServiceProtocol). One budget counts EVERY
+  // services-RPC a peer makes (feed, backfill, polls, pubsub, app writes), so
+  // write-heavy authenticated workloads (poker relays) need it raised above the
+  // DoS-guard default. Container-friendly twin of config serviceRateLimit{Max,Window}.
+  if (process.env.HIVERELAY_SERVICE_RATE_LIMIT_MAX) {
+    const max = Number(process.env.HIVERELAY_SERVICE_RATE_LIMIT_MAX)
+    if (!Number.isFinite(max) || max <= 0) {
+      console.error('Invalid HIVERELAY_SERVICE_RATE_LIMIT_MAX: must be a positive number')
+      process.exit(1)
+    }
+    cliOverrides.serviceRateLimitMax = max
+  }
+  if (process.env.HIVERELAY_SERVICE_RATE_LIMIT_WINDOW_MS) {
+    const win = Number(process.env.HIVERELAY_SERVICE_RATE_LIMIT_WINDOW_MS)
+    if (!Number.isFinite(win) || win <= 0) {
+      console.error('Invalid HIVERELAY_SERVICE_RATE_LIMIT_WINDOW_MS: must be a positive number')
+      process.exit(1)
+    }
+    cliOverrides.serviceRateLimitWindow = win
+  }
+
   // ─── Operator subsidy (Phase 1: accrual + signed claims only) ──────
   // Container-friendly enable for the Blindspark packaging; config.json
   // `subsidy.*` is the equivalent for bare installs. Destination can be
