@@ -198,6 +198,29 @@ test('RelayNode - creates and starts', async (t) => {
   t.is(node.running, false, 'stopped')
 })
 
+test('RelayNode - threads configured service rate limits into ServiceProtocol', async (t) => {
+  const storage = tmpStorage()
+  const node = new RelayNode({
+    storage,
+    enableAPI: false,
+    enableSeeding: false,
+    enableRelay: false,
+    enableServices: true,
+    plugins: [],
+    serviceRateLimitMax: 2000,
+    serviceRateLimitWindow: 60_000
+  })
+  t.teardown(async () => {
+    try { await node.stop() } catch (_) {}
+    await rm(storage, { recursive: true, force: true })
+  })
+
+  await node.start()
+
+  t.is(node.serviceProtocol._rateLimitMax, 2000, 'configured request budget reaches the service protocol')
+  t.is(node.serviceProtocol._rateLimitWindow, 60_000, 'configured refill window reaches the service protocol')
+})
+
 test('RelayNode - getStats returns expected shape', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
   await node.start()
