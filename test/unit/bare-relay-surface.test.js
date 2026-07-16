@@ -77,6 +77,12 @@ test('bare smoke: identity temp path avoids Node-only process globals', async (t
   t.absent(source.includes('process.pid'), 'Bare identity path does not depend on Node process.pid')
 })
 
+test('bare smoke: service rate-limit config reaches ServiceProtocol', async (t) => {
+  const source = await readFile(new URL('../../packages/core/core/relay-node/bare-relay.js', import.meta.url), 'utf8')
+  t.ok(source.includes('rateLimitMax: this.config && this.config.serviceRateLimitMax'), 'forwards the configured request budget')
+  t.ok(source.includes('rateLimitWindow: this.config && this.config.serviceRateLimitWindow'), 'forwards the configured refill window')
+})
+
 test('bare smoke: accept-mode resolver gives same answer as RelayNode for same config', async (t) => {
   // Symmetry check — if these ever diverge, the two runtimes silently apply
   // different policies for identical config. That would be a security bug.

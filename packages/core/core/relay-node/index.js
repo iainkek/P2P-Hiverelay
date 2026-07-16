@@ -1347,7 +1347,9 @@ export class RelayNode extends EventEmitter {
       if (this.config.enableServices !== false && this.config.plugins) {
         this.serviceRegistry = new ServiceRegistry()
         this.serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
-          defaultPeerRole: this.config.serviceDefaultPeerRole || 'anonymous'
+          defaultPeerRole: this.config.serviceDefaultPeerRole || 'anonymous',
+          rateLimitMax: this.config.serviceRateLimitMax,
+          rateLimitWindow: this.config.serviceRateLimitWindow
         })
         this.pluginLoader = new PluginLoader()
 
