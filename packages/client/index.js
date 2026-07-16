@@ -3228,6 +3228,56 @@ export class HiveRelayClient extends EventEmitter {
   // ─── Service RPC ──────────────────────────────────────────────────
 
   /**
+   * Dial a specific relay by public key and wait for its service channel.
+   *
+   * This is the direct path for relay keys learned out of band (for example
+   * from an invite or pinned fleet). It does not depend on shared-topic
+   * discovery having already populated `relays`.
+   *
+   * Resolves true when the requested service channel opens, false on timeout.
+   * Network failures are intentionally represented by false; malformed keys
+   * and use before start remain programmer errors.
+   */
+  async connectRelay (pubkeyHex, opts = {}) {
+    this._ensureStarted()
+    const relayPubkey = String(pubkeyHex || '').toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(relayPubkey)) {
+      throw new Error('connectRelay: pubkeyHex must be 64-char hex')
+    }
+    if (this.relays.get(relayPubkey)?.channels?.service) return true
+
+    const timeoutMs = Number.isFinite(opts.timeoutMs) && opts.timeoutMs >= 0
+      ? opts.timeoutMs
+      : 20_000
+
+    try {
+      this.swarm.joinPeer(b4a.from(relayPubkey, 'hex'))
+      Promise.resolve(this.swarm.flush()).catch(() => {})
+    } catch (_) {
+      // joinPeer is idempotent; a network/destroy race is reported by timeout.
+    }
+
+    return new Promise((resolve) => {
+      let settled = false
+      const done = (connected) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.off('service-channel-open', onOpen)
+        resolve(connected)
+      }
+      const onOpen = ({ relay } = {}) => {
+        if (relay === relayPubkey) done(true)
+      }
+      const timer = setTimeout(() => done(false), timeoutMs)
+      this.on('service-channel-open', onOpen)
+      // Close the check/listen race if the channel opened while the listener
+      // was being registered.
+      if (this.relays.get(relayPubkey)?.channels?.service) done(true)
+    })
+  }
+
+  /**
    * Call a remote service on a relay node.
    *
    *   const result = await client.callService('identity', 'whoami')
