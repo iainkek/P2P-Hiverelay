@@ -6,6 +6,20 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.24.4] — 2026-07-20
+
+### Added
+- **Direct relay dialing by public key.** Clients can dial a specific relay
+  public key learned out of band, reuse an existing service channel, and wait
+  for a matching channel with a bounded timeout. Malformed keys are rejected at
+  the API boundary and an unreachable relay resolves `false`.
+
+### Fixed
+- **Configured service request budgets reach the protocol layer.**
+  `serviceRateLimitMax` and `serviceRateLimitWindow` are forwarded into
+  `ServiceProtocol` in both the Node and Bare relay runtimes, keeping operator
+  request-budget configuration symmetric across supported runtimes.
+
 ## [0.24.3] — 2026-07-08
 
 ### Added
