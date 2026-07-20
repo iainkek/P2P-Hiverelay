@@ -1,8 +1,8 @@
 # P2Poker generic relay lifecycle handoff
 
-**Status:** local-only review material; no remote action performed  
-**Prepared:** 2026-07-20  
-**Release base:** Hive Relay `0.24.3` at `5a7e6f472110c5bfdb9d37411340688430750fcd`  
+**Status:** local-only review material; no remote action performed
+**Prepared:** 2026-07-20
+**Release base:** Hive Relay `0.24.3` at `5a7e6f472110c5bfdb9d37411340688430750fcd`
 **Reviewed tip:** `bb764372b41aabbebc7693971e3e6f5f108d0b6c`
 
 ## Immutable commit stack
@@ -123,4 +123,3 @@ Focused result: 42/42 tests and 202/202 assertions pass under Node 22 on WSL2.
 - No pull request was created, updated, commented on, reviewed, approved, or merged.
 - No package was published and no registry was mutated.
 - No release, tag, deployment, relay-fleet change, upload, signing ceremony, paid API call, or on-chain transaction was performed.
-
