@@ -249,8 +249,9 @@ keeps entries opaque, and exposes a token-gated HTTP/SSE bridge for sync.
 - Signed opaque rows and invite keys persist to
   `<storage>/outboxlog-state.json` when a Node relay supplies `config.storage`.
 
-Enable it explicitly through `config.plugins` / `services.json` (`outboxlog`)
-or, on the Bare/appliance path, with `HIVERELAY_OUTBOXLOG=1`.
+Enable it explicitly through `config.plugins` / `services.json` (`outboxlog`),
+through the declarative Node-fleet list `HIVERELAY_PLUGINS=outboxlog`, or on the
+Bare/appliance path with `HIVERELAY_OUTBOXLOG=1`.
 
 **Namespace registration (required for app-specific records — deployment footgun):**
 The outbox is **app-neutral**. Every signed record carries a namespace, and an
@@ -263,7 +264,7 @@ namespace to admit. Register it one of two ways:
 
 - config: `config.outboxlog.namespace = "peerit"` (or a `config.outboxlog.namespaces`
   map to register several at once)
-- env (Bare/appliance): `HIVERELAY_OUTBOXLOG_NAMESPACE=peerit`
+- env (Node fleet or Bare/appliance): `HIVERELAY_OUTBOXLOG_NAMESPACE=peerit`
 
 The env var is a **default, not an override**: a `outboxlog.namespace` persisted
 in `config.json` wins over it (matching `HIVERELAY_ACCEPT_MODE`). When neither is

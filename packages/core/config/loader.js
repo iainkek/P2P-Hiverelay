@@ -69,6 +69,27 @@ export function applyOutboxlogNamespaceEnv (cliOverrides = {}, rawEnvValue, hasP
   return cliOverrides
 }
 
+/**
+ * Apply a comma-separated HIVERELAY_PLUGINS selection for container fleets.
+ *
+ * Fleet configuration is declarative, so an explicitly supplied env list must
+ * win over an older <storage>/services.json left on the persistent volume.
+ * RelayNode consumes the private marker before loading services and filters the
+ * selection through the builtin plugin registry.
+ */
+export function applyServicePluginsEnv (cliOverrides = {}, rawEnvValue) {
+  if (rawEnvValue == null) return cliOverrides
+  const plugins = [...new Set(String(rawEnvValue)
+    .split(',')
+    .map(name => name.trim().toLowerCase())
+    .filter(Boolean))]
+  if (plugins.length === 0) return cliOverrides
+  cliOverrides.enableServices = true
+  cliOverrides.plugins = plugins
+  cliOverrides._servicePluginsFromEnv = true
+  return cliOverrides
+}
+
 // Storage-cap safety fractions of the volume. The built-in default
 // (config/default.js maxStorageBytes = 50 GB) is a FIXED value that does not
 // scale to the disk — on a small box it is too big: a 58 GB box with a 50 GB

@@ -19,7 +19,7 @@ import gracedown from 'pear-gracedown'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
-import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv, resolveStorageCap } from '../config/loader.js'
+import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv, applyServicePluginsEnv, resolveStorageCap } from '../config/loader.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
 import { join, dirname } from 'path'
@@ -458,6 +458,7 @@ async function start () {
     process.env.HIVERELAY_OUTBOXLOG_NAMESPACE,
     hasPersistedOutboxlogNamespace()
   )
+  applyServicePluginsEnv(cliOverrides, process.env.HIVERELAY_PLUGINS)
 
   const config = loadConfig(cliOverrides)
 

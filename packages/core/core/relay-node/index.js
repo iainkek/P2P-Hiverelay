@@ -731,6 +731,13 @@ export class RelayNode extends EventEmitter {
       return
     }
 
+    if (this.config._servicePluginsFromEnv === true) {
+      this.config.plugins = expandServiceDeps(this.config.plugins)
+      this.config.enableServices = this.config.plugins.length > 0
+      delete this.config._servicePluginsFromEnv
+      return
+    }
+
     const path = this._servicesOverridePath()
     if (!path) return
     try {
