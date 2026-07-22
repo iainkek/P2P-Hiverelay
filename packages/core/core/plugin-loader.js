@@ -133,7 +133,12 @@ export class PluginLoader {
 
     let mod
     try {
-      mod = await import(info.module)
+      if (this._builtinDir && info.module.startsWith('p2p-hiveservices/builtin/')) {
+        const relative = info.module.slice('p2p-hiveservices/builtin/'.length)
+        mod = await import(pathToFileURL(join(this._builtinDir, relative)).href)
+      } else {
+        mod = await import(info.module)
+      }
     } catch (err) {
       throw new Error(
         'PluginLoader: builtin "' + name + '" requires p2p-hiveservices to be installed. ' +
