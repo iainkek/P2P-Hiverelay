@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const capabilitySources = [
   'packages/services/builtin/opaque-core-availability-service.js',
   'packages/services/builtin/opaque-core-availability-protocol.js',
+  'packages/core/core/protocol/opaque-core-availability.js',
   'packages/client/opaque-core-availability.js'
 ]
 
@@ -82,4 +83,15 @@ test('relay identity vocabulary is restricted to transport authentication and pr
       t.absent(/writer|indexer|quorum|member|append/i.test(line), `${relativePath}: relay identity cannot become table authority`)
     }
   }
+})
+
+test('public documentation matches the three-capability service boundary', (t) => {
+  const documentation = fs.readFileSync(path.join(root, 'docs/opaque-core-availability.md'), 'utf8')
+  for (const capability of ['register', 'status', 'prove']) {
+    t.ok(documentation.includes(`\`${capability}\``), `documents ${capability}`)
+  }
+  t.ok(documentation.includes("relay.callService('opaque-core-availability'"), 'documents the authenticated service transport')
+  t.ok(documentation.includes('operator-only'), 'keeps the operator HTTP route separate')
+  t.ok(documentation.includes('does not'), 'records explicit non-responsibilities')
+  t.ok(documentation.includes('not proof of unique replication'), 'does not overclaim proof strength')
 })
