@@ -1,6 +1,9 @@
 import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
+import Hypercore from 'hypercore'
+import os from 'os'
+import path from 'path'
 import { ServiceRegistry } from '../../packages/core/core/services/registry.js'
 import { Seeder } from '../../packages/core/core/relay-node/seeder.js'
 import { OpaqueCoreAvailabilityService } from '../../packages/services/builtin/opaque-core-availability-service.js'
@@ -8,6 +11,9 @@ import {
   createOpaqueCoreAvailabilityClient,
   createOpaqueCoreRegistration
 } from '../../packages/client/opaque-core-availability.js'
+
+let temporaryIndex = 0
+const temporaryStorage = () => path.join(os.tmpdir(), `opaque-core-e2e-${process.pid}-${temporaryIndex++}`)
 
 function keyPair () {
   const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
@@ -97,6 +103,62 @@ test('client relay.callService path registers, observes, and proves through the 
     { serviceName: 'opaque-core-availability', method: 'prove' }
   ], 'relay.callService is the only table-client transport')
 
+  await registry.stopAll()
+  await seeder.stop()
+})
+
+test('registered Seeder core produces an author-verifiable local retrievability proof', async (t) => {
+  const caller = keyPair()
+  const relayIdentity = keyPair()
+  const source = new Hypercore(temporaryStorage())
+  await source.ready()
+  await source.append([b4a.from('first'), b4a.from('second'), b4a.from('third')])
+  const coreKey = b4a.toString(source.key, 'hex')
+
+  const store = { get: () => source }
+  const swarm = { join () {}, async leave () {} }
+  const seeder = new Seeder(store, swarm)
+  await seeder.start()
+
+  const registry = new ServiceRegistry({ metering: false })
+  const service = new OpaqueCoreAvailabilityService({ now: () => 1_900_000_000_000 })
+  registry.register(service)
+  await registry.startAll({ node: { seeder, store, keyPair: relayIdentity }, keyPair: relayIdentity })
+
+  const relay = {
+    callService: (serviceName, method, params) => registry.handleRequest(serviceName, method, params, {
+      caller: 'remote',
+      remotePubkey: b4a.toString(caller.publicKey, 'hex')
+    })
+  }
+  const verifier = new Hypercore(temporaryStorage(), source.key)
+  await verifier.ready()
+  const client = createOpaqueCoreAvailabilityClient(relay, {
+    relayPubkey: relayIdentity.publicKey,
+    callerPubkey: caller.publicKey,
+    verifierCore: verifier
+  })
+
+  const registered = await client.register(createOpaqueCoreRegistration({
+    coreKey,
+    nonce: '12'.repeat(32),
+    expiresAt: 1_900_000_030_000,
+    keyPair: caller
+  }))
+  t.is(registered.code, 'REGISTERED')
+
+  const proof = await client.prove({
+    version: 1,
+    coreKey,
+    index: 1,
+    nonce: '34'.repeat(32),
+    minLength: 3
+  })
+  t.is(proof.code, 'PROVED')
+  t.ok(proof.contentProof, 'response carries the existing Hypercore content proof')
+  t.is(proof.contiguousLength, 3)
+
+  await verifier.close()
   await registry.stopAll()
   await seeder.stop()
 })
