@@ -12,7 +12,8 @@
     "./shard-transport.js": "./shard-transport.js",
     "./blind-custody.js": "./blind-custody.js",
     "./custody.js": "./custody.js",
-    "./notify.js": "./notify.js"
+    "./notify.js": "./notify.js",
+    "./opaque-core-availability.js": "./opaque-core-availability.js"
   },
   "imports": {
     "events": {
@@ -41,6 +42,7 @@
     "blind-custody.js",
     "custody.js",
     "notify.js",
+    "opaque-core-availability.js",
     "README.md",
     "LICENSE"
   ],
