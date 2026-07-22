@@ -1,7 +1,11 @@
-import {
-  createOpaqueCoreRegistration,
-  verifyOpaqueCoreAvailabilityProof
-} from '../services/builtin/opaque-core-availability-protocol.js'
+let protocol
+try {
+  protocol = await import('p2p-hiverelay/core/protocol/opaque-core-availability.js')
+} catch {
+  protocol = await import('../core/core/protocol/opaque-core-availability.js')
+}
+
+const { createOpaqueCoreRegistration, verifyOpaqueCoreAvailabilityProof } = protocol
 
 export { createOpaqueCoreRegistration, verifyOpaqueCoreAvailabilityProof }
 
