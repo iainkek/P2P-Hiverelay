@@ -4,6 +4,7 @@ import { readFile, writeFile, rename, unlink, mkdir } from 'fs/promises'
 import { dirname } from 'path'
 
 const PERSIST_SCHEMA_VERSION = 1
+const PUBLIC_KEY_HEX = /^[0-9a-f]{64}$/i
 
 export class Seeder extends EventEmitter {
   constructor (store, swarm, opts = {}) {
@@ -39,6 +40,10 @@ export class Seeder extends EventEmitter {
   }
 
   async seedCore (publicKeyHex) {
+    if (typeof publicKeyHex !== 'string' || !PUBLIC_KEY_HEX.test(publicKeyHex)) {
+      throw new Error('BAD_CORE_KEY')
+    }
+    publicKeyHex = publicKeyHex.toLowerCase()
     if (this.cores.has(publicKeyHex)) return this.cores.get(publicKeyHex)
 
     const key = b4a.from(publicKeyHex, 'hex')
@@ -93,6 +98,20 @@ export class Seeder extends EventEmitter {
     if (!this._restoring) this._persist()
     this.emit('seeding-core', { publicKeyHex, length: core.length })
 
+    return entry
+  }
+
+  // Resolve only a core already admitted to this Seeder's registry. This is
+  // the service-safe lookup: it never calls store.get() for caller input and
+  // intentionally makes absent, closed, and non-public entries indistinct.
+  resolveSeededCore (publicKeyHex) {
+    if (typeof publicKeyHex !== 'string' || !PUBLIC_KEY_HEX.test(publicKeyHex)) return null
+    const keyHex = publicKeyHex.toLowerCase()
+    const entry = this.cores.get(keyHex)
+    if (!entry || !entry.core || entry.blind === true || entry.private === true) return null
+    if (entry.privacyTier && String(entry.privacyTier).toLowerCase() !== 'public') return null
+    if (entry.core.closed || entry.core.closing) return null
+    if (!entry.core.key || b4a.toString(entry.core.key, 'hex') !== keyHex) return null
     return entry
   }
 

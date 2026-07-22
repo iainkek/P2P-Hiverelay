@@ -57,25 +57,41 @@ export class RetrievabilityProofProvider {
   async prove (params = {}, context = {}) {
     const { keyHex, index, nonce, signatureProfile } = normalizeProofChallenge(params)
     const node = this.node
-    if (!node || !node.appRegistry) throw proofError('SERVICE_UNAVAILABLE')
+    if (!node) throw proofError('SERVICE_UNAVAILABLE')
     const keyPair = this._keyPair || node.keyPair || (node.swarm && node.swarm.keyPair)
     if (!keyPair || !keyPair.secretKey) throw proofError('NO_RELAY_KEYPAIR')
 
-    if (!node.appRegistry.has(keyHex)) throw proofError('NOT_SEEDED')
-    const entry = node.appRegistry.get(keyHex)
-    if (!entry || !entry.drive) throw proofError('NOT_SEEDED')
-    if (this._isRedacted(node.appRegistry, entry)) throw proofError('NOT_SEEDED')
+    // Registry-before-open: resolve only an already admitted app metadata core
+    // or an already registered Seeder core. Neither path calls store.get() for
+    // challenge input, keeping unknown keys privacy-indistinguishable.
+    const resolved = this._resolveSeededCore(node, keyHex)
+    if (!resolved) throw proofError('NOT_SEEDED')
 
     if (!this._takeToken(this._callerKey(context))) throw proofError('RATE_LIMITED')
     if (!this._takeGlobal()) throw proofError('RATE_LIMITED')
 
-    const drive = entry.drive
-    if (drive.closed || drive.closing) throw proofError('DRIVE_CLOSED')
-    if (typeof drive.ready === 'function') await drive.ready()
-    const core = drive.core || (drive.db && drive.db.core)
-    if (!core) throw proofError('NO_META_CORE')
+    const core = resolved.core
+    if (core.closed || core.closing) throw proofError('DRIVE_CLOSED')
+    if (typeof core.ready === 'function') await core.ready()
 
     return buildStorageProof({ core, index, nonce, keyPair, signatureProfile })
+  }
+
+  _resolveSeededCore (node, keyHex) {
+    const appRegistry = node.appRegistry
+    if (appRegistry && typeof appRegistry.has === 'function' && appRegistry.has(keyHex)) {
+      const entry = appRegistry.get(keyHex)
+      if (entry && entry.drive && !this._isRedacted(appRegistry, entry)) {
+        const core = entry.drive.core || (entry.drive.db && entry.drive.db.core)
+        if (core) return { core, source: 'app-registry' }
+      }
+      return null
+    }
+
+    const seeder = node.seeder
+    if (!seeder || typeof seeder.resolveSeededCore !== 'function') return null
+    const entry = seeder.resolveSeededCore(keyHex)
+    return entry && entry.core ? { core: entry.core, source: 'seeder-registry' } : null
   }
 
   _isRedacted (appRegistry, entry) {
