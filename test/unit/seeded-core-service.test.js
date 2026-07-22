@@ -226,6 +226,45 @@ test('prove uses registered local blocks, minimum length, nonce, and relay ident
   await service.stop()
 })
 
+test('prove rejects replay, remote-only blocks, and every signed binding mutation', async (t) => {
+  const held = await harness({ length: 4 })
+  held.seeded.set(CORE_KEY, { core: held.seededCore, publicKeyHex: CORE_KEY })
+  const challenge = {
+    version: 1,
+    coreKey: CORE_KEY,
+    index: 1,
+    nonce: '88'.repeat(32),
+    minLength: 4
+  }
+  const proof = await held.service.prove(challenge, context())
+  t.is(proof.code, 'PROVED')
+  t.alike(await held.service.prove(challenge, context()), { ok: false, code: 'REPLAYED_NONCE' })
+
+  const mutations = [
+    { relayPubkey: b4a.toString(CALLER_B.publicKey, 'hex') },
+    { coreKey: '99'.repeat(32) },
+    { index: 2 },
+    { fork: 1 },
+    { observedLength: 5 },
+    { blockHash: 'aa'.repeat(32) },
+    { signature: '00'.repeat(64) }
+  ]
+  for (const mutation of mutations) {
+    t.is(await verifyOpaqueCoreAvailabilityProof({
+      response: { ...proof, ...mutation },
+      challenge,
+      relayPubkey: RELAY.publicKey
+    }), false, `rejects ${Object.keys(mutation)[0]} mutation`)
+  }
+  await held.service.stop()
+
+  const remoteOnly = await harness({ length: 4, local: false })
+  remoteOnly.seeded.set(CORE_KEY, { core: remoteOnly.seededCore, publicKeyHex: CORE_KEY })
+  t.alike(await remoteOnly.service.prove({ ...challenge, nonce: 'aa'.repeat(32) }, context()), { ok: false, code: 'NOT_SEEDED' })
+  t.is(remoteOnly.seededCore.calls.get, 0, 'a remote-only block is never fetched for proof')
+  await remoteOnly.service.stop()
+})
+
 test('registered cores remain available after service restart through Seeder persistence', async (t) => {
   const first = await harness()
   await first.service.register(registration(), context())
