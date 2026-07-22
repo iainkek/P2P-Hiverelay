@@ -22,6 +22,15 @@ export { StorageService } from './builtin/storage-service.js'
 export { ZKService } from './builtin/zk-service.js'
 export { ArbitrationService } from './builtin/arbitration-service.js'
 export { StorageProofService } from './builtin/storage-proof-service.js'
+export { OpaqueCoreAvailabilityService } from './builtin/opaque-core-availability-service.js'
+export {
+  OPAQUE_CORE_PROOF_DOMAIN,
+  OPAQUE_CORE_PROTOCOL_VERSION,
+  OPAQUE_CORE_REGISTER_DOMAIN,
+  createOpaqueCoreRegistration,
+  verifyOpaqueCoreAvailabilityProof,
+  verifyOpaqueCoreRegistration
+} from './builtin/opaque-core-availability-protocol.js'
 export { ShardStoreService, ShardEngine, shardHash, normalizeShardAddress } from './builtin/shard-store/index.js'
 export {
   WITNESSLOG_DEFAULT_MAX_AGE_MS,
