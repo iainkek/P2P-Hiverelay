@@ -17,6 +17,7 @@
 import minimist from 'minimist'
 import gracedown from 'pear-gracedown'
 import { RelayNode } from '../core/relay-node/index.js'
+import { parseServicePluginsEnv } from '../core/plugin-loader.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
 import { loadConfig, saveConfig, ensureDirs, CONFIG_PATH, deriveTokenFromSeed, applyOutboxlogNamespaceEnv, resolveStorageCap } from '../config/loader.js'
@@ -302,6 +303,18 @@ async function init () {
 
 async function start () {
   const cliOverrides = {}
+  let servicePluginsEnv
+  try {
+    servicePluginsEnv = parseServicePluginsEnv(process.env.HIVERELAY_PLUGINS)
+  } catch (err) {
+    console.error(err.message)
+    process.exit(1)
+  }
+  if (servicePluginsEnv) {
+    cliOverrides.enableServices = true
+    cliOverrides.plugins = servicePluginsEnv
+    cliOverrides._servicesEnvPlugins = servicePluginsEnv
+  }
   if (args.storage) cliOverrides.storage = args.storage
   else if (process.env.HIVERELAY_STORAGE) cliOverrides.storage = process.env.HIVERELAY_STORAGE
   if (args['max-storage']) cliOverrides.maxStorageBytes = parseBytesOrExit(args['max-storage'], '--max-storage')
