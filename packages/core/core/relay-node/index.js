@@ -502,7 +502,15 @@ export class RelayNode extends EventEmitter {
   constructor (opts = {}) {
     super()
     this.mode = opts.mode || opts.productProfile || 'relay-core'
+    this._servicesEnvPlugins = Array.isArray(opts._servicesEnvPlugins)
+      ? expandServiceDeps(opts._servicesEnvPlugins)
+      : null
     this.config = buildConfig(this.mode, opts)
+    delete this.config._servicesEnvPlugins
+    if (this._servicesEnvPlugins && !isRelayKernelProfile(this)) {
+      this.config.enableServices = true
+      this.config.plugins = this._servicesEnvPlugins
+    }
     this._operatingMode = this.mode
     this.store = new Corestore(this.config.storage)
     this.swarm = null
@@ -728,6 +736,12 @@ export class RelayNode extends EventEmitter {
     if (isRelayKernelProfile(this)) {
       this.config.enableServices = false
       this.config.plugins = []
+      return
+    }
+
+    if (this._servicesEnvPlugins) {
+      this.config.enableServices = true
+      this.config.plugins = this._servicesEnvPlugins
       return
     }
 

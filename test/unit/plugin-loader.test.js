@@ -1,7 +1,7 @@
 import test from 'brittle'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { expandPluginConfigs, PluginLoader } from '../../packages/core/core/plugin-loader.js'
+import { expandPluginConfigs, parseServicePluginsEnv, PluginLoader } from '../../packages/core/core/plugin-loader.js'
 
 test('plugin loader expands poker bundle and de-duplicates builtin dependencies', (t) => {
   t.alike(expandPluginConfigs(['poker', 'vrf', 'ai', 'poker']), [
@@ -11,6 +11,24 @@ test('plugin loader expands poker bundle and de-duplicates builtin dependencies'
     'zk',
     'ai'
   ])
+})
+
+test('plugin loader parses environment service selection and expands bundles', (t) => {
+  t.alike(parseServicePluginsEnv(' poker, storage-proof, outboxlog, opaque-core-availability, poker '), [
+    'poker',
+    'storage-proof',
+    'outboxlog',
+    'opaque-core-availability',
+    'vrf',
+    'arbitration',
+    'zk'
+  ])
+  t.is(parseServicePluginsEnv(undefined), null)
+  t.is(parseServicePluginsEnv(' , '), null)
+  t.exception(
+    () => parseServicePluginsEnv('poker,not-a-service'),
+    /Invalid HIVERELAY_PLUGINS: unknown service\(s\): not-a-service/
+  )
 })
 
 test('plugin loader resolves poker as a builtin service provider', async (t) => {

@@ -143,6 +143,41 @@ test('RelayNode - relaykernel locks persisted services overrides off', async (t)
   t.is(persisted.lockReason, 'relaykernel-profile')
 })
 
+test('RelayNode - environment service selection overrides persisted dashboard config', async (t) => {
+  const storage = tmpStorage()
+  await mkdir(storage, { recursive: true })
+  await writeFile(path.join(storage, 'services.json'), JSON.stringify({
+    enabled: true,
+    plugins: ['poker']
+  }))
+
+  const node = new RelayNode({
+    storage,
+    enableAPI: false,
+    _servicesEnvPlugins: ['poker', 'storage-proof', 'outboxlog', 'opaque-core-availability']
+  })
+  t.teardown(async () => {
+    try { await node.store.close() } catch (_) {}
+    await rm(storage, { recursive: true, force: true })
+  })
+
+  await node._loadServicesOverride()
+  t.is(node.config.enableServices, true)
+  t.alike(node.config.plugins, [
+    'poker',
+    'storage-proof',
+    'outboxlog',
+    'opaque-core-availability',
+    'vrf',
+    'arbitration',
+    'zk'
+  ])
+  t.absent(node.config._servicesEnvPlugins, 'private environment marker is not exposed in runtime config')
+
+  const persisted = JSON.parse(await readFile(path.join(storage, 'services.json'), 'utf8'))
+  t.alike(persisted.plugins, ['poker'], 'environment override does not rewrite durable dashboard config')
+})
+
 test('RelayNode - startup DHT flush is bounded', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false, dhtFlushTimeoutMs: 5 })
   t.teardown(async () => {

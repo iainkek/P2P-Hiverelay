@@ -71,6 +71,20 @@ export function expandServiceDeps (plugins) {
   return [...set].filter((p) => BUILTIN_SERVICE_NAMES.includes(p))
 }
 
+export function parseServicePluginsEnv (value) {
+  if (typeof value !== 'string') return null
+  const plugins = value
+    .split(',')
+    .map(name => name.trim())
+    .filter(Boolean)
+  if (plugins.length === 0) return null
+  const unknown = [...new Set(plugins.filter(name => !BUILTIN_SERVICE_NAMES.includes(name)))]
+  if (unknown.length > 0) {
+    throw new Error('Invalid HIVERELAY_PLUGINS: unknown service(s): ' + unknown.join(', '))
+  }
+  return expandServiceDeps(plugins)
+}
+
 export class PluginLoader {
   constructor (opts = {}) {
     this.plugins = []
