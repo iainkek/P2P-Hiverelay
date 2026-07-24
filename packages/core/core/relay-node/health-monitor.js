@@ -124,23 +124,17 @@ export class HealthMonitor extends EventEmitter {
       } else {
         this._zeroConnectionsSince = null
 
-        // --- Stale connections ---
-        let staleCount = 0
+        // An open Hyperswarm connection may carry long-lived Protomux channels
+        // without emitting activity on the outer stream. Inactivity is useful
+        // telemetry, but it is not proof that the transport is stale.
+        let idleCount = 0
         for (const [, entry] of this.node.connections) {
           if (now - entry.lastActivity > this.opts.staleConnectionThreshold) {
-            staleCount++
+            idleCount++
           }
         }
         const totalConns = this.node.connections.size
-        const stalePct = totalConns > 0 ? (staleCount / totalConns) * 100 : 0
-
-        if (stalePct > 80) {
-          healthy = false
-          this._status.checks.connections = { ok: false, staleCount, totalConns, stalePct: Math.round(stalePct) }
-          this.emit('health-warning', { check: 'stale-connections', staleCount, totalConns, stalePct: Math.round(stalePct) })
-        } else {
-          this._status.checks.connections = { ok: true, staleCount, totalConns }
-        }
+        this._status.checks.connections = { ok: true, idleCount, totalConns }
       }
     }
 

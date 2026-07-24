@@ -66,6 +66,28 @@ test('HealthMonitor - detects zero connections after threshold', async (t) => {
   t.is(warningFired, true)
 })
 
+test('HealthMonitor - preserves idle open connections', async (t) => {
+  const conn = {}
+  const node = createMockNode({ connections: [conn] })
+  node.connections.get(conn).lastActivity = 0
+  const hm = new HealthMonitor(node, {
+    checkInterval: 999999,
+    staleConnectionThreshold: 1
+  })
+
+  let staleWarning = false
+  hm.on('health-warning', (details) => {
+    if (details.check === 'stale-connections') staleWarning = true
+  })
+
+  await hm._check()
+  const status = hm.getStatus()
+  t.is(status.healthy, true)
+  t.is(status.checks.connections.ok, true)
+  t.is(status.checks.connections.idleCount, 1)
+  t.is(staleWarning, false)
+})
+
 test('HealthMonitor - log buffer works', async (t) => {
   const node = createMockNode()
   const hm = new HealthMonitor(node, { checkInterval: 999999 })
