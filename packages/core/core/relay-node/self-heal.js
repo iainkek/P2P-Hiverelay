@@ -83,17 +83,10 @@ export class SelfHeal extends EventEmitter {
     }
 
     if (check === 'stale-connections') {
-      // Destroy stale connections
-      const now = Date.now()
-      const threshold = this._healthMonitor ? this._healthMonitor.opts.staleConnectionThreshold : 5 * 60 * 1000
-      let destroyed = 0
-      for (const [conn, entry] of this.node.connections) {
-        if (now - entry.lastActivity > threshold) {
-          try { conn.destroy() } catch {}
-          destroyed++
-        }
-      }
-      this._recordAction({ type: 'destroy-stale-connections', check, destroyed, details })
+      // Outer-stream inactivity is not proof that a multiplexed Protomux
+      // connection is dead. Hyperswarm owns transport liveness and emits close
+      // when the connection is actually gone, so preserve every open stream.
+      this._recordAction({ type: 'preserve-idle-connections', check, destroyed: 0, details })
       return
     }
 

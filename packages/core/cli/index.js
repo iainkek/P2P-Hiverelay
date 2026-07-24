@@ -577,15 +577,12 @@ async function start () {
   })
 
   node.on('health-warning', (details) => {
-    // stale-connections is always auto-remediated by self-heal
-    // (destroy-stale-connections). It's routine maintenance, not an
-    // operator-actionable problem — log at info so it doesn't drown the
-    // real warnings (memory/disk/error-rate). The event itself is
-    // unchanged so dashboards/metrics still see it as a health-warning.
-    // Confirmed log-noise source in the v0.8.13 recurrence repro.
+    // Older monitors may still report outer-stream inactivity. Self-heal
+    // preserves those open multiplexed connections because inactivity alone
+    // is not an operator-actionable problem.
     if (details.check === 'stale-connections') {
       log.info({ health: details },
-        `self-heal: reaping ${details.staleCount}/${details.totalConns} stale connections`)
+        `self-heal: preserving ${details.staleCount}/${details.totalConns} idle connections`)
       return
     }
     log.warn({ health: details }, `health warning: ${details.check} — ${details.reason || 'threshold exceeded'}`)
