@@ -147,42 +147,41 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
   // single-tracker path — destroy() on the top-level tracker cancels
   // its inner block requests via hypercore's documented API.
 
-  // Probe: call drive.download(path) once with no opts to detect API shape.
-  // If old API, the result has .done() + .destroy() and we use the
-  // tracker-based path. If new (Promise), we throw away the result and
-  // run our cancellable re-implementation instead.
+  // Hyperdrive 11 declares download() as async. Detect that shape before
+  // invoking it so the cancellable walk is the only download started.
+  // Ambiguous/custom implementations use one runtime probe, which is reused.
   // drive.download() throws synchronously if the drive is closing; let
   // that bubble up — the caller sees the same error path it would have
   // without the timeout wrapper.
+  const hasWalkSurface = typeof drive.getBlobs === 'function' &&
+    typeof drive.entry === 'function' && typeof drive.list === 'function'
+  if (hasWalkSurface && isAsyncFunction(drive.download)) {
+    return _runNewPromiseDownload(drive, path, timeoutMs, signal)
+  }
+
   let oldTrackerProbe = null
   let promiseProbe = null
   const probe = drive.download(path)
   if (probe && typeof probe.done === 'function' && typeof probe.destroy === 'function') {
     oldTrackerProbe = probe
   } else if (probe && typeof probe.then === 'function') {
-    // New API — we re-do the work below. Detach the orphan Promise so
-    // unhandled rejection warnings don't surface.
+    // Ambiguous Promise-returning implementation: await this single call.
     promiseProbe = probe
-    probe.catch(() => {})
   }
 
   if (oldTrackerProbe) {
     return _runOldTrackerDownload(oldTrackerProbe, timeoutMs, signal)
   }
 
-  // The #28 re-implementation walks the drive itself (entry/getBlobs/list)
-  // so it can destroy per-blob trackers on abort. A drive that lacks that
-  // surface (hyperdrive fork, test double) can't be walked — fall back to
-  // racing the download() Promise against the timeout/abort, the pre-#28
-  // semantics. Same guarded-getBlobs posture as AppLifecycle._isDriveFullyReplicated.
-  const hasWalkSurface = typeof drive.getBlobs === 'function' &&
-    typeof drive.entry === 'function' && typeof drive.list === 'function'
-  if (!hasWalkSurface) {
-    if (promiseProbe) return _awaitPromiseDownload(promiseProbe, timeoutMs, signal)
-    return // download() returned nothing awaitable; nothing to wait on
-  }
+  // Promise probes are awaited directly: never launch a second download.
+  if (promiseProbe) return _awaitPromiseDownload(promiseProbe, timeoutMs, signal)
+  return // download() returned nothing awaitable; nothing to wait on
+}
 
-  return _runNewPromiseDownload(drive, path, timeoutMs, signal)
+function isAsyncFunction (fn) {
+  return typeof fn === 'function' &&
+    (fn.constructor?.name === 'AsyncFunction' ||
+      Object.prototype.toString.call(fn) === '[object AsyncFunction]')
 }
 
 // ─── Fallback: race the bare download() Promise ─────────────────────
