@@ -198,6 +198,14 @@ test('RelayNode - startup DHT flush is bounded', async (t) => {
   t.ok(elapsed < 250, 'startup flush returned without waiting on a stuck DHT flush')
 })
 
+test('RelayNode - catalog ingress waits for startup hydration', (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+
+  t.is(node._catalogIngressReady(), false, 'catalog adoption is blocked while indexes hydrate')
+  node.running = true
+  t.is(node._catalogIngressReady(), true, 'catalog adoption opens after startup completes')
+})
+
 test('RelayNode - identity file is created owner-only and reloads', async (t) => {
   const storage = tmpStorage()
   const node = new RelayNode({ storage, enableAPI: false })

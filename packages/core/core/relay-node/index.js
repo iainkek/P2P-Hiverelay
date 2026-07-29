@@ -1461,6 +1461,17 @@ export class RelayNode extends EventEmitter {
             signature
           }) => {
             if (!this.config.enableSeeding || !apps || !Array.isArray(apps)) return
+            // Catalogs can arrive as soon as the service protocol opens, before
+            // the seeding registry and app-registry indexes finish hydrating.
+            // Adopting drives during that window races startup Corestore opens
+            // and can leave the node permanently stuck at running:false.
+            if (!this._catalogIngressReady()) {
+              this.emit('catalog-sync-deferred', {
+                source: remotePubkey || null,
+                reason: 'node-starting'
+              })
+              return
+            }
             const peerKey = remotePubkey || null
 
             if (!this._verifyCatalogEnvelope({
@@ -2597,6 +2608,10 @@ export class RelayNode extends EventEmitter {
   // ../accept-mode.js so BareRelay can share it.
   _resolveAcceptMode () {
     return resolveAcceptMode(this.config)
+  }
+
+  _catalogIngressReady () {
+    return this.running === true
   }
 
   _resolveServicePeerRole (remotePubKeyHex) {
