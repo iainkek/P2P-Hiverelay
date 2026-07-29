@@ -218,6 +218,41 @@ test('downloadWithTimeout: works against hyperdrive 11.x Promise-shape download(
   t.pass('Promise-shape download resolved without TypeError')
 })
 
+test('downloadWithTimeout: Hyperdrive 11 async walk does not start an orphan probe download', async (t) => {
+  let nativeDownloadCalls = 0
+  let trackerDownloads = 0
+  const drive = {
+    closed: false,
+    closing: false,
+    async download () {
+      nativeDownloadCalls++
+      await new Promise(() => {})
+    },
+    async getBlobs () {
+      return {
+        core: {
+          download () {
+            trackerDownloads++
+            return {
+              downloaded: async () => {},
+              destroy () {}
+            }
+          }
+        }
+      }
+    },
+    async entry () { return null },
+    async * list () {
+      yield { value: { blob: { blockOffset: 0, blockLength: 1 } } }
+    }
+  }
+
+  await downloadWithTimeout(drive, '/', { timeoutMs: 500 })
+
+  t.is(nativeDownloadCalls, 0, 'does not launch an uncancellable probe Promise')
+  t.is(trackerDownloads, 1, 'runs exactly one cancellable blob download')
+})
+
 test('downloadWithTimeout: Promise-shape download timeout rejects cleanly', async (t) => {
   // Same shape as 11.x but the download never resolves; ensure the
   // timeout still rejects with "download timeout".
