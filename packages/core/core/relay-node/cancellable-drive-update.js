@@ -175,7 +175,6 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
 
   // Promise probes are awaited directly: never launch a second download.
   if (promiseProbe) return _awaitPromiseDownload(promiseProbe, timeoutMs, signal)
-  return // download() returned nothing awaitable; nothing to wait on
 }
 
 function isAsyncFunction (fn) {
