@@ -1,0 +1,50 @@
+# fly.toml app configuration file generated for milkyb-hiverelay-fra on 2026-07-07T17:32:20+10:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'milkyb-hiverelay-fra'
+primary_region = 'fra'
+
+[processes]
+  app = 'start --storage /data --seed ca5b011c93c90a0a685a3a9e22b1c9f6b8b7e059038f42f38068a2d8c5e83a03'
+
+[deploy]
+  strategy = 'immediate'
+
+[env]
+  HIVERELAY_MAX_STORAGE = '5GB'
+  HIVERELAY_OPERATOR = 'milkyb-fly-fra'
+  HIVERELAY_PLUGINS = 'poker,storage-proof'
+  HIVERELAY_POKER = '1'
+  HIVERELAY_PORT = '9100'
+  HIVERELAY_REGION = 'EU'
+  # Poker relay: per-peer services-RPC bucket raised above the 1200/min code
+  # default — a 3-player deal's feed/backfill/write chatter needs the headroom.
+  HIVERELAY_SERVICE_RATE_LIMIT_MAX = '2000'
+
+[[mounts]]
+  source = 'hiverelay_data'
+  destination = '/data'
+  initial_size = '1gb'
+
+[http_service]
+  processes = ['app']
+  internal_port = 9100
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = 'connections'
+    hard_limit = 200
+    soft_limit = 150
+
+[[restart]]
+  policy = 'always'
+  retries = 10
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
